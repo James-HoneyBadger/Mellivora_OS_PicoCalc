@@ -1,0 +1,7 @@
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/_deps/picotool/picotool
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/_deps/picotool/picotoolTargets.cmake
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/_deps/picotool/picotoolTargets-release.cmake
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/_deps/picotool/picotoolConfig.cmake
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/_deps/picotool/picotoolConfigVersion.cmake
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/_deps/picotool/enc_bootloader.elf
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/_deps/picotool/enc_bootloader_mbedtls.elf

@@ -1,0 +1,14 @@
+# Target labels
+ picotoolBuild
+# Source files and their labels
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/CMakeFiles/picotoolBuild
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/CMakeFiles/picotoolBuild.rule
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/CMakeFiles/picotoolBuild-complete.rule
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-build.rule
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-configure.rule
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-download.rule
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-install.rule
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-mkdir.rule
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-patch.rule
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-test.rule
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-update.rule

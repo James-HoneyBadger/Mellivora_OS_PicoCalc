@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/CMakeFiles/picotoolBuild"
+		},
+		{
+			"file" : "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/CMakeFiles/picotoolBuild.rule"
+		},
+		{
+			"file" : "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/CMakeFiles/picotoolBuild-complete.rule"
+		},
+		{
+			"file" : "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-build.rule"
+		},
+		{
+			"file" : "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-configure.rule"
+		},
+		{
+			"file" : "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-download.rule"
+		},
+		{
+			"file" : "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-install.rule"
+		},
+		{
+			"file" : "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-mkdir.rule"
+		},
+		{
+			"file" : "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-patch.rule"
+		},
+		{
+			"file" : "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-test.rule"
+		},
+		{
+			"file" : "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/picotool/src/picotoolBuild-stamp/picotoolBuild-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"picotoolBuild"
+		],
+		"name" : "picotoolBuild"
+	}
+}

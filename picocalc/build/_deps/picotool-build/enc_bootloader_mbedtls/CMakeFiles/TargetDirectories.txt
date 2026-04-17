@@ -1,0 +1,2 @@
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/_deps/picotool-build/enc_bootloader_mbedtls/CMakeFiles/edit_cache.dir
+/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/_deps/picotool-build/enc_bootloader_mbedtls/CMakeFiles/rebuild_cache.dir

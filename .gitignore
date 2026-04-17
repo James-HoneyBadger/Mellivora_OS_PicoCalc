@@ -1,0 +1,31 @@
+# Build artifacts
+*.bin
+*.img
+*.o
+
+# Listing files
+*.lst
+
+# Logs
+*.log
+
+# ISO / packaging artifacts
+*.iso
+.build/
+
+# PicoCalc build directory
+picocalc/build/
+
+# Pico SDK (fetched by build)
+picocalc/pico-sdk/
+
+# Windows executables
+*.exe
+
+# Python cache
+__pycache__/
+
+# Editor files
+*~
+*.swp
+.vscode/
