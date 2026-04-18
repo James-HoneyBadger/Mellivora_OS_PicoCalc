@@ -1,157 +1,190 @@
 # Mellivora PicoCalc Technical Reference
 
-This document describes the current firmware architecture and subsystem responsibilities.
+This document describes the firmware architecture, subsystem boundaries, runtime flow, persistence model, and current command surface for Mellivora PicoCalc.
 
-## 1. Target Platform
+## 1. Hardware Target
 
-Supported hardware target:
+Primary supported platform:
 
-- RP2040-based Clockwork PicoCalc class device
+- RP2040-based Clockwork PicoCalc class hardware
 
-Primary hardware interfaces:
+Main interfaces:
 
-- LCD on SPI1
-- keyboard co-processor on I2C1
-- SD card on SPI0
-- USB CDC and UART console output
+- LCD via SPI1
+- keyboard and battery interface via I2C1
+- SD card block access via SPI0
+- USB CDC plus UART console output
 
-## 2. Firmware Structure
+## 2. Firmware Organization
 
-Top-level firmware tree:
+The active codebase lives under `picocalc/src/`.
 
-- picocalc/src/main.c — boot, shell loop, command dispatch
-- picocalc/src/apps.c — ported Mellivora-style applications and interpreters
-- picocalc/src/syscall.c and related headers — app helper interface
-- picocalc/src/fat.c — FAT-backed filesystem access
-- picocalc/src/sd.c — block device communication
-- picocalc/src/lcd.c — display output
-- picocalc/src/kbd.c — keyboard and battery access
+Key modules:
 
-## 3. Boot and Runtime Flow
+- `main.c` — shell core, built-ins, help system, history, aliases, boot flow
+- `apps.c` — application layer, utility ports, editor, dashboards, games, interpreters
+- `fat.c` and `fat.h` — FAT filesystem operations and capacity reporting
+- `syscall.c` and syscall headers — app-facing portability layer
+- `sd.c` — block-level storage transport
+- `lcd.c` — screen drawing and mirrored output
+- `kbd.c` — keyboard input, battery reporting, and backlight control
 
-1. Hardware is initialized.
-2. Console output is mirrored to LCD and serial.
-3. The shell enters an input loop.
-4. Built-in commands are processed directly.
-5. Utility-style commands are dispatched through the app layer.
+## 3. Runtime Flow
 
-## 4. Shell Characteristics
+The normal runtime sequence is:
 
-Shell properties:
+1. initialize hardware and platform state
+2. establish the display and console output path
+3. bring up shell state such as current directory and history
+4. accept and parse user commands
+5. dispatch either to built-in handlers or app-layer handlers
+6. write persistent state to SD-backed files where needed
 
-- fixed-size line input buffer
-- command history ring
-- current working directory tracking
-- absolute and relative path resolution
-- mirrored character output to both device display and serial console
+## 4. Shell Core Characteristics
+
+Notable shell properties:
+
+- fixed-size line buffer
+- history ring with replay support
+- persistent alias storage
+- relative and absolute path handling
+- mirrored output to both device display and serial console
+- topic-based built-in help through `help` and `man`
 
 ## 5. Filesystem Model
 
-The filesystem layer currently provides:
+The filesystem layer is FAT-backed and activated by running `mount`.
 
-- FAT mount support
+Provided capabilities include:
+
+- mount detection and initialization
 - directory listing
-- file read support
-- file creation and overwrite support
+- file opening and reading
+- creation and overwrite support
 - directory creation
-- file or empty-directory removal
-- directory validation for cd
+- file removal and empty-directory removal
+- tree and usage reporting
+- total, used, and free capacity reporting through `df`
 
-Users must run mount before filesystem-driven commands are available.
+Users are expected to mount the SD card before relying on persistent apps or file tools.
 
-## 6. Built-in Command Reference
+## 6. Persistent Application Files
 
-| Command | Purpose |
-|---|---|
-| help | Print shell help |
-| uname | Print platform identity |
-| uptime | Show milliseconds since boot |
-| clear | Clear the LCD/console view |
-| battery | Read battery percentage |
-| backlight N | Set keyboard backlight |
-| mount | Mount SD card FAT volume |
-| ls or dir | List directory contents |
-| cd | Change working directory |
-| pwd | Print working directory |
-| cat | Print a text file |
-| echo | Output text |
-| touch | Create empty file |
-| write | Write text into file |
-| mkdir | Create directory |
-| rm | Remove file or empty directory |
-| sdinfo | Report SD card status |
-| sdread | Dump raw sector contents |
-| reboot | Warm reboot |
+Several applications store state as normal files on the SD card. Important examples include:
 
-## 7. Ported App Layer Reference
+- `SETTINGS.CFG`
+- `TODO.TXT`
+- `PLANNER.TXT`
+- `BOOKMARKS.CFG`
+- `ALIASES.CFG`
+- journal and habits backing files
 
-The app layer currently contains:
+This plain-file approach keeps the system transparent and easy to recover manually.
 
-- file and text utilities such as head, tail, wc, cut, grep, sort, pager, rev, hexdump, od, calc, cp, mv, stat, edit, browse, notes, home, dashboard, sysmon, script, paint, samples, clock, and cal
-- identity and control helpers such as hello, id, sleep, true, and false
-- embedded language runtimes: BASIC and Tiny C
+## 7. Built-in Command Families
 
-Dispatch is handled centrally through the app runner so shell commands map into a compact, firmware-safe implementation.
+### Shell and system
 
-## 8. BASIC Runtime Reference
+- help
+- man
+- history
+- alias
+- unalias
+- uname
+- uptime
+- clear
+- battery
+- backlight
+- reboot
 
-The BASIC runtime is intentionally lightweight.
+### Filesystem and storage
 
-Supported statements:
+- mount
+- ls and dir
+- cd
+- pwd
+- cat
+- touch
+- write
+- mkdir
+- rm
+- sdinfo
+- sdread
 
-- PRINT
-- ?
-- LET
-- INPUT
-- IF condition THEN statement
-- FOR ... TO ... STEP ... and NEXT
-- GOSUB and RETURN
-- CLS or CLEAR
-- GOTO lineNumber
-- LIST
-- NEW
-- END or STOP
+### App-layer and utility surface
 
-Execution modes:
+The app layer currently exposes a broad command set including:
 
-- interactive REPL
-- stored line-numbered program mode
-- batch file execution from the filesystem
+- text tools such as `head`, `tail`, `wc`, `cut`, `grep`, `pager`, `rev`, `sort`, `hexdump`, and `od`
+- file tools such as `find`, `tree`, `du`, `df`, `cp`, `mv`, `stat`, `edit`, `hexedit`, and `browse`
+- personal tools such as `notes`, `journal`, `habits`, `todo`, `planner`, and `bookmarks`
+- launch and status tools such as `home`, `dashboard`, `sysmon`, `settings`, `set`, and `samples`
+- creative and interactive tools such as `paint`, `sprite`, and `terminal`
+- games and fun commands such as `games`, `snake`, `dice`, `coin`, and `guess`
+- language tools such as `calc`, `basic`, and `tcc`
 
-Data model:
+## 8. BASIC Runtime Notes
 
-- integer variables A through Z
-- integer arithmetic and simple comparisons
+The BASIC environment is intentionally minimal and device-friendly.
 
-## 9. Tiny C Runtime Reference
+Supported areas include:
 
-The Tiny C runtime is a compact interpreter-like command environment rather than a full ISO C compiler.
+- line-numbered program entry
+- `RUN`, `LIST`, and `NEW`
+- integer variables
+- `PRINT`, `LET`, and `INPUT`
+- `IF ... THEN`
+- `FOR ... NEXT`
+- `GOSUB` and `RETURN`
+- `CLS`, `GOTO`, `END`, and `STOP`
 
-Supported syntax areas:
+Typical execution modes:
 
-- int variable declarations
-- small integer arrays
-- assignment
-- arithmetic and bitwise expressions
-- relational comparisons
-- print and puts
-- if statements
-- while loops
-- vars state dump and clear
+- live REPL use
+- in-memory stored programs
+- file-based program execution from the SD card
 
-Current constraints:
+## 9. Tiny C Runtime Notes
 
-- integer-only values
-- no function definitions
-- no heap management
-- no preprocessing or separate compilation
+The Tiny C environment is a compact integer-focused scripting environment rather than a full hosted C implementation.
 
-## 10. Build Output
+Supported areas include:
 
-The current firmware artifact is:
+- integer declarations
+- small arrays
+- assignment and arithmetic
+- bitwise operations
+- comparisons and conditions
+- `if` and `while`
+- `print`, `puts`, `vars`, and `clear`
 
-- picocalc/build/mellivora_picocalc.uf2
+Main limits:
 
-## 11. Scope Notes
+- integer-only model
+- no heap or dynamic linking
+- no separate compilation model
+- intentionally small syntax surface
 
-This repository no longer targets the former PC bootloader and x86 runtime. The maintained product is the RP2040 PicoCalc firmware.
+## 10. Resource and Design Constraints
+
+This firmware is shaped by embedded constraints:
+
+- limited RAM
+- handheld interaction speed
+- simple text rendering surface
+- bounded buffer design
+- minimal dependency footprint
+
+These limits strongly influence implementation style and are a key reason many tools prefer small text formats and simple menus.
+
+## 11. Build Artifact
+
+The normal firmware output is:
+
+```text
+picocalc/build/mellivora_picocalc.uf2
+```
+
+## 12. Scope and Direction
+
+This repository now centers on the PicoCalc firmware target. The maintained direction is a practical RP2040 handheld shell environment with apps and interpreters, not the older desktop-oriented runtime flow.

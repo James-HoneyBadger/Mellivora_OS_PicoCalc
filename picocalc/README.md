@@ -1,68 +1,63 @@
 # Mellivora PicoCalc Firmware
 
-This directory contains the active RP2040 firmware target for Clockwork PicoCalc-class
-hardware.
+This directory contains the active RP2040 firmware implementation for Mellivora on PicoCalc-class hardware.
 
-## Current capabilities
+## Firmware capabilities
 
-- native UF2 firmware output
-- shell with command history and working directories
-- FAT-backed file operations on SD media
-- bundled Mellivora utility layer for common commands
-- interactive BASIC and Tiny C environments
+- native UF2 firmware build output
+- shell with history, aliases, and built-in manuals
+- FAT-backed SD card file access
+- persistent personal apps such as notes, todo, planner, journal, habits, and bookmarks
+- creative tools including paint and sprite editing
+- mini games including snake, dice, coin, and guess
+- on-device calculator, BASIC, and Tiny C environments
 
 ## Build
 
-Prerequisites:
-
-- arm-none-eabi toolchain
-- CMake 3.13+
-- `PICO_SDK_PATH` pointing at a Pico SDK checkout
+From the repository root:
 
 ```bash
 make picocalc
 ```
 
-Output:
+Main output image:
 
-- `picocalc/build/mellivora_picocalc.uf2`
+```text
+picocalc/build/mellivora_picocalc.uf2
+```
 
-Flash the UF2 by mounting the device in BOOTSEL mode and copying the file.
+## Runtime experience
 
-## Runtime commands
+The shell supports system control, file browsing and editing, storage management, app launching, dashboards, and programming tools in a handheld-friendly text UI.
 
-Current shell supports:
+Useful entry points:
 
 - `help`
-- `uname`
-- `uptime`
-- `clear`
-- `battery`
-- `backlight <n>`
+- `man fs`
+- `home`
+- `dashboard`
 - `mount`
-- `ls [path]` / `dir [path]`
-- `cd [path]`
-- `pwd`
-- `cat <path>`
-- `echo [text]`
-- `hello`
-- `touch <path>`
-- `write <path> <text>`
-- `mkdir <path>`
-- `rm <path>`
-- `sdinfo`
-- `sdread <lba>`
-- `reboot`
+- `browse`
+- `notes`
+- `todo`
+- `planner`
+- `journal`
+- `habits`
+- `bookmarks`
+- `sprite`
+- `games`
+- `basic`
+- `tcc`
 
-Ported command set also includes utilities such as `head`, `tail`, `wc`, `cut`, `grep`, `find`, `pager`, `sort`, `hexdump`, plus the `calc`, `cp`, `mv`, `stat`, `edit`, `browse`, `notes`, `home`, `dashboard`, `sysmon`, `script`, `paint`, `samples`, `clock`, `cal`, `basic`, and `tcc` environments.
+## Documentation
 
-Arrow keys browse command history and Ctrl-C cancels the current line.
+For the full documentation set, see:
 
-## Additional documentation
-
-See the top-level documentation set for full usage and developer references:
-
-- [docs/INSTALL.md](../docs/INSTALL.md)
-- [docs/USER_GUIDE.md](../docs/USER_GUIDE.md)
-- [docs/TECHNICAL_REFERENCE.md](../docs/TECHNICAL_REFERENCE.md)
-- [docs/PROGRAMMING_GUIDE.md](../docs/PROGRAMMING_GUIDE.md)
+- [../README.md](../README.md)
+- [../docs/INSTRUCTIONS.md](../docs/INSTRUCTIONS.md)
+- [../docs/INSTALL.md](../docs/INSTALL.md)
+- [../docs/USER_GUIDE.md](../docs/USER_GUIDE.md)
+- [../docs/TUTORIAL.md](../docs/TUTORIAL.md)
+- [../docs/PROGRAMMING_GUIDE.md](../docs/PROGRAMMING_GUIDE.md)
+- [../docs/TECHNICAL_REFERENCE.md](../docs/TECHNICAL_REFERENCE.md)
+- [../ABOUT.md](../ABOUT.md)

@@ -1,124 +1,163 @@
-# Mellivora PicoCalc Programming Guide
+# Mellivora PicoCalc Programmer's Guide
 
-This guide explains how to extend Mellivora PicoCalc and how to use the built-in language environments effectively.
+This guide is for contributors who want to understand the firmware structure, extend the shell, port new utilities, or maintain the PicoCalc codebase safely.
 
-## 1. Development Model
+## 1. Development Philosophy
 
-Mellivora PicoCalc is a native embedded firmware project. New features are usually added in one of two ways:
+Mellivora PicoCalc is an embedded system first. The code is optimized for:
 
-- extend the shell with a new built-in command
-- add a new utility or interpreter entry in the app layer
+- predictable memory use
+- bounded buffers
+- direct keyboard-and-screen workflows
+- robust SD-card file handling
+- short feedback loops on real hardware
 
-## 2. Build Cycle
+Whenever possible, features should feel natural in a handheld shell rather than like a cut-down desktop port.
 
-Typical edit and test cycle:
+## 2. Source Layout
 
-1. Modify source under picocalc/src/
-2. Rebuild from the repository root with make picocalc
-3. Flash the resulting UF2 to hardware
-4. Test directly in the shell on the device
+Important files and responsibilities:
 
-## 3. Adding a New Shell Command
+- `picocalc/src/main.c` — boot path, shell loop, built-in command handlers, help, history, aliasing
+- `picocalc/src/apps.c` — most user-facing apps and utility ports
+- `picocalc/src/fat.c` and `fat.h` — FAT-backed filesystem logic
+- `picocalc/src/syscall.c` and related headers — app-facing helper surface
+- `picocalc/src/sd.c` — low-level SD card block I/O
+- `picocalc/src/lcd.c` — display handling
+- `picocalc/src/kbd.c` — keyboard and battery support
 
-To add a built-in command:
+## 3. Normal Edit and Test Cycle
 
-1. Implement a handler in the shell source.
-2. Add help text so the command appears in the command list.
-3. Wire the command into the dispatcher.
-4. Rebuild and test on target hardware.
+1. edit code under `picocalc/src/`
+2. rebuild from the repository root with:
 
-Built-ins are best for low-level device and system actions.
+```bash
+make picocalc
+```
 
-## 4. Adding a Ported App
+3. flash the generated UF2 to hardware
+4. test the command or app directly in the shell
+5. update docs when user-visible behavior changes
 
-Ported utilities live in the app layer.
+## 4. Choosing Between Built-ins and Apps
+
+### Add a shell built-in when:
+
+- the command is core to system management
+- it touches boot, battery, backlight, mount, or other platform behavior
+- it belongs beside `help`, `uname`, `history`, or `reboot`
+
+### Add an app-layer command when:
+
+- the feature behaves like a utility or small application
+- it mostly uses files, text, screen output, or lightweight input loops
+- it fits the existing app dispatch table model
+
+Most user-facing expansions belong in the app layer.
+
+## 5. Adding a New Built-in Command
+
+Typical process:
+
+1. implement the handler in `main.c`
+2. validate arguments carefully
+3. print clear usage text on bad input
+4. add entries to `help` and `man`
+5. test interactively on target hardware
+
+Built-ins should stay small and focused.
+
+## 6. Adding a New App or Utility
 
 Recommended pattern:
 
-1. Implement a small function that accepts the command argument string.
-2. Use the syscall helpers for output, keyboard input, and filesystem access.
-3. Register the command name in the app dispatcher.
-4. Keep memory use bounded and avoid desktop-scale assumptions.
+1. create a static function with the signature `app_name(const char *arg)`
+2. keep parsing logic small and defensive
+3. use the syscall and filesystem helpers instead of bypassing the common interfaces
+4. register names and aliases in the app dispatcher table
+5. add launcher or dashboard integration if the feature is high-value for users
+6. document it in the guides
 
-This model is appropriate for commands such as grep, wc, sort, and hexdump.
+This is the preferred model for tools such as notes, planner, games, editors, and file utilities.
 
-## 5. Syscall-Style Helpers
+## 7. Persistent Data Design
 
-The app layer relies on a compact helper interface for portability. Common operations include:
+Many apps save their state to plain files on the SD card. This approach is recommended because it keeps the system transparent and debuggable.
 
-- console output
-- character input
-- current working directory access
-- file reads and writes
-- color or terminal-style state where available
+Examples include:
 
-These helpers allow Mellivora-style utilities to be ported without depending directly on every hardware module.
+- settings
+- todo items
+- planner entries
+- journal data
+- habits tracking
+- bookmarks
 
-## 6. Writing BASIC Programs
+Guidelines:
 
-BASIC is suited to small interactive programs and experiments.
+- prefer readable text formats where practical
+- tolerate missing files gracefully
+- create sensible defaults on first run
+- never assume unlimited path or record length
 
-Example:
+## 8. Coding Rules for Embedded Safety
 
-```text
-10 INPUT A
-20 LET B = A * 2
-30 PRINT B
-40 END
-```
+When modifying the firmware:
 
-Tips:
+- prefer fixed-size arrays over dynamic allocation
+- bound all copies and concatenations
+- validate file paths and user input
+- keep loops responsive and escapable
+- avoid recursion unless the depth is explicitly constrained
+- reduce hidden global state where practical
 
-- use line numbers for stored programs
-- use LIST to inspect the program in memory
-- use NEW to clear the current program
-- use IF ... THEN for branching
+If a feature needs a large buffer, make the limit explicit and document the behavior.
 
-## 7. Writing Tiny C Programs
+## 9. UI and Interaction Conventions
 
-Tiny C is aimed at short integer-driven scripts.
+The best Mellivora PicoCalc tools:
 
-Example:
+- work entirely from the keyboard
+- show short command summaries or prompts
+- provide a clear quit path such as `q` or `Ctrl-C`
+- avoid cluttering the display with long, noisy output
+- degrade gracefully when storage is unavailable
 
-```text
-int n = 1;
-print(n);
-n = n + 1;
-if (n == 2) print(n);
-vars
-```
+## 10. Documentation Expectations
 
-Useful commands in the environment:
+Any user-facing change should update at least one of the following:
 
-- help — show quick syntax help
-- vars — list current variables
-- exit — leave the Tiny C prompt
+- the root README for GitHub visitors
+- the user guide for day-to-day use
+- the tutorial if the feature changes onboarding
+- the technical or programmer guide if internal behavior changed
 
-## 8. Embedded Programming Guidelines
+## 11. Writing BASIC and Tiny C Samples
 
-When extending the firmware:
+The sample systems are most useful when examples are:
 
-- prefer fixed-size buffers
-- validate all user input
-- avoid recursion unless clearly bounded
-- keep file operations simple and robust
-- assume limited RAM and interactive latency constraints
+- short
+- readable on the device display
+- based on integer logic
+- safe to run repeatedly
 
-## 9. Porting Guidance from Older Mellivora Apps
+Good examples include counters, loops, conditionals, and small file-oriented experiments.
 
-When converting an older Mellivora application to PicoCalc:
+## 12. Testing Checklist for Contributors
 
-1. identify the user-facing behavior to preserve
-2. replace hardware- or x86-specific logic with syscall helpers
-3. simplify unsupported features
-4. keep the command syntax recognizable
-5. test with real files and real shell input
+Before considering a change complete:
 
-## 10. Recommended Next Extensions
+- build the firmware successfully
+- verify the new command appears in help or launcher surfaces if appropriate
+- test both success and bad-input cases
+- confirm the SD card path still behaves correctly
+- make sure the change does not break older commands
 
-Good future targets include:
+## 13. Recommended Future Refactors
 
-- more text processing utilities
-- richer BASIC statements
-- more Tiny C syntax coverage
-- file editors and interactive tools tuned for the PicoCalc keyboard and display
+As the system grows, the biggest architectural payoff will likely come from:
+
+- splitting `apps.c` into themed modules
+- improving automated command documentation generation
+- expanding the sample library
+- widening interpreter coverage while staying within RP2040 limits

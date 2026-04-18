@@ -1,263 +1,337 @@
 # Mellivora PicoCalc User Guide
 
-This guide explains day-to-day use of Mellivora on PicoCalc hardware.
+This guide explains everyday use of Mellivora PicoCalc on real hardware. It is aimed at users who want to work directly from the built-in shell and apps.
 
-## 1. Overview
+## 1. What Mellivora PicoCalc Is
 
-Mellivora PicoCalc provides:
+Mellivora PicoCalc is a compact shell environment for PicoCalc-class RP2040 hardware. It is designed to make the device feel like a tiny portable workstation with:
 
-- a text shell for local interaction
-- LCD and serial mirrored output
-- command history with arrow keys
-- a writable FAT-backed SD card filesystem
-- a set of Mellivora-style utility commands
-- built-in BASIC and Tiny C language environments
+- a text shell
+- mirrored LCD and serial output
+- an SD-card-backed filesystem
+- built-in productivity tools
+- lightweight creative tools and games
+- small programming environments for BASIC and Tiny C
 
-## 2. Using the Shell
+## 2. First Things to Know
 
-When the device boots, the PicoLair prompt appears. Commands are entered directly from the keyboard.
+When the firmware boots, you arrive at the command prompt.
 
-Helpful shell behaviors:
+Useful shell behavior:
 
-- Up and down arrows browse history
-- Ctrl-C cancels the current line in interactive tools
-- pwd prints the current directory
-- cd changes the working directory
+- Up and Down browse history
+- `Ctrl-U` clears the current line
+- `Ctrl-L` redraws the screen
+- `Ctrl-C` exits many interactive tools
+- `help` and `man` show built-in documentation
 
-## 3. Core Commands
+## 3. Essential System Commands
 
-### System commands
+| Command | What it does |
+|---|---|
+| `help` | Show the command overview |
+| `man TOPIC` | Show a deeper help page |
+| `history` | Show or replay recent commands |
+| `alias` | Create a persistent shortcut command |
+| `unalias` | Remove a saved alias |
+| `uname` | Show platform details |
+| `uptime` | Show time since boot |
+| `battery` | Report battery state when available |
+| `backlight N` | Set keyboard backlight from 0 to 255 |
+| `clear` | Clear the display and console |
+| `reboot` | Restart the device |
 
-- help — show command reference
-- uname — show platform details
-- uptime — show time since boot
-- clear — clear the display
-- battery — read battery percentage if available
-- backlight N — set keyboard backlight from 0 to 255
-- reboot — restart the firmware
+## 4. Working with Files and Storage
 
-### Storage commands
-
-- mount — mount the SD card filesystem
-- ls [path] — list files
-- dir [path] — alias for ls
-- cd [path] — change directory
-- pwd — print working directory
-- cat PATH — display a text file
-- touch PATH — create an empty file
-- write PATH TEXT — replace a file with text
-- mkdir PATH — create a directory
-- rm PATH — remove a file or empty directory
-- sdinfo — show SD state
-- sdread LBA — dump one raw 512-byte block
-
-## 4. Ported Utilities
-
-Available utility-style programs include:
-
-- hello
-- basename
-- dirname
-- seq
-- head
-- tail
-- wc
-- cut
-- grep
-- find
-- pager
-- rev
-- sort
-- hexdump
-- od
-- calc
-- cp
-- mv
-- stat
-- edit
-- browse
-- notes
-- home
-- dashboard
-- sysmon
-- script
-- paint
-- samples
-- clock
-- cal
-- sleep
-- id
-- true
-- false
-
-These are invoked from the shell as normal commands.
-
-## 5. BASIC
-
-Start the interactive BASIC environment with:
+Before using storage-backed tools, insert your SD card and run:
 
 ```text
-basic
+mount
 ```
 
-You can also run a BASIC source file from storage:
+Common file commands:
 
-```text
-basic /path/program.bas
-```
+- `ls` or `dir` to list files
+- `cd` to change directory
+- `pwd` to print the current path
+- `cat FILE` to display a text file
+- `touch FILE` to create an empty file
+- `write FILE TEXT` to replace a file with text
+- `mkdir DIR` to create a directory
+- `rm PATH` to remove a file or empty directory
+- `cp SRC DST` to copy files
+- `mv SRC DST` to move or rename files
+- `stat FILE` for quick file details
+- `tree` for a recursive directory view
+- `du` for directory size totals
+- `df` for total, used, and free space
 
-Supported features:
+## 5. Interactive File Tools
 
-- line-numbered program editing
-- RUN, LIST, NEW
-- PRINT and shorthand ?
-- LET variable assignment
-- INPUT for integer values
-- IF ... THEN ...
-- FOR ... NEXT loops
-- GOSUB and RETURN
-- CLS, GOTO, END, and STOP
+### File browser
 
-Example session:
-
-```text
-10 FOR A = 1 TO 5
-20 PRINT A
-30 NEXT A
-40 GOSUB 100
-50 END
-100 PRINT "DONE"
-110 RETURN
-RUN
-```
-
-Type BYE, EXIT, or QUIT to leave BASIC mode.
-
-## 6. Tiny C
-
-Start the Tiny C environment with:
-
-```text
-tcc
-```
-
-Or run a source file:
-
-```text
-tcc /path/test.tc
-```
-
-Supported features:
-
-- integer variables and small arrays
-- assignment and arithmetic
-- bitwise operators such as &, |, and ^
-- print and puts
-- if conditions
-- while loops
-- vars to inspect state
-- clear to reset the environment
-- exit, quit, or return to leave
-
-Example session:
-
-```text
-int x = 1;
-int arr[4];
-arr[0] = 42;
-print(arr[0]);
-x = x | 2;
-vars
-```
-
-## 7. Browsing Files Interactively
-
-Start the browser with:
+Run:
 
 ```text
 browse
 ```
 
-Or open a specific directory:
+Use it to move around the SD card, inspect files, and open content quickly.
+
+### Text editor
+
+Run:
 
 ```text
-browse /path
+edit /NOTES.TXT
 ```
 
-Browser controls:
+This opens the compact line editor for writing notes, scripts, and small source files.
 
-- `j` or `s` — move down
-- `k` or `w` — move up
-- `Enter` — open directory or view file
-- `e` — edit selected file
-- `u` — go to parent directory
-- `r` — refresh
-- `q` — quit browser
+### Hex editor
 
-## 8. Editing Files On Device
-
-Start the line editor with:
+Run:
 
 ```text
-edit /path/file.txt
+hexedit /FILE.BIN
 ```
 
-Supported editor commands include:
+Use it to inspect or patch files at the byte level.
 
-- list
-- append
-- ins N TEXT
-- set N TEXT
-- del N
-- save
-- quit
+## 6. Personal Productivity Apps
 
-This provides a compact on-device workflow for notes, scripts, and source files.
+Mellivora PicoCalc includes several persistent apps backed by files on the SD card.
 
-## 9. Notes, Dashboard, and Home Launcher
-
-Quick notes workflow:
+### Notes
 
 ```text
 notes
 ```
 
-This opens the default notes file and drops into the on-device editor.
+Opens the default notes file in the built-in editor.
 
-You can also open the launcher with:
+### Todo list
+
+```text
+todo
+```
+
+Use it to manage simple tasks and keep a portable to-do list.
+
+### Planner
+
+```text
+planner
+```
+
+Stores dated agenda items and helps you review upcoming events.
+
+### Journal
+
+```text
+journal
+```
+
+Keeps dated journal entries for logs, thoughts, or field notes.
+
+### Habits
+
+```text
+habits
+```
+
+Tracks recurring routines and completion counts.
+
+### Bookmarks
+
+```text
+bookmarks
+```
+
+Saves favorite files, paths, and launch targets for quick access.
+
+### Settings
+
+```text
+settings
+set backlight 180
+```
+
+Settings persist across boots and can control behavior such as defaults and startup preferences.
+
+## 7. Launchers and Status Views
+
+### Home launcher
 
 ```text
 home
 ```
 
-The launcher provides quick access to browsing, notes, the calculator, BASIC, Tiny C, and the dashboard.
+A simple menu for jumping into the most common tools.
 
-You can open the status dashboard with:
+### Dashboard
 
 ```text
 dashboard
 ```
 
-This shows battery, uptime, current path, and quick shortcuts.
+Shows system status, path information, and app shortcuts.
 
-For a more detailed live system readout, use:
+### System monitor
 
 ```text
 sysmon
 ```
 
-You can also use the time tools:
+Provides a more detailed status readout.
+
+## 8. Creative and Fun Tools
+
+### Paint
 
 ```text
-clock
-cal 4 2026
+paint
 ```
 
-Bundled demo programs are available with:
+A simple on-device drawing mode.
+
+### Sprite editor
+
+```text
+sprite
+```
+
+A tiny sprite editing utility for pixel patterns and experiments.
+
+### Terminal mode
+
+```text
+terminal
+```
+
+Switches into a raw terminal view for direct character interaction.
+
+### Games pack
+
+```text
+games
+snake
+dice 2 6
+coin 5
+guess
+```
+
+These commands provide quick play sessions and simple demos.
+
+## 9. Calculator and Scripting
+
+### Calculator
+
+```text
+calc 2+2*8
+```
+
+Useful for quick arithmetic from the shell.
+
+### Script runner
+
+```text
+script /AUTOEXEC.SH
+```
+
+Lets you execute command files directly from storage.
+
+### Samples
 
 ```text
 samples
 ```
+
+Lists or writes bundled example programs for exploration and learning.
+
+## 10. BASIC
+
+Start BASIC with:
+
+```text
+basic
+```
+
+Or run a stored program:
+
+```text
+basic /HELLO.BAS
+```
+
+BASIC supports:
+
+- line-numbered program editing
+- `RUN`, `LIST`, and `NEW`
+- `PRINT`, `LET`, and `INPUT`
+- `IF ... THEN`
+- `FOR ... NEXT`
+- `GOSUB` and `RETURN`
+- `CLS`, `GOTO`, `END`, and `STOP`
+
+Example:
+
+```text
+10 FOR A = 1 TO 3
+20 PRINT A
+30 NEXT A
+RUN
+```
+
+## 11. Tiny C
+
+Start Tiny C with:
+
+```text
+tcc
+```
+
+Or run a saved file:
+
+```text
+tcc /TEST.TC
+```
+
+Tiny C supports integer-oriented experiments such as:
+
+- variable declarations
+- small arrays
+- arithmetic and bitwise operations
+- `if` statements
+- `while` loops
+- `print`, `puts`, `vars`, and `clear`
+
+Example:
+
+```text
+int n = 5;
+print(n);
+n = n + 1;
+vars
+```
+
+## 12. Suggested Daily Workflow
+
+A practical device-first session often looks like this:
+
+1. boot the device
+2. run `mount`
+3. check `dashboard`
+4. open `notes`, `todo`, or `planner`
+5. browse files with `browse`
+6. edit scripts or text with `edit`
+7. use `calc`, `basic`, or `tcc` for quick work
+
+## 13. If Something Fails
+
+- run `mount` again if storage commands stop working
+- use `pwd` and `ls` to confirm your location
+- use `help fs` or `man TOPIC` for syntax reminders
+- reboot if an interactive tool becomes unresponsive
 
 Useful forms:
 

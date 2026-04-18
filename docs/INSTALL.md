@@ -1,108 +1,157 @@
 # Mellivora PicoCalc Installation and Build Instructions
 
-This guide covers setup, building, flashing, and first boot for the PicoCalc-native Mellivora firmware.
+This document is the main setup and bring-up guide for Mellivora PicoCalc. It covers host requirements, toolchain setup, firmware builds, flashing, SD card preparation, and first boot validation.
 
-## 1. Requirements
+## 1. What You Need
 
-Host tools:
+### Host requirements
 
-- Linux system with standard development tools
+- Linux development machine
 - CMake 3.13 or newer
 - GNU Make
-- ARM embedded GCC toolchain with arm-none-eabi-gcc
-- A local checkout of the Raspberry Pi Pico SDK
+- ARM embedded GCC toolchain with `arm-none-eabi-gcc`
+- Git
+- a local Raspberry Pi Pico SDK checkout or the auto-fetched SDK used by the project build flow
 
-Hardware:
+### Hardware requirements
 
-- Clockwork PicoCalc or compatible RP2040 target
-- USB cable for BOOTSEL flashing
-- microSD card for filesystem features
+- Clockwork PicoCalc or another RP2040-based compatible device
+- USB data cable
+- microSD card for filesystem-backed commands and persistent apps
 
-## 2. Repository Layout
+## 2. Important Paths
 
-Important paths:
+- root build entry: `Makefile`
+- firmware tree: `picocalc/`
+- firmware sources: `picocalc/src/`
+- build output: `picocalc/build/mellivora_picocalc.uf2`
+- documentation: `docs/`
 
-- Root build entry: Makefile
-- Firmware source: picocalc/
-- Output image: picocalc/build/mellivora_picocalc.uf2
-- Documentation: docs/
+## 3. Recommended Linux Setup
 
-## 3. Environment Setup
+On Debian or Ubuntu style systems, the usual prerequisites are:
 
-Export the Pico SDK path before building if it is not already configured:
+```bash
+sudo apt update
+sudo apt install -y build-essential cmake git gcc-arm-none-eabi
+```
+
+If you already have the Pico SDK installed elsewhere, export the path:
 
 ```bash
 export PICO_SDK_PATH=/absolute/path/to/pico-sdk
 ```
 
-Confirm the ARM compiler is available:
+Confirm the toolchain is visible:
 
 ```bash
 arm-none-eabi-gcc --version
+cmake --version
 ```
 
-## 4. Build the Firmware
+## 4. Building the Firmware
 
-From the repository root:
+From the repository root, run:
 
 ```bash
 make picocalc
 ```
 
-A successful build produces:
+When the build succeeds, the UF2 image will be available at:
 
-- picocalc/build/mellivora_picocalc.uf2
+```text
+picocalc/build/mellivora_picocalc.uf2
+```
 
-## 5. Flash to the Device
+## 5. Flashing to Hardware
 
-1. Hold the BOOTSEL button on the RP2040 device.
-2. Connect the device over USB.
-3. Release the button when the mass-storage drive appears.
-4. Copy the UF2 image onto the mounted drive.
-5. The device will reboot automatically into Mellivora.
+1. Disconnect the device if it is already attached.
+2. Hold the BOOTSEL button.
+3. Connect the USB cable while holding BOOTSEL.
+4. Release the button after the mass-storage drive appears.
+5. Copy `mellivora_picocalc.uf2` onto that drive.
+6. Wait for the automatic reboot.
 
 ## 6. First Boot Checklist
 
-After startup:
+After flashing, confirm the following on the device:
 
-1. Verify the shell banner appears.
-2. Run help to see built-in and ported commands.
-3. Insert an SD card.
-4. Run mount to enable the FAT filesystem.
-5. Use ls and pwd to confirm storage access.
+1. the Mellivora shell prompt appears
+2. `help` lists the command families
+3. `home` opens the launcher
+4. `dashboard` shows live status information
+5. an inserted SD card mounts correctly with `mount`
+6. `ls` and `pwd` work as expected
 
-## 7. SD Card Preparation
+## 7. Preparing the SD Card
 
-For best results:
+The on-device apps and file tools depend on a FAT-formatted card.
 
-- Use FAT16 or FAT32 formatted media
-- Use simple 8.3-style names when possible
-- Eject the card cleanly before removal
+Recommended practice:
 
-## 8. Troubleshooting
+- use FAT16 or FAT32
+- use a clean, safely ejected card
+- create a few test folders and text files before first use
+- keep filenames simple if you want maximum compatibility
 
-### Build fails because the SDK is missing
+After inserting the card, run:
 
-Set PICO_SDK_PATH to a valid SDK checkout and rebuild.
+```text
+mount
+ls
+```
 
-### Build fails because the ARM compiler is missing
+## 8. Updating the Firmware Later
 
-Install the arm-none-eabi toolchain from your distribution or embedded toolchain package source.
+To ship a new build to the device:
 
-### Device boots but file commands fail
+1. pull or edit the repository
+2. rebuild with `make picocalc`
+3. flash the new UF2 in BOOTSEL mode
+4. reboot and verify the shell and storage tools still work
 
-- Ensure the SD card is inserted correctly
-- Run mount before ls, cd, cat, write, mkdir, or rm
-- Reformat the card as FAT if it is not recognized
+Persistent files stored on the SD card such as notes, planner data, settings, and journal entries remain on the card unless you erase them yourself.
 
-### USB flash drive does not appear
+## 9. Troubleshooting
 
-Use a data-capable USB cable and re-enter BOOTSEL mode.
+### Build cannot find the Pico SDK
 
-## 9. Updating the Firmware
+Make sure `PICO_SDK_PATH` is valid or rerun the normal project build flow from the repository root.
 
-Rebuild with make picocalc and copy the new UF2 to the device in BOOTSEL mode.
+### Build cannot find `arm-none-eabi-gcc`
 
-## 10. Current Scope
+Install the embedded GCC toolchain and verify it is present in your shell path.
 
-This project is now PicoCalc-only. The supported target is RP2040 firmware rather than the former x86 boot image flow.
+### The UF2 flashes but file commands fail
+
+- confirm the SD card is inserted correctly
+- run `mount` before using storage features
+- reformat the card as FAT16 or FAT32
+- try a smaller, known-good SD card if detection is unreliable
+
+### The device does not appear in BOOTSEL mode
+
+- use a data-capable USB cable
+- try a different USB port
+- reconnect while holding BOOTSEL longer
+
+### The shell runs but the display seems stale
+
+Use `clear` or `Ctrl-L` to redraw the screen.
+
+## 10. Verification Commands
+
+Useful post-install checks:
+
+```text
+help
+uname
+mount
+ls
+settings
+samples
+```
+
+## 11. Scope Reminder
+
+This repository is maintained as a PicoCalc firmware project. The active target is the RP2040-based handheld workflow, not the legacy PC boot environment.
