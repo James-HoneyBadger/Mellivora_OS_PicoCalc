@@ -48,6 +48,19 @@ typedef struct {
     uint32_t cur_offset;      /* byte offset within file                   */
 } fat_file_t;
 
+typedef struct {
+    bool     mounted;
+    bool     fat32;
+    uint32_t bytes_per_sector;
+    uint32_t sectors_per_cluster;
+    uint32_t cluster_count;
+    uint32_t used_clusters;
+    uint32_t free_clusters;
+    uint64_t total_bytes;
+    uint64_t used_bytes;
+    uint64_t free_bytes;
+} fat_usage_t;
+
 typedef void (*fat_ls_cb)(const char *name, uint32_t size,
                           bool is_dir, void *ctx);
 
@@ -56,6 +69,7 @@ fat_result_t fat_is_dir(const char *path);
 fat_result_t fat_ls(const char *path, fat_ls_cb cb, void *ctx);
 fat_result_t fat_open(const char *path, fat_file_t *f);
 int32_t      fat_read(fat_file_t *f, void *buf, uint32_t n);
+fat_result_t fat_get_usage(fat_usage_t *out);
 
 /* Write-side API */
 fat_result_t fat_mkdir(const char *path);

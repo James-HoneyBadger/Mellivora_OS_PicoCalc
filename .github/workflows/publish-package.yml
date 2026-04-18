@@ -20,11 +20,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build OS disk image
+      - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y nasm make python3 fdisk dosfstools
-          make full
+          sudo apt-get install -y build-essential cmake gcc-arm-none-eabi libnewlib-arm-none-eabi git make python3
+
+      - name: Fetch Pico SDK
+        run: |
+          if [ ! -d picocalc/pico-sdk/.git ]; then
+            git clone --depth 1 https://github.com/raspberrypi/pico-sdk picocalc/pico-sdk
+          fi
+
+      - name: Build PicoCalc UF2
+        run: |
+          make picocalc
+
+      - name: Upload UF2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mellivora-picocalc-uf2
+          path: picocalc/build/mellivora_picocalc.uf2
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3

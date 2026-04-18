@@ -21,6 +21,16 @@ add_executable(mellivora_picocalc
 
 target_include_directories(mellivora_picocalc PRIVATE src)
 
+if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(mellivora_picocalc PRIVATE
+        -Wall
+        -Wextra
+        -Wshadow
+        -Wundef
+        -Wno-unused-parameter
+    )
+endif()
+
 target_compile_definitions(mellivora_picocalc PRIVATE
     PICO_DEFAULT_UART_BAUD_RATE=115200
 )

@@ -112,17 +112,42 @@ SYSCALL_EXTERN char      _sys_cwd[256];
 /* Syscall wrappers                                                     */
 /* ------------------------------------------------------------------ */
 
+static inline void _sys_copy_str(char *dst, size_t dst_size, const char *src) {
+    if (!dst || dst_size == 0) return;
+    if (!src) src = "";
+    size_t n = strlen(src);
+    if (n >= dst_size) n = dst_size - 1;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+static inline void _sys_append_str(char *dst, size_t dst_size, const char *src) {
+    if (!dst || dst_size == 0 || !src) return;
+    size_t len = strlen(dst);
+    while (*src && len + 1 < dst_size) dst[len++] = *src++;
+    dst[len] = '\0';
+}
+
 static inline void _sys_make_abs(const char *path, char *abs, size_t abs_size) {
+    if (!abs || abs_size == 0) return;
+    abs[0] = '\0';
+
     if (!path || !*path) {
-        strncpy(abs, _sys_cwd, abs_size - 1);
-    } else if (path[0] == '/') {
-        strncpy(abs, path, abs_size - 1);
-    } else if (strcmp(_sys_cwd, "/") == 0) {
-        snprintf(abs, abs_size, "/%s", path);
-    } else {
-        snprintf(abs, abs_size, "%s/%s", _sys_cwd, path);
+        _sys_copy_str(abs, abs_size, _sys_cwd);
+        return;
     }
-    abs[abs_size - 1] = '\0';
+    if (path[0] == '/') {
+        _sys_copy_str(abs, abs_size, path);
+        return;
+    }
+
+    if (strcmp(_sys_cwd, "/") == 0) {
+        _sys_append_str(abs, abs_size, "/");
+    } else {
+        _sys_append_str(abs, abs_size, _sys_cwd);
+        _sys_append_str(abs, abs_size, "/");
+    }
+    _sys_append_str(abs, abs_size, path);
 }
 
 /* Terminate: on PicoCalc there is no process model yet. */
@@ -202,8 +227,7 @@ static inline int sys_open(const char *path, int flags) {
     if (r != FAT_OK) return -1;
 
     _sys_fds[fd].open = true;
-    strncpy(_sys_fds[fd].path, abs, sizeof _sys_fds[fd].path - 1);
-    _sys_fds[fd].path[sizeof _sys_fds[fd].path - 1] = '\0';
+    _sys_copy_str(_sys_fds[fd].path, sizeof _sys_fds[fd].path, abs);
     return fd;
 }
 
@@ -247,8 +271,7 @@ static inline int sys_chdir(const char *path) {
     char abs[256];
     _sys_make_abs(path, abs, sizeof abs);
     if (fat_is_dir(abs) != FAT_OK) return -1;
-    strncpy(_sys_cwd, abs, 255);
-    _sys_cwd[255] = '\0';
+    _sys_copy_str(_sys_cwd, sizeof _sys_cwd, abs);
     return 0;
 }
 

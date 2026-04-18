@@ -102,6 +102,7 @@ static uint32_t _root_cluster   = 0;   /* root dir cluster (FAT32)      */
 static uint8_t  _spc            = 0;   /* sectors per cluster           */
 static uint16_t _root_entries   = 0;   /* max root entries (FAT16)      */
 static uint32_t _fat_size       = 0;   /* FAT size in sectors           */
+static uint32_t _cluster_count  = 0;   /* total data clusters           */
 
 static uint8_t  _sector_buf[512];
 
@@ -183,10 +184,13 @@ static void to_83(const char *component, uint8_t *name8, uint8_t *ext3) {
     memset(ext3,  ' ', 3);
     int ni = 0, ei = 0;
     bool in_ext = false;
-    for (const char *p = component; *p && ni < 8; p++) {
+    for (const char *p = component; *p; p++) {
         if (*p == '.') { in_ext = true; continue; }
-        if (in_ext) { if (ei < 3) ext3[ei++] = (uint8_t)toupper(*p); }
-        else        { name8[ni++] = (uint8_t)toupper(*p); }
+        if (in_ext) {
+            if (ei < 3) ext3[ei++] = (uint8_t)toupper((unsigned char)*p);
+        } else {
+            if (ni < 8) name8[ni++] = (uint8_t)toupper((unsigned char)*p);
+        }
     }
 }
 
@@ -355,6 +359,7 @@ fat_result_t fat_mount(void) {
                                            : bpb->total_sectors_32;
     uint32_t data_sectors  = total - (_root_lba - _part_lba) - root_sectors;
     uint32_t cluster_count = data_sectors / _spc;
+    _cluster_count = cluster_count;
 
     if (cluster_count >= 65525) {
         _fat32 = true;
@@ -452,6 +457,54 @@ int32_t fat_read(fat_file_t *f, void *buf, uint32_t n) {
     return (int32_t)bytes_read;
 }
 
+fat_result_t fat_get_usage(fat_usage_t *out) {
+    if (!out) return FAT_ERR_IO;
+    memset(out, 0, sizeof *out);
+    out->mounted = _mounted;
+    if (!_mounted) return FAT_ERR_NOTMOUNTED;
+
+    out->fat32 = _fat32;
+    out->bytes_per_sector = 512;
+    out->sectors_per_cluster = _spc;
+    out->cluster_count = _cluster_count;
+
+    uint32_t free_clusters = 0;
+    uint32_t used_clusters = 0;
+    uint32_t entries_per_sector = _fat32 ? (512 / 4) : (512 / 2);
+
+    for (uint32_t sector = 0; sector < _fat_size; sector++) {
+        fat_result_t r = read_sector(_fat_lba + sector);
+        if (r != FAT_OK) return r;
+
+        for (uint32_t i = 0; i < entries_per_sector; i++) {
+            uint32_t cluster = sector * entries_per_sector + i;
+            if (cluster < 2 || cluster >= _cluster_count + 2) continue;
+
+            uint32_t val = 0;
+            if (_fat32) {
+                memcpy(&val, _sector_buf + i * 4, 4);
+                val &= 0x0FFFFFFF;
+            } else {
+                uint16_t v16;
+                memcpy(&v16, _sector_buf + i * 2, 2);
+                val = v16;
+            }
+
+            if (val == 0) free_clusters++;
+            else used_clusters++;
+        }
+    }
+
+    out->free_clusters = free_clusters;
+    out->used_clusters = used_clusters;
+
+    uint64_t cluster_bytes_u64 = (uint64_t)_spc * 512ULL;
+    out->total_bytes = (uint64_t)_cluster_count * cluster_bytes_u64;
+    out->used_bytes  = (uint64_t)used_clusters * cluster_bytes_u64;
+    out->free_bytes  = (uint64_t)free_clusters * cluster_bytes_u64;
+    return FAT_OK;
+}
+
 const char *fat_result_str(fat_result_t r) {
     switch (r) {
         case FAT_OK:             return "OK";
@@ -513,14 +566,11 @@ static fat_result_t write_fat_entry(uint32_t cluster, uint32_t value) {
 static uint32_t alloc_cluster(void) {
     if (!_mounted) return 0;
 
-    /* Total data clusters */
     uint32_t total_lba = _fat_lba + _fat_size;
     uint32_t sector    = _fat_lba;
-    uint32_t last_sector = 0;
 
     for (sector = _fat_lba; sector < _fat_lba + _fat_size; sector++) {
         if (read_sector(sector) != FAT_OK) return 0;
-        last_sector = sector;
         uint32_t entries = _fat32 ? 512 / 4 : 512 / 2;
         for (uint32_t i = 0; i < entries; i++) {
             uint32_t cluster = (sector - _fat_lba) * entries + i;
@@ -559,9 +609,8 @@ static fat_result_t free_cluster_chain(uint32_t start) {
 }
 
 /*
- * Resolve path to the parent directory cluster + component name.
- * Returns FAT_OK; sets *parent_cluster/*parent_is_root16 to the
- * parent dir, and fills component[] with the last path segment.
+ * Resolve path to the parent directory cluster and final component name.
+ * Returns FAT_OK and fills the parent directory outputs plus component[].
  */
 static fat_result_t resolve_parent(const char *path,
                                    uint32_t *parent_cluster,
