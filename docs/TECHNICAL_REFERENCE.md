@@ -193,8 +193,8 @@ These limits strongly influence implementation style and are a key reason many t
 
 ## 11. Limits and Constraints
 
-|Resource|Limit|Notes|
-|---|---|---|
+| Resource | Limit | Notes |
+| --- | --- | --- |
 | Shell line buffer | 256 bytes | Input line maximum |
 | Output format buffer | 512 bytes | `out_fmt()` single call |
 | Output redirection buffer | 4096 bytes | Max redirected output per command |

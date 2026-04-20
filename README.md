@@ -54,8 +54,8 @@ picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
 
 ## Documentation
 
-|Document|Purpose|
-|---|---|
+| Document | Purpose |
+| --- | --- |
 | [docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) | Fast-start setup and first-use instructions |
 | [docs/INSTALL.md](docs/INSTALL.md) | Setup, build, flash, and troubleshooting instructions |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Day-to-day usage of the shell, tools, apps, and languages |
