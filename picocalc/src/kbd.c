@@ -22,6 +22,7 @@ static bool _last_charging = false;
 static int      _last_key = -1;
 static uint32_t _last_press_ms = 0;
 static uint32_t _last_repeat_ms = 0;
+static bool     _key_consumed = false;  /* true after kbd_getc fires once for a held key */
 #define KEY_REPEAT_DELAY_MS   500
 #define KEY_REPEAT_RATE_MS    100
 
@@ -80,7 +81,14 @@ int kbd_getc(void) {
     uint8_t status  = (uint8_t)(buf & 0xFF);
     uint8_t keycode = (uint8_t)(buf >> 8);
 
-    if (status != KBD_STAT_PRESSED) return -1;
+    if (status != KBD_STAT_PRESSED) {
+        /* Key released — reset edge-detect state */
+        if (_last_key >= 0) {
+            _last_key = -1;
+            _key_consumed = false;
+        }
+        return -1;
+    }
 
     /* Validate keycode is in printable ASCII or known control range */
     if (keycode == 0 || keycode > 0x7E) return -1;
@@ -88,14 +96,19 @@ int kbd_getc(void) {
     /* Map Ctrl+letter to control character 1-26 */
     if (_ctrl_held && keycode >= 'a' && keycode <= 'z') {
         _last_key = -1; /* don't repeat control chars */
+        _key_consumed = false;
         return keycode - 'a' + 1;
     }
+
+    /* Edge-detect: only fire once per physical press; repeat is via kbd_get_repeat() */
+    if ((int)keycode == _last_key && _key_consumed) return -1;
 
     /* Track for key repeat */
     uint32_t now = to_ms_since_boot(get_absolute_time());
     _last_key = (int)keycode;
     _last_press_ms = now;
     _last_repeat_ms = 0;
+    _key_consumed = true;
     return (int)keycode;
 }
 
@@ -113,6 +126,7 @@ int kbd_get_repeat(void) {
 
 void kbd_clear_repeat(void) {
     _last_key = -1;
+    _key_consumed = false;
 }
 
 void kbd_set_backlight(uint8_t level) {
