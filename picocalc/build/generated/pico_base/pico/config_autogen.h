@@ -4,7 +4,7 @@
 
 // based on PICO_CONFIG_HEADER_FILES:
 
-#include "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/pico-sdk/src/boards/include/boards/pico.h"
-#include "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/pico-sdk/src/rp2_common/cmsis/include/cmsis/rename_exceptions.h"
+#include "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/boards/include/boards/pico.h"
+#include "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/cmsis/include/cmsis/rename_exceptions.h"
 
 // based on PICO_RP2040_CONFIG_HEADER_FILES:

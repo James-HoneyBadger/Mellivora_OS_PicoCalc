@@ -1,4 +1,4 @@
-# Install script for directory: /home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/pico-sdk/src/rp2040/pico_platform
+# Install script for directory: /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2040/pico_platform
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -32,14 +32,8 @@ if(NOT DEFINED CMAKE_CROSSCOMPILING)
   set(CMAKE_CROSSCOMPILING "TRUE")
 endif()
 
-# Set path to fallback-tool for dependency-resolution.
+# Set default install directory permissions.
 if(NOT DEFINED CMAKE_OBJDUMP)
   set(CMAKE_OBJDUMP "/usr/bin/arm-none-eabi-objdump")
 endif()
 
-string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
-       "${CMAKE_INSTALL_MANIFEST_FILES}")
-if(CMAKE_INSTALL_LOCAL_ONLY)
-  file(WRITE "/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/pico-sdk/src/rp2040/pico_platform/install_local_manifest.txt"
-     "${CMAKE_INSTALL_MANIFEST_CONTENT}")
-endif()

@@ -1,5 +1,4 @@
 file(REMOVE_RECURSE
-  "CMakeFiles/picotool.dir/link.d"
   "CMakeFiles/picotool.dir/data_locs.cpp.o"
   "CMakeFiles/picotool.dir/data_locs.cpp.o.d"
   "CMakeFiles/picotool.dir/get_enc_bootloader.cpp.o"

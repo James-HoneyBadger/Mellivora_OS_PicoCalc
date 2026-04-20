@@ -4,6 +4,6 @@
 
 method=source_dir
 command=
-source_dir=/home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/_deps/picotool-src/enc_bootloader
+source_dir=/home/james/Mellivora_OS_PicoCalc/picocalc/build/_deps/picotool-src/enc_bootloader
 work_dir=
 

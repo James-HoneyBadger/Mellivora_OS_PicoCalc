@@ -1,4 +1,4 @@
-// Padded and checksummed version of: /home/daddy/Downloads/Mellivora_OS-2.0.0/picocalc/build/pico-sdk/src/rp2040/boot_stage2/bs2_default.bin
+// Padded and checksummed version of: /home/james/Mellivora_OS_PicoCalc/picocalc/build/pico-sdk/src/rp2040/boot_stage2/bs2_default.bin
 
 .cpu cortex-m0plus
 .thumb
