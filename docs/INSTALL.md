@@ -180,7 +180,7 @@ samples
 
 The top-level `Makefile` provides these targets:
 
-| Target | Description |
+|Target|Description|
 |---|---|
 | `make picocalc` | Build firmware for Pico (RP2040) |
 | `make pico2` | Build firmware for Pico 2 (RP2350) |
@@ -189,7 +189,7 @@ The top-level `Makefile` provides these targets:
 
 The build uses CMake internally. Key CMake variables:
 
-| Variable | Default | Purpose |
+|Variable|Default|Purpose|
 |---|---|---|
 | `PICO_SDK_PATH` | `picocalc/pico-sdk` | Path to the Pico SDK |
 | `PICO_BOARD` | `pico` / `pico2` / `pico2_w` | Target board type |
