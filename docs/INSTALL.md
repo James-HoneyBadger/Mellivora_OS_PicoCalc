@@ -15,7 +15,7 @@ This document is the main setup and bring-up guide for Mellivora PicoCalc. It co
 
 ### Hardware requirements
 
-- Clockwork PicoCalc or another RP2040-based compatible device
+- Clockwork PicoCalc or another compatible device using Raspberry Pi Pico or Pico 2 class hardware
 - USB data cable
 - microSD card for filesystem-backed commands and persistent apps
 
@@ -51,16 +51,23 @@ cmake --version
 
 ## 4. Building the Firmware
 
-From the repository root, run:
+From the repository root, run the standard Pico build:
 
 ```bash
 make picocalc
 ```
 
-When the build succeeds, the UF2 image will be available at:
+For the Pico 2 variant, run:
+
+```bash
+make pico2
+```
+
+When the builds succeed, the UF2 images will be available at:
 
 ```text
 picocalc/build/mellivora_picocalc.uf2
+picocalc/build-pico2/mellivora_picocalc_pico2.uf2
 ```
 
 ## 5. Flashing to Hardware
@@ -128,6 +135,7 @@ Install the embedded GCC toolchain and verify it is present in your shell path.
 - run `mount` before using storage features
 - reformat the card as FAT16 or FAT32
 - try a smaller, known-good SD card if detection is unreliable
+- use long command output with `| more` if the display is busy with large listings
 
 ### The device does not appear in BOOTSEL mode
 

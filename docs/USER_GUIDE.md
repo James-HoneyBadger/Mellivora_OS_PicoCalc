@@ -4,7 +4,7 @@ This guide explains everyday use of Mellivora PicoCalc on real hardware. It is a
 
 ## 1. What Mellivora PicoCalc Is
 
-Mellivora PicoCalc is a compact shell environment for PicoCalc-class RP2040 hardware. It is designed to make the device feel like a tiny portable workstation with:
+Mellivora PicoCalc is a compact shell environment for PicoCalc-class hardware using RP2040 and Pico 2 class RP2350 boards. It is designed to make the device feel like a tiny portable workstation with:
 
 - a text shell
 - mirrored LCD and serial output
@@ -65,6 +65,7 @@ Common file commands:
 - `tree` for a recursive directory view
 - `du` for directory size totals
 - `df` for total, used, and free space
+- append `| more` to long output when you want paging on the LCD
 
 ## 5. Interactive File Tools
 

@@ -10,17 +10,24 @@ From the repository root:
 make picocalc
 ```
 
+For the Pico 2 firmware image:
+
+```bash
+make pico2
+```
+
 This produces:
 
 ```text
 picocalc/build/mellivora_picocalc.uf2
+picocalc/build-pico2/mellivora_picocalc_pico2.uf2
 ```
 
 ## Flash
 
-1. Hold BOOTSEL on the RP2040 device.
+1. Hold BOOTSEL on the Pico or Pico 2 device.
 2. Connect USB.
-3. Copy the UF2 to the mounted drive.
+3. Copy the matching UF2 to the mounted drive.
 4. Wait for the reboot.
 
 ## First Commands to Try

@@ -1,16 +1,17 @@
 # Mellivora PicoCalc
 
-Mellivora PicoCalc is a keyboard-first micro operating environment for RP2040-based PicoCalc hardware. It combines a shell, filesystem tools, persistent personal utilities, simple development environments, and lightweight games into a compact firmware image that runs directly on the device.
+Mellivora PicoCalc is a keyboard-first micro operating environment for Clockwork PicoCalc style hardware based on Raspberry Pi Pico and Pico 2 boards. It combines a shell, filesystem tools, persistent personal utilities, simple development environments, and lightweight games into a compact firmware image that runs directly on the device.
 
 ![Mellivora PicoCalc preview](picocalc_mock_preview.svg)
 
 ## Highlights
 
-- text shell with history, aliases, and built-in help
+- text shell with history, aliases, built-in help, and long-output paging with more
 - FAT-backed SD card storage with file, search, and disk-usage tools
 - persistent apps for notes, todo lists, planner, journal, habits, and bookmarks
 - interactive utilities including browser, editor, hex editor, paint, sprite editor, and terminal mode
 - built-in calculator, BASIC environment, and Tiny C environment
+- smoother LCD console behavior on real hardware with improved scrolling and less redraw blink
 - launcher, dashboard, system monitor, samples, and mini games including snake
 
 ## Quick Start
@@ -23,16 +24,23 @@ From the repository root:
 make picocalc
 ```
 
-Output image:
+For the Pico 2 variant:
+
+```bash
+make pico2
+```
+
+Output images:
 
 ```text
 picocalc/build/mellivora_picocalc.uf2
+picocalc/build-pico2/mellivora_picocalc_pico2.uf2
 ```
 
 ### Flash
 
-1. Put the RP2040 device into BOOTSEL mode.
-2. Copy the UF2 file to the mounted drive.
+1. Put the Pico or Pico 2 device into BOOTSEL mode.
+2. Copy the matching UF2 file to the mounted drive.
 3. Reboot into Mellivora PicoCalc.
 4. Insert an SD card and run `mount` to enable filesystem features.
 
@@ -53,10 +61,10 @@ picocalc/build/mellivora_picocalc.uf2
 - `picocalc/` — active firmware source tree
 - `picocalc/src/` — shell, hardware, filesystem, and app logic
 - `docs/` — documentation set
-- `Makefile` — root build entry for the PicoCalc target
+- `Makefile` — root build entry for both Pico and Pico 2 firmware targets
 
 ## Project Status
 
-This repository now focuses on the PicoCalc firmware target. The maintained artifact is the RP2040 UF2 image, and the system is designed around a practical on-device shell workflow rather than a desktop runtime.
+This repository focuses on the PicoCalc firmware target for real handheld hardware. The standard Pico build is the primary path, and a dedicated Pico 2 build is now included for RP2350-based setups. The system is designed around a practical on-device shell workflow rather than a desktop runtime.
 
 See [picocalc/README.md](picocalc/README.md) for the firmware-local overview.
