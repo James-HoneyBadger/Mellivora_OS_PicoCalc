@@ -16,11 +16,18 @@ For the Pico 2 firmware image:
 make pico2
 ```
 
+For the Pico 2W firmware image:
+
+```bash
+make pico2w
+```
+
 This produces:
 
 ```text
 picocalc/build/mellivora_picocalc.uf2
 picocalc/build-pico2/mellivora_picocalc_pico2.uf2
+picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
 ```
 
 ## Flash

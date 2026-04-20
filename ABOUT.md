@@ -12,6 +12,7 @@ Mellivora PicoCalc is a handheld Pico and Pico 2 shell environment with SD-backe
 - rp2040
 - rp2350
 - pico2
+- pico2w
 - pico-sdk
 - embedded
 - firmware

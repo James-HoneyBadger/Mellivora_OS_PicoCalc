@@ -44,27 +44,39 @@ The normal runtime sequence is:
 
 Notable shell properties:
 
-- fixed-size line buffer
-- history ring with replay support
-- persistent alias storage
+- fixed-size line buffer (256 bytes)
+- history ring with replay support (`!!`, `!N`)
+- persistent alias storage with circular expansion protection (max depth 8)
+- tab completion of command names
+- command chaining via `;` separator (up to 16 segments per line)
+- output redirection: `>` (truncate) and `>>` (append) to SD files
+- double-quoted argument grouping to preserve spaces
+- Ctrl-C interrupt flag for cancelling the current input line
 - relative and absolute path handling
 - mirrored output to both device display and serial console
 - topic-based built-in help through `help` and `man`
+- software key repeat (500ms delay, 100ms rate)
 
 ## 5. Filesystem Model
 
-The filesystem layer is FAT-backed and activated by running `mount`.
+The filesystem layer is FAT16/FAT32-backed and activated by running `mount`.
 
 Provided capabilities include:
 
 - mount detection and initialization
 - directory listing
-- file opening and reading
+- file opening and sequential reading
 - creation and overwrite support
+- append support (`fat_append`)
+- in-place rename support (`fat_rename`, same directory)
 - directory creation
 - file removal and empty-directory removal
+- recursive single-level directory copy
 - tree and usage reporting
 - total, used, and free capacity reporting through `df`
+- 2-slot FAT sector cache for read performance
+- SD block CRC16 validation
+- card-detect debounce (3-read majority vote)
 
 Users are expected to mount the SD card before relying on persistent apps or file tools.
 
@@ -72,12 +84,14 @@ Users are expected to mount the SD card before relying on persistent apps or fil
 
 Several applications store state as normal files on the SD card. Important examples include:
 
-- `SETTINGS.CFG`
-- `TODO.TXT`
-- `PLANNER.TXT`
-- `BOOKMARKS.CFG`
-- `ALIASES.CFG`
-- journal and habits backing files
+- `SETTINGS.CFG` — user preferences
+- `TODO.TXT` — task list
+- `PLANNER.TXT` — dated agenda items
+- `BOOKMARKS.CFG` — saved bookmarks with CWD context
+- `ALIASES.CFG` — shell command aliases
+- `JOURNAL.TXT` — dated journal entries
+- `HABITS.TXT` — habit tracking with streak data
+- `HISCORE.TXT` — snake game high score
 
 This plain-file approach keeps the system transparent and easy to recover manually.
 
@@ -177,7 +191,37 @@ This firmware is shaped by embedded constraints:
 
 These limits strongly influence implementation style and are a key reason many tools prefer small text formats and simple menus.
 
-## 11. Build Artifact
+## 11. Limits and Constraints
+
+| Resource | Limit | Notes |
+|---|---|---|
+| Shell line buffer | 256 bytes | Input line maximum |
+| Output format buffer | 512 bytes | `out_fmt()` single call |
+| Output redirection buffer | 4096 bytes | Max redirected output per command |
+| History entries | 16 | Circular ring |
+| Alias storage | 2560 bytes | All aliases combined |
+| Alias expansion depth | 8 | Prevents circular aliases |
+| Command chain segments | 16 | Max `;`-separated commands |
+| LCD text grid | 40 cols × 20 rows | 8×16 pixel font on 320×320 |
+| Editor lines | 128 | Max lines per file in editor |
+| BASIC program lines | 256 | Max BASIC line-numbered lines |
+| BASIC variables | 26 | A through Z, integer only |
+| Tiny C variables | 26 | a through z, integer only |
+| Todo items | 32 | Max todo entries |
+| Planner items | 32 | Max planner entries |
+| Habits items | 16 | Max tracked habits |
+| Bookmarks | 16 | Max saved bookmarks |
+| Journal entries | 32 | Max journal entries |
+| File read buffer | 8192 bytes | Max file size for in-memory tools |
+| FAT sector cache | 2 slots | LRU for FAT table reads |
+| SD CRC validation | Per-block | CRC16-CCITT on every read |
+| Sort lines | 256 | Max sortable lines |
+| Find results | 128 | Max find callback entries |
+| File names | 8.3 format | Uppercase, no long filenames |
+| Key repeat delay | 500ms | Initial delay before repeat |
+| Key repeat rate | 100ms | Interval between repeats |
+
+## 12. Build Artifact
 
 The normal firmware output is:
 
@@ -185,6 +229,18 @@ The normal firmware output is:
 picocalc/build/mellivora_picocalc.uf2
 ```
 
-## 12. Scope and Direction
+For Pico 2 (RP2350):
 
-This repository now centers on the PicoCalc firmware target. The maintained direction is a practical RP2040 handheld shell environment with apps and interpreters, not the older desktop-oriented runtime flow.
+```text
+picocalc/build-pico2/mellivora_picocalc_pico2.uf2
+```
+
+For Pico 2W (RP2350 with WiFi):
+
+```text
+picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
+```
+
+## 13. Scope and Direction
+
+This repository now centers on the PicoCalc firmware target. The maintained direction is a practical RP2040/RP2350 handheld shell environment with apps and interpreters, not the older desktop-oriented runtime flow.

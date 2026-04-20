@@ -6,13 +6,14 @@ Mellivora PicoCalc is a keyboard-first micro operating environment for Clockwork
 
 ## Highlights
 
-- text shell with history, aliases, built-in help, and long-output paging with more
-- FAT-backed SD card storage with file, search, and disk-usage tools
-- persistent apps for notes, todo lists, planner, journal, habits, and bookmarks
-- interactive utilities including browser, editor, hex editor, paint, sprite editor, and terminal mode
+- text shell with history, aliases, tab completion, command chaining (`;`), output redirection (`>` `>>`), and built-in help
+- FAT16/FAT32 SD card storage with file, search, and disk-usage tools
+- persistent apps for notes, todo lists, planner, journal, habits (with streak tracking), and bookmarks (with CWD context)
+- interactive utilities including browser, editor, hex editor (with byte search), paint, sprite editor, and terminal mode
+- text processing: grep (with regex), sort, find, head, tail, cut, wc, and more
 - built-in calculator, BASIC environment, and Tiny C environment
-- smoother LCD console behavior on real hardware with improved scrolling and less redraw blink
-- launcher, dashboard, system monitor, samples, and mini games including snake
+- smoother LCD console with optimized scrolling and software key repeat
+- launcher, dashboard, system monitor, samples, and mini games including snake (with persistent high scores)
 
 ## Quick Start
 
@@ -30,11 +31,18 @@ For the Pico 2 variant:
 make pico2
 ```
 
+For the Pico 2W variant:
+
+```bash
+make pico2w
+```
+
 Output images:
 
 ```text
 picocalc/build/mellivora_picocalc.uf2
 picocalc/build-pico2/mellivora_picocalc_pico2.uf2
+picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
 ```
 
 ### Flash
@@ -52,6 +60,7 @@ picocalc/build-pico2/mellivora_picocalc_pico2.uf2
 | [docs/INSTALL.md](docs/INSTALL.md) | Setup, build, flash, and troubleshooting instructions |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Day-to-day usage of the shell, tools, apps, and languages |
 | [docs/TUTORIAL.md](docs/TUTORIAL.md) | Guided first session from boot to productive use |
+| [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) | Single-page command cheatsheet |
 | [docs/PROGRAMMING_GUIDE.md](docs/PROGRAMMING_GUIDE.md) | Extending the firmware and adding new commands or apps |
 | [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md) | Internal architecture, subsystems, and runtime behavior |
 | [ABOUT.md](ABOUT.md) | GitHub-friendly project summary and repository about text |

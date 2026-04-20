@@ -63,11 +63,18 @@ For the Pico 2 variant, run:
 make pico2
 ```
 
+For the Pico 2W variant, run:
+
+```bash
+make pico2w
+```
+
 When the builds succeed, the UF2 images will be available at:
 
 ```text
 picocalc/build/mellivora_picocalc.uf2
 picocalc/build-pico2/mellivora_picocalc_pico2.uf2
+picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
 ```
 
 ## 5. Flashing to Hardware
@@ -137,6 +144,15 @@ Install the embedded GCC toolchain and verify it is present in your shell path.
 - try a smaller, known-good SD card if detection is unreliable
 - use long command output with `| more` if the display is busy with large listings
 
+### SD Card Compatibility
+
+The firmware communicates with SD cards over bit-banged SPI at 1 MHz. Compatibility notes:
+
+- **Recommended**: SDHC cards 4 GB to 32 GB formatted as FAT32
+- **Also supported**: SD cards up to 2 GB formatted as FAT16
+- **Not supported**: SDXC (64 GB+) cards with exFAT — reformat as FAT32 if needed
+- **Troubleshooting**: If `mount` fails or hangs, try a different card brand. Some ultra-fast UHS-I cards may not work reliably over SPI. The firmware now validates CRC16 checksums on every block read and uses 3-read debounce for card detection.
+
 ### The device does not appear in BOOTSEL mode
 
 - use a data-capable USB cable
@@ -160,6 +176,33 @@ settings
 samples
 ```
 
-## 11. Scope Reminder
+## 11. Build System Reference
 
-This repository is maintained as a PicoCalc firmware project. The active target is the RP2040-based handheld workflow, not the legacy PC boot environment.
+The top-level `Makefile` provides these targets:
+
+| Target | Description |
+|---|---|
+| `make picocalc` | Build firmware for Pico (RP2040) |
+| `make pico2` | Build firmware for Pico 2 (RP2350) |
+| `make pico2w` | Build firmware for Pico 2W (RP2350 with WiFi) |
+| `make clean` | Remove build artifacts |
+
+The build uses CMake internally. Key CMake variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PICO_SDK_PATH` | `picocalc/pico-sdk` | Path to the Pico SDK |
+| `PICO_BOARD` | `pico` / `pico2` / `pico2_w` | Target board type |
+| `CMAKE_BUILD_TYPE` | `Release` | Build optimization level |
+
+Output files:
+
+- Pico: `picocalc/build/mellivora_picocalc.uf2`
+- Pico 2: `picocalc/build-pico2/mellivora_picocalc_pico2.uf2`
+- Pico 2W: `picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2`
+
+A `Containerfile` is also provided for reproducible builds in a container environment.
+
+## 12. Scope Reminder
+
+This repository is maintained as a PicoCalc firmware project. The active targets are the RP2040 and RP2350 based handheld workflows.
