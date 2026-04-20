@@ -1,23 +1,38 @@
 #
 # Mellivora PicoCalc Build System
 #
-# Root build entry for the RP2040 Clockwork PicoCalc target.
+# Root build entry for the Raspberry Pi Pico and Pico 2 Clockwork PicoCalc targets.
 #
 
 PICO_DIR = picocalc
-PICO_BUILD_DIR = $(PICO_DIR)/build
+PICO_BUILD_DIR ?= $(PICO_DIR)/build
 PICO_BOARD ?= pico
+PICO_PLATFORM ?= rp2040
+PICO_UF2_FAMILY ?= rp2040
 PICO_ELF = $(PICO_BUILD_DIR)/mellivora_picocalc.elf
 PICO_UF2 = $(PICO_BUILD_DIR)/mellivora_picocalc.uf2
 PICOTOOL = $(PICO_BUILD_DIR)/_deps/picotool/picotool
 
-.PHONY: all picocalc picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean clean
+.PHONY: all picocalc picocalc-pico2 pico2 picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean clean
 
 all: picocalc
 
 picocalc: picocalc-sdk picocalc-config picocalc-build picocalc-uf2
 	@echo "=== PicoCalc UF2 ready ==="
 	@echo "  $(PICO_UF2)"
+
+picocalc-pico2: PICO_BOARD = pico2
+picocalc-pico2: PICO_PLATFORM = rp2350
+picocalc-pico2: PICO_UF2_FAMILY = rp2350-arm-s
+picocalc-pico2: PICO_BUILD_DIR = $(PICO_DIR)/build-pico2
+picocalc-pico2: PICO_ELF = $(PICO_BUILD_DIR)/mellivora_picocalc.elf
+picocalc-pico2: PICO_UF2 = $(PICO_BUILD_DIR)/mellivora_picocalc_pico2.uf2
+picocalc-pico2: PICOTOOL = $(PICO_BUILD_DIR)/_deps/picotool/picotool
+picocalc-pico2: picocalc-sdk picocalc-config picocalc-build picocalc-uf2
+	@echo "=== PicoCalc Pico 2 UF2 ready ==="
+	@echo "  $(PICO_UF2)"
+
+pico2: picocalc-pico2
 
 picocalc-sdk:
 	@if [ -z "$(PICO_SDK_PATH)" ] && [ ! -d "$(PICO_DIR)/pico-sdk/external" ]; then \
@@ -26,13 +41,13 @@ picocalc-sdk:
 	fi
 
 picocalc-config:
-	@echo "=== Configuring PicoCalc target (board: $(PICO_BOARD)) ==="
+	@echo "=== Configuring PicoCalc target (board: $(PICO_BOARD), platform: $(PICO_PLATFORM)) ==="
 	@EXPECTED_SRC="$(CURDIR)/$(PICO_DIR)"; \
 	if [ -f "$(PICO_BUILD_DIR)/CMakeCache.txt" ] && ! grep -Fq "CMAKE_HOME_DIRECTORY:INTERNAL=$$EXPECTED_SRC" "$(PICO_BUILD_DIR)/CMakeCache.txt"; then \
 		echo "=== Removing stale PicoCalc build cache ==="; \
 		rm -rf "$(PICO_BUILD_DIR)"; \
 	fi
-	@cmake -S "$(PICO_DIR)" -B "$(PICO_BUILD_DIR)" -DPICO_BOARD=$(PICO_BOARD)
+	@cmake -S "$(PICO_DIR)" -B "$(PICO_BUILD_DIR)" -DPICO_BOARD=$(PICO_BOARD) -DPICO_PLATFORM=$(PICO_PLATFORM)
 
 picocalc-build:
 	@echo "=== Building PicoCalc target ==="
@@ -42,11 +57,15 @@ picocalc-uf2:
 	@echo "=== Generating PicoCalc UF2 ==="
 	@test -f "$(PICO_ELF)" || { echo "Missing ELF: $(PICO_ELF)"; exit 1; }
 	@test -x "$(PICOTOOL)" || { echo "Missing picotool: $(PICOTOOL)"; exit 1; }
-	@"$(PICOTOOL)" uf2 convert --quiet "$(PICO_ELF)" "$(PICO_UF2)" --family rp2040
+	@"$(PICOTOOL)" uf2 convert --quiet "$(PICO_ELF)" "$(PICO_UF2)" --family "$(PICO_UF2_FAMILY)"
 
 picocalc-clean:
 	@echo "=== Cleaning PicoCalc build directory ==="
 	@rm -rf "$(PICO_BUILD_DIR)"
 
-clean: picocalc-clean
+picocalc-pico2-clean:
+	@echo "=== Cleaning PicoCalc Pico 2 build directory ==="
+	@rm -rf "$(PICO_DIR)/build-pico2"
+
+clean: picocalc-clean picocalc-pico2-clean
 	@find . -maxdepth 1 -name "*.lst" -delete
