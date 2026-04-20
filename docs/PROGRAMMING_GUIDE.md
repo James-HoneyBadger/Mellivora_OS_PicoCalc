@@ -86,19 +86,40 @@ Many apps save their state to plain files on the SD card. This approach is recom
 
 Examples include:
 
-- settings
-- todo items
-- planner entries
-- journal data
-- habits tracking
-- bookmarks
+- settings (`SETTINGS.CFG`)
+- todo items (`TODO.TXT`)
+- planner entries (`PLANNER.TXT`)
+- journal data (`JOURNAL.TXT`)
+- habits tracking (`HABITS.TXT`) — uses pipe-delimited format with streak fields
+- bookmarks (`BOOKMARKS.CFG`) — stores label, target, and CWD context
+- aliases (`ALIASES.CFG`)
+- high scores (`HISCORE.TXT`)
 
 Guidelines:
 
 - prefer readable text formats where practical
-- tolerate missing files gracefully
+- use pipe (`|`) delimiters for multi-field records
+- tolerate missing or short fields for backwards compatibility
 - create sensible defaults on first run
 - never assume unlimited path or record length
+
+## 7a. Available Filesystem Functions
+
+The FAT layer (`fat.h`) provides these functions for app development:
+
+| Function | Purpose |
+|---|---|
+| `fat_mount()` | Mount the SD card |
+| `fat_ls(path, cb, ctx)` | Enumerate directory entries |
+| `fat_open(path, f)` | Open a file for reading |
+| `fat_read(f, buf, n)` | Read bytes from an open file |
+| `fat_create(path, data, len)` | Create or overwrite a file |
+| `fat_append(path, data, len)` | Append data to a file (creates if missing) |
+| `fat_rename(old, new)` | Rename a file (same directory) |
+| `fat_unlink(path)` | Delete a file or empty directory |
+| `fat_mkdir(path)` | Create a directory |
+| `fat_is_dir(path)` | Check if path is a directory |
+| `fat_get_usage(out)` | Get filesystem capacity info |
 
 ## 8. Coding Rules for Embedded Safety
 

@@ -16,6 +16,28 @@
 
 static int _inited = 0;
 static int _ctrl_held = 0;
+static bool _last_charging = false;
+
+/* Key repeat tracking */
+static int      _last_key = -1;
+static uint32_t _last_press_ms = 0;
+static uint32_t _last_repeat_ms = 0;
+#define KEY_REPEAT_DELAY_MS   500
+#define KEY_REPEAT_RATE_MS    100
+
+/* Recover stuck I2C bus by pulsing SCL 9 times */
+static void _kbd_i2c_recover(void) {
+    gpio_set_function(KBD_PIN_SCL, GPIO_FUNC_SIO);
+    gpio_set_dir(KBD_PIN_SCL, GPIO_OUT);
+    for (int i = 0; i < 9; i++) {
+        gpio_put(KBD_PIN_SCL, 0);
+        busy_wait_us_32(5);
+        gpio_put(KBD_PIN_SCL, 1);
+        busy_wait_us_32(5);
+    }
+    gpio_set_function(KBD_PIN_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(KBD_PIN_SCL);
+}
 
 static void _kbd_write_reg(uint8_t reg, uint8_t value) {
     if (!_inited) return;
@@ -40,14 +62,14 @@ int kbd_getc(void) {
 
     uint8_t reg = KBD_REG_KEY;
     int ret = i2c_write_timeout_us(KBD_I2C_PORT, KBD_I2C_ADDR, &reg, 1, false, 50000);
-    if (ret < 0) return -1;
+    if (ret < 0) { _kbd_i2c_recover(); return -1; }
 
     /* The co-processor needs ~16 ms to prepare the response. */
     sleep_ms(16);
 
     uint16_t buf = 0;
     ret = i2c_read_timeout_us(KBD_I2C_PORT, KBD_I2C_ADDR, (uint8_t *)&buf, 2, false, 50000);
-    if (ret < 0) return -1;
+    if (ret < 0) { _kbd_i2c_recover(); return -1; }
     if (buf == 0) return -1;
 
     /* Ctrl key state transitions */
@@ -60,11 +82,37 @@ int kbd_getc(void) {
 
     if (status != KBD_STAT_PRESSED) return -1;
 
+    /* Validate keycode is in printable ASCII or known control range */
+    if (keycode == 0 || keycode > 0x7E) return -1;
+
     /* Map Ctrl+letter to control character 1-26 */
     if (_ctrl_held && keycode >= 'a' && keycode <= 'z') {
+        _last_key = -1; /* don't repeat control chars */
         return keycode - 'a' + 1;
     }
+
+    /* Track for key repeat */
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    _last_key = (int)keycode;
+    _last_press_ms = now;
+    _last_repeat_ms = 0;
     return (int)keycode;
+}
+
+int kbd_get_repeat(void) {
+    if (_last_key < 0) return -1;
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    uint32_t elapsed = now - _last_press_ms;
+    if (elapsed < KEY_REPEAT_DELAY_MS) return -1;
+    if (_last_repeat_ms == 0 || (now - _last_repeat_ms) >= KEY_REPEAT_RATE_MS) {
+        _last_repeat_ms = now;
+        return _last_key;
+    }
+    return -1;
+}
+
+void kbd_clear_repeat(void) {
+    _last_key = -1;
 }
 
 void kbd_set_backlight(uint8_t level) {
@@ -95,6 +143,12 @@ int kbd_battery_percent(void) {
 
     /* High byte holds percentage; bit 7 = charging flag */
     uint8_t pct = (uint8_t)(buf >> 8);
+    _last_charging = (pct & 0x80) != 0;
     pct &= 0x7F; /* strip charging bit */
+    if (pct > 100) pct = 100;
     return (int)pct;
+}
+
+bool kbd_is_charging(void) {
+    return _last_charging;
 }

@@ -30,6 +30,11 @@
 #define LCD_YELLOW  LCD_RGB(255,255,0)
 #define LCD_RED     LCD_RGB(200,0,0)
 #define LCD_BLUE    LCD_RGB(0,0,200)
+#define LCD_ORANGE  LCD_RGB(255,165,0)
+#define LCD_MAGENTA LCD_RGB(200,0,200)
+#define LCD_GREY    LCD_RGB(128,128,128)
+#define LCD_DKGREY  LCD_RGB(64,64,64)
+#define LCD_AMBER   LCD_RGB(255,176,0)
 
 /* Character cell size (using built-in 8×16 bitmap font) */
 #define LCD_CHAR_W  8
@@ -45,3 +50,23 @@ void lcd_draw_str(uint16_t x, uint16_t y, const char *s, uint32_t fg, uint32_t b
 void lcd_cls(uint32_t bg);
 void lcd_putc(char c);
 void lcd_puts(const char *s);
+
+/* Graphics primitives */
+void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t color);
+void lcd_draw_hline(uint16_t x, uint16_t y, uint16_t w, uint32_t color);
+void lcd_draw_vline(uint16_t x, uint16_t y, uint16_t h, uint32_t color);
+void lcd_draw_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t color);
+
+/* Terminal color control */
+void lcd_set_fg(uint32_t color);
+void lcd_set_bg(uint32_t color);
+uint32_t lcd_get_fg(void);
+uint32_t lcd_get_bg(void);
+
+/* Cursor position */
+void lcd_set_cursor(int col, int row);
+int  lcd_get_col(void);
+int  lcd_get_row(void);
+
+/* Draw a character at cell position with specific colors (no cursor advance) */
+void lcd_draw_cell(int col, int row, char c, uint32_t fg, uint32_t bg);

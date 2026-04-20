@@ -13,10 +13,17 @@
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
+#include "hardware/dma.h"
 
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+
+/* ============================================================
+ * DMA acceleration (available on both RP2040 and RP2350)
+ * ============================================================ */
+static int _dma_chan = -1;
+static dma_channel_config _dma_cfg;
 
 /* ============================================================
  * Low-level SPI helpers
@@ -35,7 +42,16 @@ static void _spi_write_byte(uint8_t b) {
 
 static void _spi_write_fast(const uint8_t *src, size_t len) {
     if (!src || len == 0) return;
-    spi_write_blocking(LCD_SPI_PORT, src, len);
+    /* Use DMA for large transfers (>64 bytes) if channel is initialized */
+    if (_dma_chan >= 0 && len > 64) {
+        dma_channel_wait_for_finish_blocking(_dma_chan);
+        dma_channel_configure(_dma_chan, &_dma_cfg,
+                              &spi_get_hw(LCD_SPI_PORT)->dr,
+                              src, len, true);
+        dma_channel_wait_for_finish_blocking(_dma_chan);
+    } else {
+        spi_write_blocking(LCD_SPI_PORT, src, len);
+    }
 }
 
 static void _spi_finish(void) {
@@ -226,6 +242,16 @@ void lcd_init(void) {
     _spi_write_command(0x29);
     sleep_ms(120);
     _spi_write_cd(0x36, 1, 0x48);
+
+    /* Initialize DMA channel for accelerated SPI writes */
+    _dma_chan = (int)dma_claim_unused_channel(false);
+    if (_dma_chan >= 0) {
+        _dma_cfg = dma_channel_get_default_config((uint)_dma_chan);
+        channel_config_set_transfer_data_size(&_dma_cfg, DMA_SIZE_8);
+        channel_config_set_dreq(&_dma_cfg, spi_get_dreq(LCD_SPI_PORT, true));
+        channel_config_set_read_increment(&_dma_cfg, true);
+        channel_config_set_write_increment(&_dma_cfg, false);
+    }
 }
 
 /* ============================================================
@@ -511,47 +537,6 @@ static void _clear_text_buf(void) {
     }
 }
 
-static void _redraw_text_row(int row) {
-    if (row < 0 || row >= LCD_ROWS) return;
-
-    uint8_t fr = (uint8_t)((_fg >> 16) & 0xFC);
-    uint8_t fgc = (uint8_t)((_fg >> 8) & 0xFC);
-    uint8_t fb = (uint8_t)(_fg & 0xFC);
-    uint8_t br = (uint8_t)((_bg >> 16) & 0xFC);
-    uint8_t bgc = (uint8_t)((_bg >> 8) & 0xFC);
-    uint8_t bb = (uint8_t)(_bg & 0xFC);
-
-    static uint8_t rowbuf[LCD_WIDTH * LCD_CHAR_H * 3];
-    size_t idx = 0;
-
-    for (int glyph_row = 0; glyph_row < LCD_CHAR_H; glyph_row++) {
-        for (int col = 0; col < LCD_COLS; col++) {
-            char ch = _text_buf[row][col];
-            if ((uint8_t)ch < 0x20 || (uint8_t)ch > 0x7E) ch = '?';
-            const uint8_t *glyph = _font8x16[(uint8_t)ch - 0x20];
-            uint8_t bits = glyph[glyph_row];
-
-            for (int bit = 0; bit < LCD_CHAR_W; bit++) {
-                bool on = (bits & (0x80u >> bit)) != 0;
-                rowbuf[idx++] = on ? fr : br;
-                rowbuf[idx++] = on ? fgc : bgc;
-                rowbuf[idx++] = on ? fb : bb;
-            }
-        }
-    }
-
-    uint16_t y0 = (uint16_t)(row * LCD_CHAR_H);
-    _set_window(0, y0, LCD_WIDTH - 1, (uint16_t)(y0 + LCD_CHAR_H - 1));
-    _spi_write_fast(rowbuf, sizeof rowbuf);
-    _end_window_write();
-}
-
-static void _redraw_text_buf(void) {
-    for (int r = 0; r < LCD_ROWS; r++) {
-        _redraw_text_row(r);
-    }
-}
-
 /* Scroll entire screen up by one text row */
 static void _scroll_up(void) {
     memmove(_text_buf[0], _text_buf[1], (LCD_ROWS - 1) * LCD_COLS * sizeof(char));
@@ -560,7 +545,37 @@ static void _scroll_up(void) {
     }
     _cur_col = 0;
     _cur_row = LCD_ROWS - 1;
-    _redraw_text_buf();
+
+    /* Rebuild the entire screen in one large window write to minimize SPI overhead */
+    uint8_t fr = (uint8_t)((_fg >> 16) & 0xFC);
+    uint8_t fgc = (uint8_t)((_fg >> 8) & 0xFC);
+    uint8_t fb = (uint8_t)(_fg & 0xFC);
+    uint8_t br = (uint8_t)((_bg >> 16) & 0xFC);
+    uint8_t bgc = (uint8_t)((_bg >> 8) & 0xFC);
+    uint8_t bb = (uint8_t)(_bg & 0xFC);
+
+    /* Write one row at a time but keep the same SPI window open */
+    _set_window(0, 0, LCD_WIDTH - 1, (uint16_t)(LCD_ROWS * LCD_CHAR_H - 1));
+    static uint8_t rowbuf[LCD_WIDTH * LCD_CHAR_H * 3];
+    for (int row = 0; row < LCD_ROWS; row++) {
+        size_t idx = 0;
+        for (int glyph_row = 0; glyph_row < LCD_CHAR_H; glyph_row++) {
+            for (int col = 0; col < LCD_COLS; col++) {
+                char ch = _text_buf[row][col];
+                if ((uint8_t)ch < 0x20 || (uint8_t)ch > 0x7E) ch = ' ';
+                const uint8_t *glyph = _font8x16[(uint8_t)ch - 0x20];
+                uint8_t bits = glyph[glyph_row];
+                for (int bit = 0; bit < LCD_CHAR_W; bit++) {
+                    bool on = (bits & (0x80u >> bit)) != 0;
+                    rowbuf[idx++] = on ? fr : br;
+                    rowbuf[idx++] = on ? fgc : bgc;
+                    rowbuf[idx++] = on ? fb : bb;
+                }
+            }
+        }
+        _spi_write_fast(rowbuf, idx);
+    }
+    _end_window_write();
 }
 
 void lcd_cls(uint32_t bg) {
@@ -605,4 +620,71 @@ void lcd_putc(char c) {
 
 void lcd_puts(const char *s) {
     while (*s) lcd_putc(*s++);
+}
+
+/* ============================================================
+ * Graphics primitives
+ * ============================================================ */
+
+void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t color) {
+    if (x >= LCD_WIDTH || y >= LCD_HEIGHT || w == 0 || h == 0) return;
+    if (x + w > LCD_WIDTH)  w = LCD_WIDTH - x;
+    if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
+
+    uint8_t r = (uint8_t)((color >> 16) & 0xFC);
+    uint8_t g = (uint8_t)((color >> 8) & 0xFC);
+    uint8_t b = (uint8_t)(color & 0xFC);
+
+    static uint8_t linebuf[LCD_WIDTH * 3];
+    for (int i = 0; i < w; i++) {
+        linebuf[i * 3 + 0] = r;
+        linebuf[i * 3 + 1] = g;
+        linebuf[i * 3 + 2] = b;
+    }
+
+    _set_window(x, y, (uint16_t)(x + w - 1), (uint16_t)(y + h - 1));
+    size_t row_bytes = (size_t)w * 3;
+    for (int row = 0; row < h; row++) {
+        _spi_write_fast(linebuf, row_bytes);
+    }
+    _end_window_write();
+}
+
+void lcd_draw_hline(uint16_t x, uint16_t y, uint16_t w, uint32_t color) {
+    lcd_fill_rect(x, y, w, 1, color);
+}
+
+void lcd_draw_vline(uint16_t x, uint16_t y, uint16_t h, uint32_t color) {
+    lcd_fill_rect(x, y, 1, h, color);
+}
+
+void lcd_draw_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t color) {
+    lcd_draw_hline(x, y, w, color);
+    lcd_draw_hline(x, (uint16_t)(y + h - 1), w, color);
+    lcd_draw_vline(x, y, h, color);
+    lcd_draw_vline((uint16_t)(x + w - 1), y, h, color);
+}
+
+/* ============================================================
+ * Terminal color and cursor control
+ * ============================================================ */
+
+void lcd_set_fg(uint32_t color) { _fg = color; }
+void lcd_set_bg(uint32_t color) { _bg = color; }
+uint32_t lcd_get_fg(void) { return _fg; }
+uint32_t lcd_get_bg(void) { return _bg; }
+
+void lcd_set_cursor(int col, int row) {
+    if (col >= 0 && col < LCD_COLS) _cur_col = col;
+    if (row >= 0 && row < LCD_ROWS) _cur_row = row;
+}
+
+int lcd_get_col(void) { return _cur_col; }
+int lcd_get_row(void) { return _cur_row; }
+
+void lcd_draw_cell(int col, int row, char c, uint32_t fg, uint32_t bg) {
+    if (col < 0 || col >= LCD_COLS || row < 0 || row >= LCD_ROWS) return;
+    if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) c = ' ';
+    _text_buf[row][col] = c;
+    lcd_draw_char((uint16_t)(col * LCD_CHAR_W), (uint16_t)(row * LCD_CHAR_H), c, fg, bg);
 }

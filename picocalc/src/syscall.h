@@ -184,6 +184,9 @@ static inline int sys_getchar(void) {
     do {
         c = getchar_timeout_us(0);
         if (c == PICO_ERROR_TIMEOUT) c = kbd_getc();
+        if (c >= 0) { return c; }
+        /* No hardware key — check for key repeat */
+        c = kbd_get_repeat();
     } while (c < 0);
     return c;
 }
@@ -198,7 +201,12 @@ static inline void sys_clear(void) {
 }
 
 static inline void sys_setcolor(uint8_t color) {
-    (void)color;
+    /* Color indices: 0=green, 1=white, 2=cyan, 3=yellow, 4=red, 5=blue, 6=amber */
+    static const uint32_t palette[] = {
+        LCD_GREEN, LCD_WHITE, LCD_CYAN, LCD_YELLOW, LCD_RED, LCD_BLUE, LCD_AMBER
+    };
+    if (color < sizeof palette / sizeof palette[0])
+        lcd_set_fg(palette[color]);
 }
 
 static inline int sys_getscreenw(void) { return LCD_COLS; }

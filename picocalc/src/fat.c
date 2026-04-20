@@ -107,8 +107,46 @@ static uint32_t _cluster_count  = 0;   /* total data clusters           */
 static uint8_t  _sector_buf[512];
 
 /* ------------------------------------------------------------------
- * Low-level helpers
+ * 2-slot FAT sector cache (saves repeated SD reads on chain walks)
  * ------------------------------------------------------------------ */
+#define FAT_CACHE_SLOTS 2
+
+static struct {
+    uint32_t lba;
+    uint8_t  data[512];
+    bool     valid;
+} _fat_cache[FAT_CACHE_SLOTS];
+
+static int _fat_cache_next = 0;   /* round-robin replacement */
+
+static void fat_cache_invalidate(void) {
+    for (int i = 0; i < FAT_CACHE_SLOTS; i++) _fat_cache[i].valid = false;
+}
+
+/* Read a FAT sector, using cache when possible. */
+static fat_result_t read_fat_sector(uint32_t lba, const uint8_t **out) {
+    for (int i = 0; i < FAT_CACHE_SLOTS; i++) {
+        if (_fat_cache[i].valid && _fat_cache[i].lba == lba) {
+            *out = _fat_cache[i].data;
+            return FAT_OK;
+        }
+    }
+    /* Cache miss — load from SD into next slot */
+    int slot = _fat_cache_next;
+    _fat_cache_next = (_fat_cache_next + 1) % FAT_CACHE_SLOTS;
+    if (sd_read_block(lba, _fat_cache[slot].data) != SD_OK) {
+        _fat_cache[slot].valid = false;
+        return FAT_ERR_IO;
+    }
+    _fat_cache[slot].lba   = lba;
+    _fat_cache[slot].valid = true;
+    *out = _fat_cache[slot].data;
+    return FAT_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/* Low-level helpers                                                    */
+/* ------------------------------------------------------------------ */
 
 static fat_result_t read_sector(uint32_t lba) {
     for (int attempt = 0; attempt < 3; attempt++) {
@@ -127,26 +165,27 @@ static uint32_t cluster_lba(uint32_t cluster) {
 }
 
 static uint32_t fat_entry(uint32_t cluster) {
-    /* Read the FAT sector that contains this cluster's entry */
+    /* Read the FAT sector that contains this cluster's entry (cached) */
     uint32_t offset, lba;
     uint32_t val = 0;
+    const uint8_t *fat_data;
     if (_fat32) {
         offset = cluster * 4;
         lba    = _fat_lba + offset / 512;
-        if (read_sector(lba) != FAT_OK) return 0x0FFFFFFF; /* force EOC */
+        if (read_fat_sector(lba, &fat_data) != FAT_OK) return 0x0FFFFFFF;
         uint32_t idx = offset % 512;
-        val  = (uint32_t)_sector_buf[idx];
-        val |= (uint32_t)_sector_buf[idx + 1] << 8;
-        val |= (uint32_t)_sector_buf[idx + 2] << 16;
-        val |= (uint32_t)_sector_buf[idx + 3] << 24;
+        val  = (uint32_t)fat_data[idx];
+        val |= (uint32_t)fat_data[idx + 1] << 8;
+        val |= (uint32_t)fat_data[idx + 2] << 16;
+        val |= (uint32_t)fat_data[idx + 3] << 24;
         val &= 0x0FFFFFFF;
     } else {
         offset = cluster * 2;
         lba    = _fat_lba + offset / 512;
-        if (read_sector(lba) != FAT_OK) return 0xFFFF;
+        if (read_fat_sector(lba, &fat_data) != FAT_OK) return 0xFFFF;
         uint32_t idx = offset % 512;
-        val  = (uint32_t)_sector_buf[idx];
-        val |= (uint32_t)_sector_buf[idx + 1] << 8;
+        val  = (uint32_t)fat_data[idx];
+        val |= (uint32_t)fat_data[idx + 1] << 8;
     }
     return val;
 }
@@ -264,7 +303,9 @@ static fat_result_t walk_dir(uint32_t cluster, bool is_root16,
 
     /* FAT32 / FAT16 subdirectory: follow cluster chain */
     uint32_t cur = cluster;
+    uint32_t chain_steps = 0;
     while (cur && !is_eoc(cur)) {
+        if (++chain_steps > _cluster_count + 2) return FAT_ERR_IO; /* circular chain */
         lba = cluster_lba(cur);
         for (sector = 0; sector < _spc; sector++) {
             fat_result_t r = read_sector(lba + sector);
@@ -357,6 +398,7 @@ static fat_result_t resolve_path(const char *path, dirent_t *out) {
 
 fat_result_t fat_mount(void) {
     _mounted = false;
+    fat_cache_invalidate();
 
     if (sd_init() != SD_OK) return FAT_ERR_IO;
 
@@ -476,12 +518,13 @@ int32_t fat_read(fat_file_t *f, void *buf, uint32_t n) {
     uint8_t *dst    = (uint8_t *)buf;
     uint32_t remain = f->size - f->cur_offset;
     if (n > remain) n = remain;
+    if (n == 0) return 0;
 
     uint32_t bytes_read = 0;
     uint32_t cluster_bytes = (uint32_t)_spc * 512;
 
     while (bytes_read < n) {
-        if (is_eoc(f->cur_cluster)) break;
+        if (f->cur_cluster < 2 || is_eoc(f->cur_cluster)) break;
 
         uint32_t pos_in_cluster = f->cur_offset % cluster_bytes;
         uint32_t sector_in_cluster = pos_in_cluster / 512;
@@ -578,6 +621,7 @@ const char *fat_result_str(fat_result_t r) {
 
 /* Write one FAT entry (FAT16 or FAT32) for the given cluster. */
 static fat_result_t write_fat_entry(uint32_t cluster, uint32_t value) {
+    fat_cache_invalidate();   /* invalidate cache before modifying FAT */
     uint32_t offset, lba;
     if (_fat32) {
         offset = cluster * 4;
@@ -977,13 +1021,23 @@ fat_result_t fat_create(const char *path, const uint8_t *data, uint32_t len) {
                 uint32_t take = len - written;
                 if (take > 512) take = 512;
                 memcpy(_sector_buf, data + written, take);
-                if (write_sector(lba + s) != FAT_OK) return FAT_ERR_IO;
+                if (write_sector(lba + s) != FAT_OK) {
+                    /* Roll back: free allocated clusters on write failure */
+                    free_cluster_chain(first_cluster);
+                    return FAT_ERR_IO;
+                }
                 written += take;
             }
             if (written < len) {
                 uint32_t next = alloc_cluster();
-                if (next == 0) return FAT_ERR_NOSPC;
-                if (write_fat_entry(cur, next) != FAT_OK) return FAT_ERR_IO;
+                if (next == 0) {
+                    free_cluster_chain(first_cluster);
+                    return FAT_ERR_NOSPC;
+                }
+                if (write_fat_entry(cur, next) != FAT_OK) {
+                    free_cluster_chain(first_cluster);
+                    return FAT_ERR_IO;
+                }
                 cur = next;
             }
             (void)cluster_bytes;
@@ -1002,3 +1056,213 @@ fat_result_t fat_create(const char *path, const uint8_t *data, uint32_t len) {
     return append_dirent(parent_cluster, parent_root16, &entry);
 }
 
+/* ------------------------------------------------------------------
+ * Rename (same-directory only)
+ * ------------------------------------------------------------------ */
+
+fat_result_t fat_rename(const char *old_path, const char *new_path) {
+    if (!_mounted) return FAT_ERR_NOTMOUNTED;
+    if (!old_path || !*old_path || !new_path || !*new_path)
+        return FAT_ERR_NOTFOUND;
+
+    /* Source must exist */
+    dirent_t e;
+    fat_result_t r = resolve_path(old_path, &e);
+    if (r != FAT_OK) return r;
+
+    /* Destination must not exist */
+    dirent_t dup;
+    if (resolve_path(new_path, &dup) == FAT_OK) return FAT_ERR_EXISTS;
+
+    /* Both must share the same parent directory */
+    uint32_t src_parent, dst_parent;
+    bool     src_root16, dst_root16;
+    char     src_comp[13], dst_comp[13];
+    r = resolve_parent(old_path, &src_parent, &src_root16, src_comp);
+    if (r != FAT_OK) return r;
+    r = resolve_parent(new_path, &dst_parent, &dst_root16, dst_comp);
+    if (r != FAT_OK) return r;
+
+    if (src_parent != dst_parent || src_root16 != dst_root16)
+        return FAT_ERR_UNSUPPORTED;  /* cross-directory moves not supported */
+
+    /* Find old entry in parent and update its name in-place */
+    uint8_t old_name8[8], old_ext3[3], new_name8[8], new_ext3[3];
+    to_83(src_comp, old_name8, old_ext3);
+    to_83(dst_comp, new_name8, new_ext3);
+
+    if (src_root16) {
+        uint32_t max_sectors = (_root_entries * 32 + 511) / 512;
+        for (uint32_t s = 0; s < max_sectors; s++) {
+            if (read_sector(_root_lba + s) != FAT_OK) return FAT_ERR_IO;
+            for (int i = 0; i < 512 / 32; i++) {
+                dirent_t *de = (dirent_t *)(_sector_buf + i * 32);
+                if (de->name[0] == 0x00) return FAT_ERR_NOTFOUND;
+                if (de->name[0] == 0xE5) continue;
+                if (memcmp(de->name, old_name8, 8) == 0 &&
+                    memcmp(de->ext,  old_ext3,  3) == 0) {
+                    memcpy(de->name, new_name8, 8);
+                    memcpy(de->ext,  new_ext3,  3);
+                    return write_sector(_root_lba + s);
+                }
+            }
+        }
+    } else {
+        uint32_t cur = src_parent;
+        while (cur >= 2 && !is_eoc(cur)) {
+            uint32_t lba = cluster_lba(cur);
+            for (uint32_t s = 0; s < _spc; s++) {
+                if (read_sector(lba + s) != FAT_OK) return FAT_ERR_IO;
+                for (int i = 0; i < 512 / 32; i++) {
+                    dirent_t *de = (dirent_t *)(_sector_buf + i * 32);
+                    if (de->name[0] == 0x00) return FAT_ERR_NOTFOUND;
+                    if (de->name[0] == 0xE5) continue;
+                    if (memcmp(de->name, old_name8, 8) == 0 &&
+                        memcmp(de->ext,  old_ext3,  3) == 0) {
+                        memcpy(de->name, new_name8, 8);
+                        memcpy(de->ext,  new_ext3,  3);
+                        return write_sector(lba + s);
+                    }
+                }
+            }
+            cur = fat_entry(cur);
+        }
+    }
+    return FAT_ERR_NOTFOUND;
+}
+
+/* ------------------------------------------------------------------
+ * Append to existing file (or create if not found)
+ * ------------------------------------------------------------------ */
+
+fat_result_t fat_append(const char *path, const uint8_t *data, uint32_t len) {
+    if (!_mounted) return FAT_ERR_NOTMOUNTED;
+    if (!path || !*path) return FAT_ERR_NOTFOUND;
+    if (len == 0) return FAT_OK;
+
+    /* If file doesn't exist, create it */
+    dirent_t e;
+    fat_result_t r = resolve_path(path, &e);
+    if (r == FAT_ERR_NOTFOUND) return fat_create(path, data, len);
+    if (r != FAT_OK) return r;
+    if (e.attr & FAT_ATTR_DIR) return FAT_ERR_NOTFILE;
+
+    uint32_t old_size   = e.file_size;
+    uint32_t new_size   = old_size + len;
+    uint32_t cluster_bytes = (uint32_t)_spc * 512;
+    uint32_t start_cluster = ((uint32_t)e.first_cluster_hi << 16) | e.first_cluster_lo;
+
+    /* Find last cluster in chain */
+    uint32_t last_cluster = start_cluster;
+    if (start_cluster < 2) {
+        /* File was zero-length: allocate first cluster */
+        last_cluster = alloc_cluster();
+        if (last_cluster == 0) return FAT_ERR_NOSPC;
+        start_cluster = last_cluster;
+    } else {
+        uint32_t cur = start_cluster;
+        while (!is_eoc(fat_entry(cur)) && fat_entry(cur) >= 2) {
+            cur = fat_entry(cur);
+        }
+        last_cluster = cur;
+    }
+
+    /* Position within last cluster where old data ended */
+    uint32_t pos_in_last = old_size % cluster_bytes;
+    uint32_t written = 0;
+
+    /* Fill remaining space in last cluster */
+    if (pos_in_last > 0) {
+        uint32_t sector_in_cluster = pos_in_last / 512;
+        uint32_t pos_in_sector     = pos_in_last % 512;
+        uint32_t lba = cluster_lba(last_cluster) + sector_in_cluster;
+
+        /* Read existing partial sector */
+        if (read_sector(lba) != FAT_OK) return FAT_ERR_IO;
+        uint32_t avail = 512 - pos_in_sector;
+        uint32_t take  = (len - written < avail) ? len - written : avail;
+        memcpy(_sector_buf + pos_in_sector, data + written, take);
+        if (write_sector(lba) != FAT_OK) return FAT_ERR_IO;
+        written += take;
+
+        /* Continue with remaining sectors in this cluster */
+        sector_in_cluster++;
+        while (written < len && sector_in_cluster < _spc) {
+            lba = cluster_lba(last_cluster) + sector_in_cluster;
+            memset(_sector_buf, 0, 512);
+            take = (len - written < 512) ? len - written : 512;
+            memcpy(_sector_buf, data + written, take);
+            if (write_sector(lba) != FAT_OK) return FAT_ERR_IO;
+            written += take;
+            sector_in_cluster++;
+        }
+    }
+
+    /* Allocate new clusters for remaining data */
+    while (written < len) {
+        uint32_t nc = alloc_cluster();
+        if (nc == 0) return FAT_ERR_NOSPC;
+        if (write_fat_entry(last_cluster, nc) != FAT_OK) return FAT_ERR_IO;
+        last_cluster = nc;
+
+        uint32_t lba = cluster_lba(nc);
+        for (uint32_t s = 0; s < _spc && written < len; s++) {
+            memset(_sector_buf, 0, 512);
+            uint32_t take = (len - written < 512) ? len - written : 512;
+            memcpy(_sector_buf, data + written, take);
+            if (write_sector(lba + s) != FAT_OK) return FAT_ERR_IO;
+            written += take;
+        }
+    }
+
+    /* Update directory entry file_size and possibly first_cluster */
+    uint32_t parent_cluster;
+    bool     parent_root16;
+    char     component[13];
+    r = resolve_parent(path, &parent_cluster, &parent_root16, component);
+    if (r != FAT_OK) return r;
+
+    uint8_t name8[8], ext3[3];
+    to_83(component, name8, ext3);
+
+    if (parent_root16) {
+        uint32_t max_sectors = (_root_entries * 32 + 511) / 512;
+        for (uint32_t s = 0; s < max_sectors; s++) {
+            if (read_sector(_root_lba + s) != FAT_OK) return FAT_ERR_IO;
+            for (int i = 0; i < 512 / 32; i++) {
+                dirent_t *de = (dirent_t *)(_sector_buf + i * 32);
+                if (de->name[0] == 0x00) return FAT_ERR_NOTFOUND;
+                if (de->name[0] == 0xE5) continue;
+                if (memcmp(de->name, name8, 8) == 0 &&
+                    memcmp(de->ext,  ext3,  3) == 0) {
+                    de->file_size        = new_size;
+                    de->first_cluster_lo = (uint16_t)(start_cluster & 0xFFFF);
+                    de->first_cluster_hi = (uint16_t)(start_cluster >> 16);
+                    return write_sector(_root_lba + s);
+                }
+            }
+        }
+    } else {
+        uint32_t cur = parent_cluster;
+        while (cur >= 2 && !is_eoc(cur)) {
+            uint32_t lba = cluster_lba(cur);
+            for (uint32_t s = 0; s < _spc; s++) {
+                if (read_sector(lba + s) != FAT_OK) return FAT_ERR_IO;
+                for (int i = 0; i < 512 / 32; i++) {
+                    dirent_t *de = (dirent_t *)(_sector_buf + i * 32);
+                    if (de->name[0] == 0x00) return FAT_ERR_NOTFOUND;
+                    if (de->name[0] == 0xE5) continue;
+                    if (memcmp(de->name, name8, 8) == 0 &&
+                        memcmp(de->ext,  ext3,  3) == 0) {
+                        de->file_size        = new_size;
+                        de->first_cluster_lo = (uint16_t)(start_cluster & 0xFFFF);
+                        de->first_cluster_hi = (uint16_t)(start_cluster >> 16);
+                        return write_sector(lba + s);
+                    }
+                }
+            }
+            cur = fat_entry(cur);
+        }
+    }
+    return FAT_ERR_NOTFOUND;
+}

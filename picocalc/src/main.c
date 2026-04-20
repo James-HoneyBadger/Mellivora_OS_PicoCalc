@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
 #include "hardware/clocks.h"
 #include "hardware/watchdog.h"
 #include "hardware/uart.h"
@@ -34,19 +35,35 @@
 #include "fat.h"
 #include "syscall.h"
 #include "apps.h"
+#ifdef PICO_CYW43_SUPPORTED
+#include "netapps.h"
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Configuration                                                        */
 /* ------------------------------------------------------------------ */
 
-#define LINE_BUF        128
+#define LINE_BUF        256
 #define CWD_MAX         256
+#ifdef PICO_RP2350A
+#define HIST_ENTRIES    64
+#define APP_REDIR_MAX   8192
+#else
 #define HIST_ENTRIES    32
+#define APP_REDIR_MAX   4096
+#endif
 #define HIST_ENTRY_SZ   LINE_BUF
 #define ALIAS_MAX       16
 #define ALIAS_NAME_SZ   16
 #define ALIAS_VALUE_SZ  LINE_BUF
 #define ALIAS_FILE      "/ALIASES.CFG"
+
+/* Global interrupt flag — checked by long-running loops */
+static volatile bool _interrupted = false;
+
+/* Status bar flag — declared early so cmd_sysinfo/cmd_status can see it */
+static volatile bool _statusbar_enabled = false;
+static void _draw_status_bar(void);
 
 #define BANNER \
     "Mellivora OS\n" \
@@ -62,7 +79,15 @@
 
 static bool _lcd_ready = false;
 
+/* Forward declarations for output redirection */
+static bool   _redir_active;
+static void   redir_char(char c);
+
 static void out_char(char c) {
+    if (_redir_active) {
+        redir_char(c);
+        return;
+    }
     if (!_lcd_ready) {
         putchar_raw(c);
         return;
@@ -75,7 +100,7 @@ static void out_str(const char *s) {
 }
 
 static void out_fmt(const char *fmt, ...) {
-    char buf[256];
+    char buf[512];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
@@ -173,7 +198,14 @@ static void resolve_abs(const char *input, char *out) {
 }
 
 static void out_prompt(void) {
+#ifndef PICO_RP2350A
+    /* On Pico 1 (no core1), refresh status bar at each prompt */
+    _draw_status_bar();
+#endif
+    uint32_t saved = lcd_get_fg();
+    lcd_set_fg(LCD_YELLOW);
     out_fmt("PicoLair:%s> ", _cwd);
+    lcd_set_fg(saved);
 }
 
 static void copy_str(char *dst, size_t dst_sz, const char *src) {
@@ -257,7 +289,7 @@ static bool alias_valid_name(const char *name) {
 static bool alias_save(void) {
     if (!_fat_mounted) return false;
 
-    char buf[1024];
+    char buf[2560];
     int pos = 0;
     for (int i = 0; i < ALIAS_MAX; i++) {
         if (!_aliases[i].used) continue;
@@ -370,6 +402,13 @@ static bool alias_expand_line(char *line, size_t line_sz) {
     if (strcmp(expanded, line) == 0) return false;
     copy_str(line, line_sz, expanded);
     return true;
+}
+
+/* Expand aliases with a depth limit to prevent infinite recursion. */
+static void alias_expand_safe(char *line, size_t line_sz) {
+    for (int depth = 0; depth < 8; depth++) {
+        if (!alias_expand_line(line, line_sz)) break;
+    }
 }
 
 static bool history_expand_bang(char *line, size_t line_sz) {
@@ -570,19 +609,26 @@ static void cmd_help(const char *arg) {
         out_str("  alias [N V]          List or define a persistent alias\n");
         out_str("  unalias NAME         Remove a command alias\n");
         out_str("  uname                OS and platform info\n");
+        out_str("  sysinfo              Detailed system information\n");
         out_str("  uptime               Time since boot (ms)\n");
+        out_str("  status [on|off]      Toggle status bar\n");
         out_str("  clear                Clear the screen\n");
         out_str("  battery              Battery charge level\n");
         out_str("  backlight <n>        Keyboard backlight 0-255\n");
         out_str("  reboot               Warm reboot\n");
         out_str("\nStorage commands:\n");
-        out_str("  mount ls dir cd pwd cat touch write mkdir rm\n");
+        out_str("  mount ls dir cd pwd cat touch write mkdir rm rename mv\n");
         out_str("  sdinfo sdread edit browse tree du df\n");
         out_str("\nApp commands:\n");
         out_str("  hello basename dirname seq head tail wc cut grep find tree du df pager rev sort\n");
         out_str("  hexdump od hexedit calc cp mv stat edit browse notes journal habits todo planner\n");
         out_str("  bookmarks games snake dice coin guess sprite terminal home dashboard sysmon\n");
         out_str("  samples clock cal script paint settings set sleep id true false basic tcc\n");
+#ifdef PICO_CYW43_SUPPORTED
+        out_str("\nNetwork commands (Pico 2W):\n");
+        out_str("  wifi connect|scan|status|disconnect\n");
+        out_str("  ping ifconfig ntp dns fetch wget weather irc telnet netstat\n");
+#endif
         out_str("\nUse UP/DOWN for history, Ctrl-U to clear a line, and Ctrl-L to redraw.\n");
         out_str("Tip: append | more to long commands for paging.\n");
         return;
@@ -601,6 +647,7 @@ static void cmd_help(const char *arg) {
         out_str("  write <p> <text>    Replace a file with text\n");
         out_str("  mkdir <path>        Create a directory\n");
         out_str("  rm <path>           Remove a file or empty directory\n");
+        out_str("  rename OLD NEW      Rename a file (same directory)\n");
         out_str("  tree [-L N] [PATH]  Show a recursive directory tree\n");
         out_str("  du [PATH]           Show recursive disk usage\n");
         out_str("  df                  Show filesystem capacity and free space\n");
@@ -652,11 +699,20 @@ static void cmd_help(const char *arg) {
 }
 
 static void cmd_uname(void) {
+#ifdef PICO_CYW43_SUPPORTED
+    out_str("Mellivora OS - PicoCalc target (RP2350 + CYW43 WiFi)\n");
+#elif defined(PICO_RP2350A)
+    out_str("Mellivora OS - PicoCalc target (RP2350)\n");
+#else
     out_str("Mellivora OS - PicoCalc target (RP2040)\n");
+#endif
     out_fmt("  LCD:  ILI9488 %dx%d via SPI1\n", LCD_WIDTH, LCD_HEIGHT);
     out_str("  KBD:  STM32 co-proc via I2C1\n");
     out_str("  SD:   SPI0 block device\n");
     out_str("  UART: USB CDC + UART0\n");
+#ifdef PICO_CYW43_SUPPORTED
+    out_str("  WLAN: CYW43439 802.11n\n");
+#endif
 }
 
 static void cmd_uptime(void) {
@@ -664,10 +720,67 @@ static void cmd_uptime(void) {
     out_fmt("%lld ms\n", us / 1000LL);
 }
 
+static void cmd_sysinfo(void) {
+    out_fmt("Mellivora OS for PicoCalc\n");
+#ifdef PICO_RP2350A
+    out_fmt("Platform: RP2350 (Pico 2)\n");
+    out_fmt("RAM:      520 KB\n");
+    out_fmt("Flash:    4 MB\n");
+    out_fmt("Cores:    2 (core1 active)\n");
+#else
+    out_fmt("Platform: RP2040 (Pico)\n");
+    out_fmt("RAM:      264 KB\n");
+    out_fmt("Flash:    2 MB\n");
+    out_fmt("Cores:    2 (core1 idle)\n");
+#endif
+#ifdef PICO_CYW43_SUPPORTED
+    out_fmt("WiFi:     CYW43 (Pico 2W)\n");
+#else
+    out_fmt("WiFi:     none\n");
+#endif
+    out_fmt("Clock:    %lu MHz\n",
+            (unsigned long)(clock_get_hz(clk_sys) / 1000000));
+    out_fmt("DMA LCD:  %s\n",
+#ifdef PICO_RP2350A
+            "enabled"
+#else
+            "enabled"
+#endif
+            );
+    out_fmt("Status bar: %s\n", _statusbar_enabled ? "on" : "off");
+    int64_t us = absolute_time_diff_us(g_boot_time, get_absolute_time());
+    uint32_t sec = (uint32_t)(us / 1000000LL);
+    out_fmt("Uptime:   %lu:%02lu:%02lu\n",
+            (unsigned long)(sec / 3600),
+            (unsigned long)((sec / 60) % 60),
+            (unsigned long)(sec % 60));
+}
+
+static void cmd_status(const char *arg) {
+    if (arg && !strcmp(arg, "off")) {
+        _statusbar_enabled = false;
+        /* Clear the status bar row */
+        lcd_set_cursor(0, 19);
+        for (int i = 0; i < 40; i++)
+            lcd_draw_cell(i, 19, ' ', LCD_BLACK, LCD_BLACK);
+        out_str("Status bar disabled\n");
+    } else if (arg && !strcmp(arg, "on")) {
+        _statusbar_enabled = true;
+        _draw_status_bar();
+        out_str("Status bar enabled\n");
+    } else {
+        out_fmt("Status bar: %s\n", _statusbar_enabled ? "on" : "off");
+        out_str("usage: status [on|off]\n");
+    }
+}
+
 static void cmd_battery(void) {
     int pct = kbd_battery_percent();
     if (pct < 0) out_str("Battery info unavailable\n");
-    else         out_fmt("Battery: %d%%\n", pct);
+    else {
+        const char *status = kbd_is_charging() ? " [CHARGING]" : "";
+        out_fmt("Battery: %d%%%s\n", pct, status);
+    }
 }
 
 static void cmd_backlight(const char *arg) {
@@ -690,8 +803,15 @@ static void cmd_mount(void) {
 static void _ls_entry(const char *name, uint32_t size,
                       bool is_dir, void *ctx) {
     (void)ctx;
-    if (is_dir) out_fmt("  [DIR]  %s\n", name);
-    else        out_fmt("  %8lu  %s\n", (unsigned long)size, name);
+    uint32_t saved_fg = lcd_get_fg();
+    if (is_dir) {
+        lcd_set_fg(LCD_CYAN);
+        out_fmt("  [DIR]  %s\n", name);
+    } else {
+        lcd_set_fg(LCD_GREEN);
+        out_fmt("  %8lu  %s\n", (unsigned long)size, name);
+    }
+    lcd_set_fg(saved_fg);
 }
 
 static void cmd_ls(const char *arg) {
@@ -736,6 +856,7 @@ static void cmd_cat(const char *arg) {
     while ((n = fat_read(&f, buf, sizeof buf)) > 0) {
         for (int32_t i = 0; i < n; i++) out_char((char)buf[i]);
     }
+    /* Ensure file handle is not leaked */
     if (n != FAT_ERR_EOF && n < 0)
         out_fmt("\nread error: %s\n", fat_result_str((fat_result_t)n));
     else
@@ -796,6 +917,26 @@ static void cmd_rm(const char *arg) {
     if (r != FAT_OK) out_fmt("rm: %s: %s\n", abs, fat_result_str(r));
 }
 
+static void cmd_rename(const char *arg) {
+    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
+    if (!arg || !*arg) { out_str("usage: rename <old> <new>\n"); return; }
+    /* Split arg into old and new names */
+    char buf[CWD_MAX * 2];
+    strncpy(buf, arg, sizeof buf - 1);
+    buf[sizeof buf - 1] = '\0';
+    char *p = buf;
+    while (*p && *p != ' ') p++;
+    if (!*p) { out_str("usage: rename <old> <new>\n"); return; }
+    *p++ = '\0';
+    while (*p == ' ') p++;
+    if (!*p) { out_str("usage: rename <old> <new>\n"); return; }
+    char abs_old[CWD_MAX], abs_new[CWD_MAX];
+    resolve_abs(buf, abs_old);
+    resolve_abs(p, abs_new);
+    fat_result_t r = fat_rename(abs_old, abs_new);
+    if (r != FAT_OK) out_fmt("rename: %s\n", fat_result_str(r));
+}
+
 static void cmd_sdinfo(void) {
     sd_result_t r = sd_init();
     out_fmt("SD init: %s\n", sd_result_str(r));
@@ -838,10 +979,18 @@ static void cmd_reboot(void) {
 /* Command dispatch                                                     */
 /* ------------------------------------------------------------------ */
 
-/* Split "cmd arg" into cmd and (optional) arg in-place. */
+/* Split "cmd arg" into cmd and (optional) arg in-place.
+ * Respects double-quoted strings so 'write "MY FILE" text' works. */
 static char *split_arg(char *line) {
     char *p = line;
-    while (*p && *p != ' ') p++;
+    /* Skip command word (or quoted first token) */
+    if (*p == '"') {
+        p++;
+        while (*p && *p != '"') p++;
+        if (*p == '"') p++;
+    } else {
+        while (*p && *p != ' ') p++;
+    }
     if (*p == ' ') { *p++ = '\0'; return p; }
     return NULL;
 }
@@ -864,6 +1013,205 @@ static int parse_pipe_mode(char *line) {
     return -1;
 }
 
+/* ---- Output redirection: capture out_str/out_fmt into a buffer ---- */
+
+static char  *_redir_buf   = NULL;
+static size_t _redir_pos   = 0;
+static size_t _redir_cap   = 0;
+static bool   _redir_active = false;
+
+static void redir_char(char c) {
+    if (_redir_active && _redir_buf && _redir_pos + 1 < _redir_cap) {
+        _redir_buf[_redir_pos++] = c;
+        _redir_buf[_redir_pos] = '\0';
+    }
+}
+
+/* ---- Tab completion ---- */
+
+static const char *_shell_cmds[] = {
+    "help", "man", "history", "alias", "unalias", "uname", "uptime", "clear",
+    "battery", "backlight", "mount", "ls", "dir", "cd", "pwd", "cat", "echo",
+    "touch", "write", "mkdir", "rm", "rename", "sdinfo", "sdread", "reboot",
+    "hello", "basename", "dirname", "seq", "head", "tail", "wc", "cut", "grep",
+    "find", "tree", "du", "df", "disk", "space", "pager", "more", "rev", "sort",
+    "hexdump", "od", "hexedit", "hex", "calc", "cp", "mv", "stat", "edit",
+    "bedit", "browse", "files", "notes", "memo", "journal", "diary", "habits",
+    "habit", "bookmarks", "bookmark", "favs", "favorites", "games", "game",
+    "dice", "coin", "guess", "snake", "sprite", "terminal", "term", "tty",
+    "serial", "home", "launcher", "dashboard", "status", "sysmon", "monitor",
+    "settings", "set", "todo", "tasks", "planner", "agenda", "plan", "samples",
+    "demos", "clock", "cal", "calendar", "basic", "tcc", "tinyc", "script",
+    "paint", "sleep", "id", "true", "false",
+    "watch", "diff", "env", "lock", "xxd", "strings", "yes", "tee",
+    "life", "tetris", "mandelbrot", "fractal", "piano", "forth",
+    "xmodem", "theme",
+    "sysinfo",
+#ifdef PICO_CYW43_SUPPORTED
+    "wifi", "ping", "ifconfig", "ntp", "dns", "fetch", "wget",
+    "weather", "irc", "netstat", "telnet",
+#endif
+    NULL
+};
+
+/* File completion context for fat_ls callback */
+typedef struct {
+    const char *prefix;
+    size_t plen;
+    char   matches[16][13]; /* up to 16 FAT 8.3 names */
+    bool   is_dir[16];
+    int    count;
+} _tab_file_ctx_t;
+
+static void _tab_file_cb(const char *name, uint32_t size, bool is_dir, void *ctx) {
+    (void)size;
+    _tab_file_ctx_t *fc = (_tab_file_ctx_t *)ctx;
+    if (fc->count >= 16) return;
+    if (fc->plen == 0 || strncmp(name, fc->prefix, fc->plen) == 0) {
+        strncpy(fc->matches[fc->count], name, 12);
+        fc->matches[fc->count][12] = '\0';
+        fc->is_dir[fc->count] = is_dir;
+        fc->count++;
+    }
+}
+
+static int tab_complete(char *line, int idx) {
+    if (idx == 0) return idx;
+
+    /* If there's a space, try file path completion on the last token */
+    char *space = strchr(line, ' ');
+    if (space) {
+        /* File path completion */
+        if (!_fat_mounted) return idx;
+        char *token = space + 1;
+        while (*token == ' ') token++;
+        if (!*token) return idx;
+
+        /* Determine directory to list and prefix to match */
+        char dir[CWD_MAX], prefix_name[64];
+        const char *last_slash = NULL;
+        for (const char *p = token; *p; p++) {
+            if (*p == '/') last_slash = p;
+        }
+
+        if (last_slash) {
+            size_t dlen = (size_t)(last_slash - token + 1);
+            if (dlen >= sizeof dir) return idx;
+            memcpy(dir, token, dlen);
+            dir[dlen] = '\0';
+            strncpy(prefix_name, last_slash + 1, sizeof prefix_name - 1);
+            prefix_name[sizeof prefix_name - 1] = '\0';
+        } else {
+            strncpy(dir, _cwd, sizeof dir - 1);
+            dir[sizeof dir - 1] = '\0';
+            strncpy(prefix_name, token, sizeof prefix_name - 1);
+            prefix_name[sizeof prefix_name - 1] = '\0';
+        }
+
+        /* Resolve to absolute path */
+        char abs_dir[CWD_MAX];
+        if (dir[0] == '/') {
+            strncpy(abs_dir, dir, sizeof abs_dir - 1);
+            abs_dir[sizeof abs_dir - 1] = '\0';
+        } else {
+            resolve_abs(dir, abs_dir);
+        }
+
+        /* Upper-case prefix for FAT name matching */
+        char upper_prefix[64];
+        size_t plen = strlen(prefix_name);
+        for (size_t i = 0; i < plen && i < sizeof upper_prefix - 1; i++) {
+            upper_prefix[i] = (char)toupper((unsigned char)prefix_name[i]);
+        }
+        upper_prefix[plen] = '\0';
+
+        _tab_file_ctx_t fc;
+        fc.prefix = upper_prefix;
+        fc.plen = plen;
+        fc.count = 0;
+        fat_ls(abs_dir, _tab_file_cb, &fc);
+        if (fc.count <= 0) return idx;
+
+        if (fc.count == 1) {
+            /* Erase line on screen */
+            for (int i = 0; i < idx; i++) out_str("\b \b");
+            /* Rebuild: command + space + dir prefix + completed name */
+            size_t cmd_len = (size_t)(token - line);
+            char completed[LINE_BUF];
+            memcpy(completed, line, cmd_len);
+            size_t pos = cmd_len;
+            if (last_slash) {
+                size_t dlen = (size_t)(last_slash - token + 1);
+                memcpy(completed + pos, token, dlen);
+                pos += dlen;
+            }
+            /* Copy matched name (lowercase for display) */
+            for (const char *p = fc.matches[0]; *p && pos < LINE_BUF - 2; p++) {
+                completed[pos++] = (char)tolower((unsigned char)*p);
+            }
+            if (fc.is_dir[0] && pos < LINE_BUF - 1)
+                completed[pos++] = '/';
+            else if (pos < LINE_BUF - 1)
+                completed[pos++] = ' ';
+            completed[pos] = '\0';
+            memcpy(line, completed, pos + 1);
+            idx = (int)pos;
+            out_str(line);
+        } else {
+            out_char('\n');
+            for (int i = 0; i < fc.count; i++) {
+                for (const char *p = fc.matches[i]; *p; p++)
+                    out_char((char)tolower((unsigned char)*p));
+                if (fc.is_dir[i]) out_char('/');
+                out_str("  ");
+            }
+            out_char('\n');
+            out_prompt();
+            out_str(line);
+        }
+        return idx;
+    }
+
+    /* Command name completion (original behavior) */
+    const char *prefix = line;
+    size_t plen = (size_t)idx;
+    const char *match = NULL;
+    int match_count = 0;
+
+    for (const char **c = _shell_cmds; *c; c++) {
+        if (strncmp(*c, prefix, plen) == 0) {
+            match = *c;
+            match_count++;
+        }
+    }
+
+    if (match_count == 1) {
+        size_t mlen = strlen(match);
+        if (mlen + 1 < LINE_BUF) {
+            for (int i = 0; i < idx; i++) out_str("\b \b");
+            memcpy(line, match, mlen);
+            line[mlen] = ' ';
+            line[mlen + 1] = '\0';
+            idx = (int)(mlen + 1);
+            out_str(line);
+        }
+    } else if (match_count > 1) {
+        out_char('\n');
+        for (const char **c = _shell_cmds; *c; c++) {
+            if (strncmp(*c, prefix, plen) == 0) {
+                out_str(*c);
+                out_str("  ");
+            }
+        }
+        out_char('\n');
+        out_prompt();
+        out_str(line);
+    }
+    return idx;
+}
+
+static void dispatch_single(char *line);
+
 static void dispatch(char *line) {
     /* Strip trailing whitespace */
     int len = (int)strlen(line);
@@ -879,14 +1227,75 @@ static void dispatch(char *line) {
         if (len == 0) return;
     }
 
-    (void)alias_expand_line(line, LINE_BUF);
+    (void)alias_expand_safe(line, LINE_BUF);
 
     /* Save to history */
     hist_push(line);
 
+    /* Split on ';' for command chaining (outside quotes) */
+    char *segments[16];
+    int nseg = 0;
+    char *p = line;
+    bool in_quotes = false;
+    segments[0] = p;
+    nseg = 1;
+    while (*p) {
+        if (*p == '"') in_quotes = !in_quotes;
+        else if (*p == ';' && !in_quotes && nseg < 16) {
+            *p = '\0';
+            segments[nseg++] = p + 1;
+        }
+        p++;
+    }
+
+    for (int i = 0; i < nseg && !_interrupted; i++) {
+        char *seg = skip_spaces(segments[i]);
+        trim_right(seg);
+        if (*seg) dispatch_single(seg);
+    }
+    _interrupted = false;
+}
+
+static void dispatch_single(char *line) {
+
+    /* ---- Parse output redirection (>> or >) ---- */
+    char *redir_file = NULL;
+    bool  redir_append = false;
+    {
+        /* Scan for unquoted > or >> */
+        bool inq = false;
+        for (char *p = line; *p; p++) {
+            if (*p == '"') inq = !inq;
+            else if (!inq && p[0] == '>' && p[1] == '>') {
+                *p = '\0';
+                redir_file = skip_spaces(p + 2);
+                redir_append = true;
+                break;
+            } else if (!inq && *p == '>') {
+                *p = '\0';
+                redir_file = skip_spaces(p + 1);
+                redir_append = false;
+                break;
+            }
+        }
+        if (redir_file) trim_right(redir_file);
+        trim_right(line);
+    }
+
     bool use_more = parse_pipe_mode(line) > 0;
     if (line[0] == '\0') return;
     if (use_more) sys_more_set(true);
+
+    /* Set up redirection capture buffer if needed */
+    static char redir_static_buf[APP_REDIR_MAX];
+    bool redirecting = (redir_file && *redir_file && _fat_mounted);
+    if (redirecting) {
+        _redir_buf = redir_static_buf;
+        _redir_cap = sizeof redir_static_buf;
+        _redir_pos = 0;
+        _redir_buf[0] = '\0';
+        _redir_active = true;
+    }
 
     /* Separate command from optional argument */
     char *arg = split_arg(line);
@@ -898,6 +1307,8 @@ static void dispatch(char *line) {
     else if (!strcmp(line, "unalias"))   cmd_unalias(arg);
     else if (!strcmp(line, "uname"))     cmd_uname();
     else if (!strcmp(line, "uptime"))    cmd_uptime();
+    else if (!strcmp(line, "sysinfo"))   cmd_sysinfo();
+    else if (!strcmp(line, "status"))    cmd_status(arg);
     else if (!strcmp(line, "clear"))     cmd_clear();
     else if (!strcmp(line, "battery"))   cmd_battery();
     else if (!strcmp(line, "backlight")) cmd_backlight(arg);
@@ -912,35 +1323,147 @@ static void dispatch(char *line) {
     else if (!strcmp(line, "write"))     cmd_write(arg);
     else if (!strcmp(line, "mkdir"))     cmd_mkdir(arg);
     else if (!strcmp(line, "rm"))        cmd_rm(arg);
+    else if (!strcmp(line, "rename"))   cmd_rename(arg);
+    else if (!strcmp(line, "mv"))       cmd_rename(arg);
     else if (!strcmp(line, "sdinfo"))    cmd_sdinfo();
     else if (!strcmp(line, "sdread"))    cmd_sdread(arg);
     else if (!strcmp(line, "reboot"))    cmd_reboot();
+#ifdef PICO_CYW43_SUPPORTED
+    else if (!strcmp(line, "wifi"))       net_app_wifi(arg);
+    else if (!strcmp(line, "ping"))       net_app_ping(arg);
+    else if (!strcmp(line, "ifconfig"))   net_app_ifconfig(arg);
+    else if (!strcmp(line, "ntp"))        net_app_ntp(arg);
+    else if (!strcmp(line, "dns"))        net_app_dns(arg);
+    else if (!strcmp(line, "fetch"))      net_app_fetch(arg);
+    else if (!strcmp(line, "wget"))       net_app_wget(arg);
+    else if (!strcmp(line, "weather"))    net_app_weather(arg);
+    else if (!strcmp(line, "irc"))        net_app_irc(arg);
+    else if (!strcmp(line, "netstat"))    net_app_netstat(arg);
+    else if (!strcmp(line, "telnet"))     net_app_telnet(arg);
+#endif
     else if (app_run(line, arg)) {
         strncpy(_cwd, _sys_cwd, CWD_MAX - 1);
         _cwd[CWD_MAX - 1] = '\0';
     }
-    else out_fmt("unknown: %s  (type 'help')\n", line);
+    else {
+        uint32_t sf = lcd_get_fg();
+        lcd_set_fg(LCD_RED);
+        out_fmt("unknown: %s  (type 'help')\n", line);
+        lcd_set_fg(sf);
+    }
 
     if (use_more) {
         bool aborted = _sys_more_abort;
         sys_more_set(false);
         if (aborted) out_char('\n');
     }
+
+    /* Finalize output redirection */
+    if (redirecting) {
+        _redir_active = false;
+        char abs[CWD_MAX];
+        resolve_abs(redir_file, abs);
+        if (redir_append) {
+            fat_append(abs, (const uint8_t *)_redir_buf, (uint32_t)_redir_pos);
+        } else {
+            fat_unlink(abs);
+            fat_create(abs, (const uint8_t *)_redir_buf, (uint32_t)_redir_pos);
+        }
+        _redir_buf = NULL;
+        _redir_pos = 0;
+    }
 }
 
 /* ------------------------------------------------------------------ */
-/* Input: merged keyboard + USB serial + ANSI arrow key handling        */
+/* Input: merged keyboard + USB serial + key repeat                     */
 /* ------------------------------------------------------------------ */
 
 /*
  * Returns the next character from either the physical keyboard or USB
  * serial.  Non-blocking; returns -1 if nothing is available.
+ * Also checks for key repeat.
  */
 static int read_input(void) {
     int ch = getchar_timeout_us(0);
     if (ch != PICO_ERROR_TIMEOUT) return ch;
-    return kbd_getc();
+    ch = kbd_getc();
+    if (ch >= 0) return ch;
+    return kbd_get_repeat();
 }
+
+/* ------------------------------------------------------------------ */
+/* Status bar — last LCD row shows battery, cwd, uptime                 */
+/* ------------------------------------------------------------------ */
+static void _draw_status_bar(void) {
+    if (!_lcd_ready || !_statusbar_enabled) return;
+
+    /* Save current fg/bg */
+    uint32_t save_fg = lcd_get_fg();
+    uint32_t save_bg = lcd_get_bg();
+    int save_col = lcd_get_col();
+    int save_row = lcd_get_row();
+
+    lcd_set_fg(LCD_BLACK);
+    lcd_set_bg(LCD_GREY);
+
+    /* Build status line: "[BAT%] CWD          H:MM:SS" */
+    char bar[41];
+    memset(bar, ' ', 40);
+    bar[40] = '\0';
+
+    int bat = kbd_battery_percent();
+    bool charging = kbd_is_charging();
+    char lft[20];
+    if (charging)
+        snprintf(lft, sizeof lft, " [%d%%+]", bat);
+    else
+        snprintf(lft, sizeof lft, " [%d%%]", bat);
+    memcpy(bar, lft, strlen(lft));
+
+    /* CWD in the middle */
+    int cwd_start = (int)strlen(lft) + 1;
+    int cwd_avail = 40 - cwd_start - 9; /* reserve 9 for time */
+    if (cwd_avail > 0) {
+        int clen = (int)strlen(_cwd);
+        if (clen <= cwd_avail) {
+            memcpy(bar + cwd_start, _cwd, (size_t)clen);
+        } else {
+            bar[cwd_start] = '.';
+            bar[cwd_start + 1] = '.';
+            memcpy(bar + cwd_start + 2, _cwd + clen - (cwd_avail - 2),
+                   (size_t)(cwd_avail - 2));
+        }
+    }
+
+    /* Uptime on the right */
+    uint32_t secs = to_ms_since_boot(get_absolute_time()) / 1000;
+    uint32_t h = secs / 3600, m = (secs / 60) % 60, s = secs % 60;
+    char rt[16];
+    snprintf(rt, sizeof rt, "%lu:%02lu:%02lu", (unsigned long)h,
+             (unsigned long)m, (unsigned long)s);
+    int rlen = (int)strlen(rt);
+    memcpy(bar + 40 - rlen - 1, rt, (size_t)rlen);
+
+    /* Render into last text row (row 19) */
+    lcd_set_cursor(0, 19);
+    for (int i = 0; i < 40; i++)
+        lcd_draw_cell(i, 19, (char)bar[i], LCD_BLACK, LCD_GREY);
+
+    /* Restore state */
+    lcd_set_fg(save_fg);
+    lcd_set_bg(save_bg);
+    lcd_set_cursor(save_col, save_row);
+}
+
+#ifdef PICO_RP2350A
+/* Core1 entry: periodically refresh the status bar */
+static void _core1_entry(void) {
+    for (;;) {
+        _draw_status_bar();
+        sleep_ms(2000);
+    }
+}
+#endif
 
 /* ------------------------------------------------------------------ */
 /* main                                                                 */
@@ -950,7 +1473,12 @@ int main(void) {
     char line[LINE_BUF];
     int idx = 0;
 
+    /* RP2350 can safely run faster than RP2040 */
+#ifdef PICO_RP2350A
+    set_sys_clock_khz(150000, true);
+#else
     set_sys_clock_khz(133000, true);
+#endif
     stdio_init_all();
     sleep_ms(250);
 
@@ -975,15 +1503,34 @@ int main(void) {
     /* Match the official PicoCalc boot flow: give the SD card time to settle. */
     sleep_ms(1500);
 
-    if (sd_init() == SD_OK && fat_mount() == FAT_OK) {
-        _fat_mounted = true;
-        alias_load();
+    sd_result_t sd_r = sd_init();
+    if (sd_r == SD_OK) {
+        if (fat_mount() == FAT_OK) {
+            _fat_mounted = true;
+            alias_load();
+        } else {
+            out_str("SD: FAT mount failed\n");
+        }
+    } else {
+        out_str("SD: card not detected\n");
     }
 
     out_str(BANNER);
+
+    /* Enable status bar on last LCD row */
+    _statusbar_enabled = true;
+    _draw_status_bar();
+
+#ifdef PICO_RP2350A
+    /* Pico 2: launch core1 for background status bar refresh */
+    multicore_launch_core1(_core1_entry);
+#endif
+
     out_prompt();
 
     memset(line, 0, sizeof line);
+    int hist_browse = -1;  /* -1 = not browsing history */
+    int cursor = 0;        /* cursor position within line */
 
     for (;;) {
         int ch = read_input();
@@ -992,33 +1539,235 @@ int main(void) {
             continue;
         }
 
+        /* ---- Enter: execute ---- */
         if (ch == '\r' || ch == '\n') {
             out_char('\n');
             line[idx] = '\0';
             if (idx > 0) dispatch(line);
             idx = 0;
+            cursor = 0;
             line[0] = '\0';
+            hist_browse = -1;
+            kbd_clear_repeat();
             out_prompt();
             continue;
         }
 
+        /* ---- Backspace / Delete ---- */
         if (ch == 0x08 || ch == 0x7F) {
-            if (idx > 0) {
+            if (cursor > 0) {
+                memmove(&line[cursor - 1], &line[cursor], (size_t)(idx - cursor + 1));
                 idx--;
-                line[idx] = '\0';
-                out_str("\b \b");
+                cursor--;
+                /* Redraw from cursor to end, then clear trailing char */
+                out_str("\b");
+                for (int i = cursor; i < idx; i++) out_char(line[i]);
+                out_char(' ');
+                for (int i = 0; i < idx - cursor + 1; i++) out_str("\b");
             }
             continue;
         }
 
-        if (ch == 0x1B || ch == 0xB4 || ch == 0xB5 || ch == 0xB6 || ch == 0xB7) {
+        /* ---- Ctrl+C — cancel ---- */
+        if (ch == 0x03) {
+            _interrupted = true;
+            out_str("^C\n");
+            idx = 0;
+            cursor = 0;
+            line[0] = '\0';
+            hist_browse = -1;
+            kbd_clear_repeat();
+            out_prompt();
             continue;
         }
 
+        /* ---- Ctrl+A — beginning of line ---- */
+        if (ch == 0x01) {
+            while (cursor > 0) { out_str("\b"); cursor--; }
+            continue;
+        }
+
+        /* ---- Ctrl+E — end of line ---- */
+        if (ch == 0x05) {
+            while (cursor < idx) { out_char(line[cursor]); cursor++; }
+            continue;
+        }
+
+        /* ---- Ctrl+U — clear line ---- */
+        if (ch == 0x15) {
+            /* Move to start, clear everything */
+            while (cursor > 0) { out_str("\b"); cursor--; }
+            for (int i = 0; i < idx; i++) out_char(' ');
+            for (int i = 0; i < idx; i++) out_str("\b");
+            idx = 0;
+            cursor = 0;
+            line[0] = '\0';
+            continue;
+        }
+
+        /* ---- Ctrl+K — kill to end of line ---- */
+        if (ch == 0x0B) {
+            for (int i = cursor; i < idx; i++) out_char(' ');
+            for (int i = cursor; i < idx; i++) out_str("\b");
+            line[cursor] = '\0';
+            idx = cursor;
+            continue;
+        }
+
+        /* ---- Ctrl+L — redraw screen ---- */
+        if (ch == 0x0C) {
+            lcd_cls(LCD_BLACK);
+            out_str("\x1b[2J\x1b[H");
+            out_prompt();
+            for (int i = 0; i < idx; i++) out_char(line[i]);
+            for (int i = idx; i > cursor; i--) out_str("\b");
+            continue;
+        }
+
+        /* ---- Tab — completion ---- */
+        if (ch == '\t') {
+            /* Tab complete only works at end of line */
+            while (cursor < idx) { out_char(line[cursor]); cursor++; }
+            idx = tab_complete(line, idx);
+            cursor = idx;
+            continue;
+        }
+
+        /* ---- Arrow keys (STM32 raw codes) ---- */
+        /* Up = 0xB5, Down = 0xB4, Left = 0xB6, Right = 0xB7 */
+        if (ch == 0xB5) { /* Up — previous history */
+            int next = (hist_browse < 0) ? _hist_count - 1 :
+                       hist_browse - 1;
+            if (next >= 0 && next < _hist_count) {
+                const char *h = hist_get(next);
+                if (h) {
+                    hist_browse = next;
+                    int old_len = idx;
+                    /* Move cursor to start */
+                    while (cursor > 0) { out_str("\b"); cursor--; }
+                    strncpy(line, h, LINE_BUF - 1);
+                    line[LINE_BUF - 1] = '\0';
+                    idx = (int)strlen(line);
+                    cursor = idx;
+                    /* Redraw */
+                    for (int i = 0; i < idx; i++) out_char(line[i]);
+                    for (int i = idx; i < old_len; i++) out_char(' ');
+                    for (int i = idx; i < old_len; i++) out_str("\b");
+                }
+            }
+            continue;
+        }
+
+        if (ch == 0xB4) { /* Down — next history */
+            if (hist_browse >= 0) {
+                int old_len = idx;
+                while (cursor > 0) { out_str("\b"); cursor--; }
+                if (hist_browse < _hist_count - 1) {
+                    hist_browse++;
+                    const char *h = hist_get(hist_browse);
+                    if (h) {
+                        strncpy(line, h, LINE_BUF - 1);
+                        line[LINE_BUF - 1] = '\0';
+                    }
+                } else {
+                    /* Past newest = empty line */
+                    hist_browse = -1;
+                    line[0] = '\0';
+                }
+                idx = (int)strlen(line);
+                cursor = idx;
+                for (int i = 0; i < idx; i++) out_char(line[i]);
+                for (int i = idx; i < old_len; i++) out_char(' ');
+                for (int i = idx; i < old_len; i++) out_str("\b");
+            }
+            continue;
+        }
+
+        if (ch == 0xB6) { /* Left */
+            if (cursor > 0) { cursor--; out_str("\b"); }
+            continue;
+        }
+
+        if (ch == 0xB7) { /* Right */
+            if (cursor < idx) { out_char(line[cursor]); cursor++; }
+            continue;
+        }
+
+        /* ---- ESC (from USB serial ANSI sequences) ---- */
+        if (ch == 0x1B) {
+            /* Try to read [ then direction */
+            int ch2 = -1;
+            for (int w = 0; w < 50 && ch2 < 0; w++) {
+                ch2 = getchar_timeout_us(1000);
+            }
+            if (ch2 == '[') {
+                int ch3 = -1;
+                for (int w = 0; w < 50 && ch3 < 0; w++) {
+                    ch3 = getchar_timeout_us(1000);
+                }
+                if (ch3 == 'A') { ch = 0xB5; goto handle_arrow; }
+                if (ch3 == 'B') { ch = 0xB4; goto handle_arrow; }
+                if (ch3 == 'D') { ch = 0xB6; goto handle_arrow; }
+                if (ch3 == 'C') { ch = 0xB7; goto handle_arrow; }
+            }
+            continue;
+            handle_arrow:
+            /* Re-inject as STM32 arrow code and re-dispatch */
+            if (ch == 0xB5 || ch == 0xB4 || ch == 0xB6 || ch == 0xB7) {
+                /* Reprocess — copy the arrow handling above */
+                if (ch == 0xB5) {
+                    int next = (hist_browse < 0) ? _hist_count - 1 : hist_browse - 1;
+                    if (next >= 0 && next < _hist_count) {
+                        const char *h = hist_get(next);
+                        if (h) {
+                            hist_browse = next;
+                            int old_len = idx;
+                            while (cursor > 0) { out_str("\b"); cursor--; }
+                            strncpy(line, h, LINE_BUF - 1);
+                            line[LINE_BUF - 1] = '\0';
+                            idx = (int)strlen(line);
+                            cursor = idx;
+                            for (int i = 0; i < idx; i++) out_char(line[i]);
+                            for (int i = idx; i < old_len; i++) out_char(' ');
+                            for (int i = idx; i < old_len; i++) out_str("\b");
+                        }
+                    }
+                } else if (ch == 0xB4) {
+                    if (hist_browse >= 0) {
+                        int old_len = idx;
+                        while (cursor > 0) { out_str("\b"); cursor--; }
+                        if (hist_browse < _hist_count - 1) {
+                            hist_browse++;
+                            const char *h = hist_get(hist_browse);
+                            if (h) { strncpy(line, h, LINE_BUF - 1); line[LINE_BUF - 1] = '\0'; }
+                        } else { hist_browse = -1; line[0] = '\0'; }
+                        idx = (int)strlen(line); cursor = idx;
+                        for (int i = 0; i < idx; i++) out_char(line[i]);
+                        for (int i = idx; i < old_len; i++) out_char(' ');
+                        for (int i = idx; i < old_len; i++) out_str("\b");
+                    }
+                } else if (ch == 0xB6) {
+                    if (cursor > 0) { cursor--; out_str("\b"); }
+                } else if (ch == 0xB7) {
+                    if (cursor < idx) { out_char(line[cursor]); cursor++; }
+                }
+            }
+            continue;
+        }
+
+        /* ---- Printable character — insert at cursor ---- */
         if (isprint((unsigned char)ch) && idx < LINE_BUF - 1) {
-            line[idx++] = (char)ch;
+            if (cursor < idx) {
+                /* Insert in middle */
+                memmove(&line[cursor + 1], &line[cursor], (size_t)(idx - cursor));
+            }
+            line[cursor] = (char)ch;
+            idx++;
             line[idx] = '\0';
-            out_char((char)ch);
+            /* Print from cursor to end, then move back */
+            for (int i = cursor; i < idx; i++) out_char(line[i]);
+            cursor++;
+            for (int i = 0; i < idx - cursor; i++) out_str("\b");
         }
     }
 }

@@ -76,5 +76,7 @@ fat_result_t fat_get_usage(fat_usage_t *out);
 fat_result_t fat_mkdir(const char *path);
 fat_result_t fat_unlink(const char *path);
 fat_result_t fat_create(const char *path, const uint8_t *data, uint32_t len);
+fat_result_t fat_rename(const char *old_path, const char *new_path);
+fat_result_t fat_append(const char *path, const uint8_t *data, uint32_t len);
 
 const char  *fat_result_str(fat_result_t r);

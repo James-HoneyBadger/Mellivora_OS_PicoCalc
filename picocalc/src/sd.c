@@ -182,15 +182,34 @@ static uint8_t _cmd(uint8_t cmd, uint32_t arg) {
 /* Public API                                                           */
 /* ------------------------------------------------------------------ */
 
+/* CRC16-CCITT for SD block validation */
+static uint16_t _crc16(const uint8_t *data, size_t len) {
+    uint16_t crc = 0;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint16_t)data[i] << 8;
+        for (int j = 0; j < 8; j++) {
+            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+
 sd_result_t sd_init(void) {
     if (_inited) return SD_OK;
 
-    /* Card-detect is useful as a hint only; do not hard-fail on it. */
+    /* Card-detect with debounce: 3 reads, 10ms apart */
     bool inserted_hint = true;
     gpio_init(SD_PIN_DET);
     gpio_set_dir(SD_PIN_DET, GPIO_IN);
     gpio_pull_up(SD_PIN_DET);
-    inserted_hint = !gpio_get(SD_PIN_DET);
+    {
+        int detected_count = 0;
+        for (int d = 0; d < 3; d++) {
+            if (!gpio_get(SD_PIN_DET)) detected_count++;
+            sleep_ms(10);
+        }
+        inserted_hint = (detected_count >= 2);
+    }
 
     /* Use the more tolerant PicoCalc-style bit-banged transport. */
     _bitbang_init();
@@ -286,9 +305,17 @@ sd_result_t sd_read_block(uint32_t lba, uint8_t *buf) {
         if (!tok_ok) { _deselect(); _inited = 0; continue; }
 
         _spi_read(buf, SD_BLOCK_SIZE);
-        _spi_xchg(0xFF); /* CRC hi */
-        _spi_xchg(0xFF); /* CRC lo */
+        uint8_t crc_hi = _spi_xchg(0xFF);
+        uint8_t crc_lo = _spi_xchg(0xFF);
         _deselect();
+
+        /* Validate CRC16 */
+        uint16_t received_crc = (uint16_t)((crc_hi << 8) | crc_lo);
+        uint16_t computed_crc = _crc16(buf, SD_BLOCK_SIZE);
+        if (received_crc != computed_crc) {
+            _inited = 0;
+            continue; /* retry on CRC mismatch */
+        }
         return SD_OK;
     }
     return SD_TIMEOUT;

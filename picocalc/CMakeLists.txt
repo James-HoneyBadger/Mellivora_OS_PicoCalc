@@ -17,6 +17,8 @@ add_executable(mellivora_picocalc
     src/fat.c
     src/syscall.c
     src/apps.c
+    src/net.c
+    src/netapps.c
 )
 
 target_include_directories(mellivora_picocalc PRIVATE src)
@@ -45,7 +47,18 @@ target_link_libraries(mellivora_picocalc
     hardware_timer
     hardware_pwm
     hardware_watchdog
+    hardware_dma
 )
+
+# Pico 2W WiFi support — add CYW43 and lwIP when board supports it
+if (PICO_CYW43_SUPPORTED)
+    target_compile_definitions(mellivora_picocalc PRIVATE
+        PICO_CYW43_SUPPORTED=1
+    )
+    target_link_libraries(mellivora_picocalc
+        pico_cyw43_arch_lwip_poll
+    )
+endif()
 
 # Enable both USB CDC and UART console
 pico_enable_stdio_usb(mellivora_picocalc 1)

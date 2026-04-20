@@ -11,6 +11,7 @@
  * Battery level is read from register 0x0B.
  */
 #include <stdint.h>
+#include <stdbool.h>
 
 /* Init I2C and keyboard controller.  Call once at startup. */
 void kbd_init(void);
@@ -27,3 +28,14 @@ void kbd_set_backlight(uint8_t level);
 
 /* Read battery percentage (0-100). Returns -1 on error. */
 int  kbd_battery_percent(void);
+
+/* Key repeat support: call when no hardware key is pressed to get
+ * a synthetic repeat of the last key after the repeat delay.
+ * Returns key char or -1 if no repeat due yet. */
+int  kbd_get_repeat(void);
+
+/* Clear key repeat state (call when user releases or a new context starts). */
+void kbd_clear_repeat(void);
+
+/* Returns true if the device is currently charging (bit 7 of battery register). */
+bool kbd_is_charging(void);

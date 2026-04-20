@@ -7,20 +7,34 @@
 #include <string.h>
 
 #include "syscall.h"
+#include "picocalc_hw.h"
+#include "hardware/pwm.h"
+#include "hardware/clocks.h"
 
+/* RP2350 (Pico 2) has 520KB RAM — use larger buffers */
+#ifdef PICO_RP2350A
+#define APP_TOKEN_MAX    512
+#define APP_READ_MAX     8192
+#define BASIC_LINE_MAX   256
+#define EDIT_LINES_MAX   256
+#define PAINT_WIDTH      256
+#define PAINT_HEIGHT     128
+#else
 #define APP_TOKEN_MAX    256
 #define APP_READ_MAX     4096
-#define APP_PAGE_LINES   23
 #define BASIC_LINE_MAX   128
+#define EDIT_LINES_MAX   128
+#define PAINT_WIDTH      128
+#define PAINT_HEIGHT     64
+#endif
+
+#define APP_PAGE_LINES   23
 #define BASIC_STACK_MAX  16
 #define TINYC_VAR_MAX    64
-#define EDIT_LINES_MAX   96
 #define EDIT_LINE_MAX    96
 #define EDIT_SAVE_MAX    (EDIT_LINES_MAX * (EDIT_LINE_MAX + 1) + 1)
 #define BROWSE_ITEMS_MAX 64
 #define BROWSE_NAME_MAX  32
-#define PAINT_WIDTH      128
-#define PAINT_HEIGHT     64
 #define PAINT_SAVE_MAX   (PAINT_WIDTH * PAINT_HEIGHT + PAINT_HEIGHT + 1)
 #define SETTINGS_FILE    "/SETTINGS.CFG"
 #define TODO_FILE        "/TODO.TXT"
@@ -47,6 +61,7 @@ typedef struct {
     const char *pattern;
     char root[APP_TOKEN_MAX];
     int count;
+    int type_filter;  /* 0=any, 1=file only, 2=dir only */
 } find_ctx_t;
 
 typedef struct {
@@ -130,6 +145,7 @@ typedef struct {
 typedef struct {
     char label[BOOKMARK_LABEL_MAX];
     char target[APP_TOKEN_MAX];
+    char cwd[APP_TOKEN_MAX];  /* saved CWD context (may be empty) */
 } bookmark_item_t;
 
 typedef struct {
@@ -141,6 +157,8 @@ typedef struct {
     char name[HABIT_NAME_MAX];
     int count;
     char last_date[16];
+    int streak;
+    int best_streak;
 } habit_item_t;
 
 typedef struct {
@@ -623,12 +641,13 @@ static bool glob_match_star(const char *pattern, const char *str) {
 
 static void app_find_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
     (void)size;
-    (void)is_dir;
     find_ctx_t *ctx = (find_ctx_t *)opaque;
     if (!ctx || !name || !*name) return;
 
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
     if (ctx->pattern && !glob_match_star(ctx->pattern, name)) return;
+    if (ctx->type_filter == 1 && is_dir) return;   /* -type f: skip dirs */
+    if (ctx->type_filter == 2 && !is_dir) return;  /* -type d: skip files */
 
     char path[APP_TOKEN_MAX];
     path[0] = '\0';
@@ -761,14 +780,54 @@ static void app_head(const char *arg) {
     if (n > 0 && buf[n - 1] != '\n' && seen < num_lines) sys_putchar('\n');
 }
 
+/* Simple regex: supports '.' (any char) and '*' (zero-or-more of preceding) */
+static bool match_re_here(const char *re, const char *text);
+
+static bool match_re_star(char c, const char *re, const char *text) {
+    /* c* matches zero or more of c (c may be '.') */
+    do {
+        if (match_re_here(re, text)) return true;
+    } while (*text != '\0' && (c == '.' || tolower((unsigned char)*text) == tolower((unsigned char)c)) && text++);
+    return false;
+}
+
+static bool match_re_here(const char *re, const char *text) {
+    if (re[0] == '\0') return true;
+    if (re[1] == '*') return match_re_star(re[0], re + 2, text);
+    if (re[0] == '.' && *text != '\0') return match_re_here(re + 1, text + 1);
+    if (*text != '\0' && tolower((unsigned char)re[0]) == tolower((unsigned char)*text))
+        return match_re_here(re + 1, text + 1);
+    return false;
+}
+
+/* Search for re anywhere in text (unanchored) */
+static bool match_simple_re(const char *re, const char *text) {
+    if (re[0] == '^') return match_re_here(re + 1, text);
+    do {
+        if (match_re_here(re, text)) return true;
+    } while (*text++ != '\0');
+    return false;
+}
+
 static void app_grep(const char *arg) {
+    const char *s = skip_ws(arg);
+    bool show_nums = false;
+    bool use_regex = false;
+
+    /* Parse flags */
+    while (s && *s == '-') {
+        if (s[1] == 'n') { show_nums = true; s = skip_ws(s + 2); }
+        else if (s[1] == 'e') { use_regex = true; s = skip_ws(s + 2); }
+        else break;
+    }
+
     char pat[APP_TOKEN_MAX];
     char path[APP_TOKEN_MAX];
-    const char *s = next_token(arg, pat, sizeof pat);
+    s = next_token(s, pat, sizeof pat);
     s = next_token(s, path, sizeof path);
 
     if (!*pat) {
-        print_line("usage: grep PATTERN FILE");
+        print_line("usage: grep [-n] [-e] PATTERN FILE");
         return;
     }
     if (!*path) {
@@ -784,6 +843,16 @@ static void app_grep(const char *arg) {
     }
     file_buf[n] = '\0';
 
+    /* Auto-detect regex if pattern contains . or * */
+    if (!use_regex) {
+        for (const char *c = pat; *c; c++) {
+            if (*c == '.' || *c == '*' || *c == '^' || *c == '$') {
+                use_regex = true;
+                break;
+            }
+        }
+    }
+
     int line = 1;
     int matches = 0;
     const char *p = file_buf;
@@ -797,10 +866,14 @@ static void app_grep(const char *arg) {
         memcpy(line_buf, start, len);
         line_buf[len] = '\0';
 
-        if (str_contains_ci(line_buf, pat)) {
-            char num[32];
-            snprintf(num, sizeof num, "%d:", line);
-            sys_print(num);
+        bool hit = use_regex ? match_simple_re(pat, line_buf)
+                             : str_contains_ci(line_buf, pat);
+        if (hit) {
+            if (show_nums) {
+                char num[32];
+                snprintf(num, sizeof num, "%d:", line);
+                sys_print(num);
+            }
             sys_print(line_buf);
             sys_putchar('\n');
             matches++;
@@ -884,10 +957,20 @@ static void app_rev(const char *arg) {
 }
 
 static void app_sort(const char *arg) {
+    const char *s = skip_ws(arg);
+    bool reverse = false;
+    bool numeric = false;
+
+    while (s && *s == '-') {
+        if (s[1] == 'r') { reverse = true; s = skip_ws(s + 2); }
+        else if (s[1] == 'n') { numeric = true; s = skip_ws(s + 2); }
+        else break;
+    }
+
     char path[APP_TOKEN_MAX];
-    next_token(arg, path, sizeof path);
+    next_token(s, path, sizeof path);
     if (!*path) {
-        print_line("usage: sort FILE");
+        print_line("usage: sort [-r] [-n] FILE");
         return;
     }
 
@@ -913,7 +996,16 @@ static void app_sort(const char *arg) {
 
     for (int i = 0; i < line_count; i++) {
         for (int j = i + 1; j < line_count; j++) {
-            if (str_casecmp_local(lines[i], lines[j]) > 0) {
+            int cmp;
+            if (numeric) {
+                long a = strtol(lines[i], NULL, 10);
+                long b = strtol(lines[j], NULL, 10);
+                cmp = (a > b) ? 1 : (a < b) ? -1 : 0;
+            } else {
+                cmp = str_casecmp_local(lines[i], lines[j]);
+            }
+            if (reverse) cmp = -cmp;
+            if (cmp > 0) {
                 char *tmp = lines[i];
                 lines[i] = lines[j];
                 lines[j] = tmp;
@@ -1247,6 +1339,37 @@ static void app_hexedit(const char *arg) {
             continue;
         }
 
+        if (ci_eq(cmd, "find")) {
+            /* find XX XX ... — search for hex byte sequence */
+            uint8_t needle[32];
+            int nlen = 0;
+            const char *fp = skip_ws(s);
+            while (*fp && nlen < (int)sizeof needle) {
+                char hb[3] = {0};
+                if (!isxdigit((unsigned char)fp[0])) break;
+                hb[0] = fp[0];
+                hb[1] = (fp[1] && isxdigit((unsigned char)fp[1])) ? fp[1] : '\0';
+                needle[nlen++] = (uint8_t)strtoul(hb, NULL, 16);
+                fp += hb[1] ? 2 : 1;
+                while (*fp == ' ') fp++;
+            }
+            if (nlen == 0) {
+                print_line("usage: find XX [XX ...]");
+                continue;
+            }
+            bool found = false;
+            for (size_t i = 0; i + (size_t)nlen <= len; i++) {
+                if (memcmp(buf + i, needle, (size_t)nlen) == 0) {
+                    char msg[64];
+                    snprintf(msg, sizeof msg, "found at offset 0x%04X (%u)", (unsigned)i, (unsigned)i);
+                    print_line(msg);
+                    found = true;
+                }
+            }
+            if (!found) print_line("hexedit: pattern not found");
+            continue;
+        }
+
         if (ci_eq(cmd, "saveas")) {
             char new_path[APP_TOKEN_MAX];
             next_token(s, new_path, sizeof new_path);
@@ -1412,8 +1535,25 @@ static void app_find(const char *arg) {
     find_ctx_t ctx = {
         .pattern = pattern,
         .count = 0,
+        .type_filter = 0,
     };
     copy_cstr(ctx.root, sizeof ctx.root, root);
+
+    /* Scan remaining tokens for -type f|d */
+    {
+        char tflag[APP_TOKEN_MAX];
+        const char *scan = s;
+        while (scan && *skip_ws(scan)) {
+            char tok[APP_TOKEN_MAX];
+            scan = next_token(scan, tok, sizeof tok);
+            if (strcmp(tok, "-type") == 0) {
+                scan = next_token(scan, tflag, sizeof tflag);
+                if (tflag[0] == 'f') ctx.type_filter = 1;
+                else if (tflag[0] == 'd') ctx.type_filter = 2;
+                break;
+            }
+        }
+    }
 
     if (fat_ls(root, app_find_cb, &ctx) != FAT_OK) {
         print_line("find: unable to list directory");
@@ -1483,6 +1623,33 @@ static void app_calc(const char *arg) {
     }
 }
 
+/* Callback for recursive cp — copies files, creates subdirs (one level deep).
+ * Note: only handles one level of recursion to keep stack bounded. */
+typedef struct { char src[APP_TOKEN_MAX]; char dst[APP_TOKEN_MAX]; int count; bool err; } _cp_dir_ctx_t;
+
+static void _cp_dir_cb(const char *name, uint32_t size, bool is_dir, void *ctx) {
+    _cp_dir_ctx_t *c = (_cp_dir_ctx_t *)ctx;
+    char fsrc[APP_TOKEN_MAX + 16], fdst[APP_TOKEN_MAX + 16];
+    snprintf(fsrc, sizeof fsrc, "%s/%s", c->src, name);
+    snprintf(fdst, sizeof fdst, "%s/%s", c->dst, name);
+
+    if (is_dir) {
+        /* Create subdirectory but don't recurse further to avoid deep stack usage */
+        if (fat_mkdir(fdst) == FAT_OK) c->count++;
+        else c->err = true;
+    } else {
+        uint8_t buf[APP_READ_MAX];
+        uint32_t n = 0;
+        fat_file_t f;
+        if (fat_open(fsrc, &f) != FAT_OK) { c->err = true; return; }
+        int32_t rd = fat_read(&f, buf, sizeof buf);
+        if (rd < 0) { c->err = true; return; }
+        n = (uint32_t)rd;
+        if (fat_create(fdst, buf, n) == FAT_OK) c->count++;
+        else c->err = true;
+    }
+}
+
 static void app_cp(const char *arg) {
     char src[APP_TOKEN_MAX];
     char dst[APP_TOKEN_MAX];
@@ -1504,7 +1671,20 @@ static void app_cp(const char *arg) {
         return;
     }
     if (fat_is_dir(abs_src) == FAT_OK) {
-        print_line("cp: directory copy not supported yet");
+        /* Recursive directory copy */
+        if (fat_mkdir(abs_dst) != FAT_OK && fat_is_dir(abs_dst) != FAT_OK) {
+            print_line("cp: cannot create destination directory");
+            return;
+        }
+        static _cp_dir_ctx_t cpctx;
+        copy_cstr(cpctx.src, sizeof cpctx.src, abs_src);
+        copy_cstr(cpctx.dst, sizeof cpctx.dst, abs_dst);
+        cpctx.count = 0;
+        cpctx.err = false;
+        fat_ls(abs_src, _cp_dir_cb, &cpctx);
+        char out[64];
+        snprintf(out, sizeof out, "copied %d entries%s", cpctx.count, cpctx.err ? " (with errors)" : "");
+        print_line(out);
         return;
     }
 
@@ -2859,6 +3039,15 @@ static int bookmarks_load(bookmark_item_t *items, int max_items) {
         if (!*s || !*sep) continue;
 
         copy_cstr(items[count].label, sizeof items[count].label, s);
+        /* Parse optional CWD field: LABEL|TARGET|CWD */
+        char *sep2 = strchr(sep, '|');
+        if (sep2) {
+            *sep2++ = '\0';
+            sep2 = (char *)skip_ws(sep2);
+            copy_cstr(items[count].cwd, sizeof items[count].cwd, sep2);
+        } else {
+            items[count].cwd[0] = '\0';
+        }
         copy_cstr(items[count].target, sizeof items[count].target, sep);
         count++;
     }
@@ -2870,7 +3059,11 @@ static bool bookmarks_save(bookmark_item_t *items, int count) {
     size_t pos = 0;
 
     for (int i = 0; i < count; i++) {
-        int wrote = snprintf(buf + pos, sizeof buf - pos, "%s|%s\n", items[i].label, items[i].target);
+        int wrote;
+        if (*items[i].cwd)
+            wrote = snprintf(buf + pos, sizeof buf - pos, "%s|%s|%s\n", items[i].label, items[i].target, items[i].cwd);
+        else
+            wrote = snprintf(buf + pos, sizeof buf - pos, "%s|%s\n", items[i].label, items[i].target);
         if (wrote < 0 || (size_t)wrote >= sizeof buf - pos) {
             print_line("bookmarks: file too large to save");
             return false;
@@ -2892,7 +3085,10 @@ static void bookmarks_show(const bookmark_item_t *items, int count) {
     }
     for (int i = 0; i < count; i++) {
         char out[160];
-        snprintf(out, sizeof out, "%2d. %-16.16s -> %.96s", i + 1, items[i].label, items[i].target);
+        if (*items[i].cwd)
+            snprintf(out, sizeof out, "%2d. %-12.12s -> %.60s [%.30s]", i + 1, items[i].label, items[i].target, items[i].cwd);
+        else
+            snprintf(out, sizeof out, "%2d. %-12.12s -> %.96s", i + 1, items[i].label, items[i].target);
         print_line(out);
     }
 }
@@ -2905,27 +3101,44 @@ static int bookmarks_find(const bookmark_item_t *items, int count, const char *k
     return -1;
 }
 
-static void bookmarks_open_target(const char *target) {
+static void bookmarks_open_target(const char *target, const char *saved_cwd) {
+    /* Restore CWD context if saved */
+    char old_cwd[APP_TOKEN_MAX];
+    bool restored = false;
+    if (saved_cwd && *saved_cwd) {
+        copy_cstr(old_cwd, sizeof old_cwd, _sys_cwd);
+        if (fat_is_dir(saved_cwd) == FAT_OK) {
+            copy_cstr(_sys_cwd, sizeof _sys_cwd, saved_cwd);
+            restored = true;
+        }
+    }
+
     char cmdline[APP_TOKEN_MAX];
     char cmd[APP_TOKEN_MAX];
     copy_cstr(cmdline, sizeof cmdline, target ? target : "");
     const char *rest = next_token(cmdline, cmd, sizeof cmd);
 
-    if (*cmd && app_dispatch_named(cmd, rest)) return;
+    if (*cmd && app_dispatch_named(cmd, rest)) {
+        if (restored) copy_cstr(_sys_cwd, sizeof _sys_cwd, old_cwd);
+        return;
+    }
 
     char abs[APP_TOKEN_MAX];
     app_make_abs(target, abs, sizeof abs);
     if (fat_is_dir(abs) == FAT_OK) {
         app_browse(abs);
+        if (restored) copy_cstr(_sys_cwd, sizeof _sys_cwd, old_cwd);
         return;
     }
 
     fat_file_t f;
     if (fat_open(abs, &f) == FAT_OK) {
         app_edit(abs);
+        if (restored) copy_cstr(_sys_cwd, sizeof _sys_cwd, old_cwd);
         return;
     }
 
+    if (restored) copy_cstr(_sys_cwd, sizeof _sys_cwd, old_cwd);
     print_line("bookmarks: target not found");
 }
 
@@ -2963,6 +3176,7 @@ static void app_bookmarks(const char *arg) {
         }
         copy_cstr(items[idx].label, sizeof items[idx].label, label);
         copy_cstr(items[idx].target, sizeof items[idx].target, target);
+        copy_cstr(items[idx].cwd, sizeof items[idx].cwd, _sys_cwd);
         if (bookmarks_save(items, count)) print_line("bookmarks: saved");
         return;
     }
@@ -2979,7 +3193,7 @@ static void app_bookmarks(const char *arg) {
             print_line("bookmarks: entry not found");
             return;
         }
-        bookmarks_open_target(items[idx].target);
+        bookmarks_open_target(items[idx].target, items[idx].cwd);
         return;
     }
 
@@ -3174,6 +3388,19 @@ static int habits_load(habit_item_t *items, int max_items) {
         copy_cstr(items[count].name, sizeof items[count].name, s);
         items[count].count = atoi(sep1);
         copy_cstr(items[count].last_date, sizeof items[count].last_date, sep2);
+        /* Parse optional streak fields (backwards-compatible) */
+        items[count].streak = 0;
+        items[count].best_streak = 0;
+        char *sep3 = strchr(sep2, '|');
+        if (sep3) {
+            *sep3++ = '\0';
+            items[count].streak = atoi(sep3);
+            char *sep4 = strchr(sep3, '|');
+            if (sep4) {
+                *sep4++ = '\0';
+                items[count].best_streak = atoi(sep4);
+            }
+        }
         count++;
     }
     return count;
@@ -3184,9 +3411,10 @@ static bool habits_save(habit_item_t *items, int count) {
     size_t pos = 0;
 
     for (int i = 0; i < count; i++) {
-        int wrote = snprintf(buf + pos, sizeof buf - pos, "%s|%d|%s\n",
+        int wrote = snprintf(buf + pos, sizeof buf - pos, "%s|%d|%s|%d|%d\n",
                              items[i].name, items[i].count,
-                             *items[i].last_date ? items[i].last_date : "none");
+                             *items[i].last_date ? items[i].last_date : "none",
+                             items[i].streak, items[i].best_streak);
         if (wrote < 0 || (size_t)wrote >= sizeof buf - pos) {
             print_line("habits: file too large to save");
             return false;
@@ -3216,8 +3444,9 @@ static void habits_show(const habit_item_t *items, int count) {
     }
     for (int i = 0; i < count; i++) {
         char out[160];
-        snprintf(out, sizeof out, "%2d. %-20.20s count=%d last=%.10s",
+        snprintf(out, sizeof out, "%2d. %-16.16s cnt=%d stk=%d best=%d last=%.10s",
                  i + 1, items[i].name, items[i].count,
+                 items[i].streak, items[i].best_streak,
                  *items[i].last_date ? items[i].last_date : "never");
         print_line(out);
     }
@@ -3260,6 +3489,8 @@ static void app_habits(const char *arg) {
         copy_cstr(items[count].name, sizeof items[count].name, name);
         items[count].count = 0;
         items[count].last_date[0] = '\0';
+        items[count].streak = 0;
+        items[count].best_streak = 0;
         if (habits_save(items, count + 1)) print_line("habits: added");
         return;
     }
@@ -3279,6 +3510,30 @@ static void app_habits(const char *arg) {
             return;
         }
         const char *date = planner_valid_date(when) ? when : today;
+        /* Streak logic: if last_date is yesterday or today, continue streak */
+        if (strcmp(items[idx].last_date, date) == 0) {
+            /* Same day — don't double-count, just record */
+        } else {
+            /* Check if this is a consecutive day (simple: compare date strings) */
+            bool consecutive = false;
+            if (*items[idx].last_date && strlen(items[idx].last_date) == 10) {
+                /* Parse YYYY-MM-DD and check if difference is 1 day */
+                int ly = 0, lm = 0, ld = 0, cy = 0, cm = 0, cd = 0;
+                sscanf(items[idx].last_date, "%d-%d-%d", &ly, &lm, &ld);
+                sscanf(date, "%d-%d-%d", &cy, &cm, &cd);
+                /* Approximate: same month and day differs by 1, or month transition */
+                if (cy == ly && cm == lm && cd == ld + 1) consecutive = true;
+                else if (cy == ly && cm == lm + 1 && cd == 1 && ld >= 28) consecutive = true;
+                else if (cy == ly + 1 && cm == 1 && lm == 12 && cd == 1 && ld == 31) consecutive = true;
+            }
+            if (consecutive) {
+                items[idx].streak++;
+            } else {
+                items[idx].streak = 1;
+            }
+            if (items[idx].streak > items[idx].best_streak)
+                items[idx].best_streak = items[idx].streak;
+        }
         items[idx].count++;
         copy_cstr(items[idx].last_date, sizeof items[idx].last_date, date);
         if (habits_save(items, count)) print_line("habits: completion recorded");
@@ -3299,6 +3554,8 @@ static void app_habits(const char *arg) {
         }
         items[idx].count = 0;
         items[idx].last_date[0] = '\0';
+        items[idx].streak = 0;
+        items[idx].best_streak = 0;
         if (habits_save(items, count)) print_line("habits: reset");
         return;
     }
@@ -3419,7 +3676,7 @@ static void snake_render(const int *sx, const int *sy, int len, int food_x, int 
     char out[64];
     snprintf(out, sizeof out, "Snake score: %d", score);
     print_line(out);
-    print_line("Use w/a/s/d or h/j/k/l to move, Enter to advance, q to quit");
+    print_line("Use w/a/s/d to move, q to quit");
 
     for (int y = -1; y <= SNAKE_H; y++) {
         char line[64];
@@ -3452,35 +3709,63 @@ static void app_snake(const char *arg) {
     int dx = 1, dy = 0;
     int food_x = 0, food_y = 0;
     int score = 0;
+    uint32_t speed_ms = 200; /* ms per tick — gets faster */
+
+    /* Load persistent high score */
+    int hi_score = 0;
+    {
+        char hbuf[32];
+        int hn = sys_fread("/HISCORE.TXT", hbuf, sizeof hbuf - 1);
+        if (hn > 0) { hbuf[hn] = '\0'; hi_score = atoi(hbuf); }
+    }
 
     sx[0] = 4; sy[0] = 4;
     sx[1] = 3; sy[1] = 4;
     sx[2] = 2; sy[2] = 4;
     snake_spawn_food(&food_x, &food_y, sx, sy, len);
+    if (hi_score > 0) {
+        char hmsg[48];
+        snprintf(hmsg, sizeof hmsg, "High score: %d", hi_score);
+        print_line(hmsg);
+    }
 
     while (1) {
         snake_render(sx, sy, len, food_x, food_y, score);
-        int ch = sys_getchar();
-        if (ch == 'q' || ch == 'Q' || ch == 0x03) break;
 
-        if ((ch == 'w' || ch == 'k' || ch == 'K') && dy != 1) { dx = 0; dy = -1; }
-        else if ((ch == 's' || ch == 'j' || ch == 'J') && dy != -1) { dx = 0; dy = 1; }
-        else if ((ch == 'a' || ch == 'h' || ch == 'H') && dx != 1) { dx = -1; dy = 0; }
-        else if ((ch == 'd' || ch == 'l' || ch == 'L') && dx != -1) { dx = 1; dy = 0; }
+        /* Real-time: poll for input during the tick interval */
+        uint32_t start = sys_time_ms();
+        int last_dir = -1;
+        while (sys_time_ms() - start < speed_ms) {
+            int ch = getchar_timeout_us(0);
+            if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
+            if (ch == 'q' || ch == 'Q' || ch == 0x03) goto snake_done;
+            if ((ch == 'w' || ch == 'k') && dy != 1)  last_dir = 0;
+            else if ((ch == 's' || ch == 'j') && dy != -1) last_dir = 1;
+            else if ((ch == 'a' || ch == 'h') && dx != 1)  last_dir = 2;
+            else if ((ch == 'd' || ch == 'l') && dx != -1) last_dir = 3;
+            /* Arrow keys */
+            else if (ch == 0xB5 && dy != 1)  last_dir = 0;
+            else if (ch == 0xB4 && dy != -1) last_dir = 1;
+            else if (ch == 0xB6 && dx != 1)  last_dir = 2;
+            else if (ch == 0xB7 && dx != -1) last_dir = 3;
+            sleep_ms(10);
+        }
+
+        if (last_dir == 0) { dx = 0; dy = -1; }
+        else if (last_dir == 1) { dx = 0; dy = 1; }
+        else if (last_dir == 2) { dx = -1; dy = 0; }
+        else if (last_dir == 3) { dx = 1; dy = 0; }
 
         int nx = sx[0] + dx;
         int ny = sy[0] + dy;
         if (nx < 0 || nx >= SNAKE_W || ny < 0 || ny >= SNAKE_H) {
             print_line("snake: wall hit; game over");
-            (void)sys_getchar();
-            break;
+            goto snake_done;
         }
         for (int i = 0; i < len; i++) {
             if (sx[i] == nx && sy[i] == ny) {
                 print_line("snake: self collision; game over");
-                (void)sys_getchar();
-                sys_clear();
-                return;
+                goto snake_done;
             }
         }
 
@@ -3497,8 +3782,21 @@ static void app_snake(const char *arg) {
         if (grow) {
             score++;
             snake_spawn_food(&food_x, &food_y, sx, sy, len);
+            /* Speed up every 5 points */
+            if (speed_ms > 80 && score % 5 == 0) speed_ms -= 20;
         }
     }
+snake_done:
+    if (score > hi_score) {
+        char sbuf[32];
+        snprintf(sbuf, sizeof sbuf, "%d", score);
+        sys_fwrite("/HISCORE.TXT", sbuf, (uint32_t)strlen(sbuf));
+        char msg[48];
+        snprintf(msg, sizeof msg, "New high score: %d!", score);
+        print_line(msg);
+    }
+    print_line("Press any key...");
+    (void)sys_getchar();
     sys_clear();
 }
 
@@ -4206,6 +4504,10 @@ static bool basic_assign(const char *src) {
         print_line("BASIC: bad expression");
         return true;
     }
+    if (var < 'A' || var > 'Z') {
+        print_line("BASIC: invalid variable");
+        return true;
+    }
     g_basic_env.vars[var - 'A'] = value;
     return true;
 }
@@ -4263,6 +4565,10 @@ static void basic_exec_stmt(const char *stmt, int *pc) {
             return;
         }
         char var = (char)toupper((unsigned char)*p);
+        if (var < 'A' || var > 'Z') {
+            print_line("usage: INPUT A");
+            return;
+        }
         char line[64];
         if (app_read_line("? ", line, sizeof line) >= 0)
             g_basic_env.vars[var - 'A'] = atoi(line);
@@ -4438,6 +4744,15 @@ static void basic_run_program(void) {
     g_basic_env.gosub_top = 0;
     for (int pc = 0; pc < g_basic_count && !g_basic_env.stop; pc++) {
         basic_exec_stmt(g_basic_program[pc].text, &pc);
+        /* Check for Ctrl+C interrupt */
+        int ch = getchar_timeout_us(0);
+        if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
+        if (ch == 0x03) { /* Ctrl+C */
+            char brk[48];
+            snprintf(brk, sizeof brk, "BREAK at line %d", g_basic_program[pc].number);
+            print_line(brk);
+            break;
+        }
     }
 }
 static void app_basic(const char *arg) {
@@ -4838,6 +5153,962 @@ static void app_paint(const char *arg) {
     sys_clear();
 }
 
+/* ============================================================
+ * New utilities: watch, diff, env, lock, xxd, strings, yes, tee
+ * ============================================================ */
+
+/* watch CMD [SEC] — repeat a command every N seconds */
+static void app_watch(const char *arg) {
+    const char *p = skip_ws(arg);
+    if (!*p) { print_line("usage: watch <seconds> <command>"); return; }
+    int interval = atoi(p);
+    if (interval <= 0) interval = 2;
+    while (*p && !isspace((unsigned char)*p)) p++;
+    p = skip_ws(p);
+    if (!*p) { print_line("usage: watch <seconds> <command>"); return; }
+
+    char cmd_buf[APP_TOKEN_MAX];
+    strncpy(cmd_buf, p, sizeof cmd_buf - 1);
+    cmd_buf[sizeof cmd_buf - 1] = '\0';
+
+    while (1) {
+        sys_clear();
+        char hdr[APP_TOKEN_MAX + 32];
+        snprintf(hdr, sizeof hdr, "Every %ds: %s", interval, cmd_buf);
+        print_line(hdr);
+        print_line("---");
+
+        /* Execute command by calling app_run */
+        char copy[APP_TOKEN_MAX];
+        strncpy(copy, cmd_buf, sizeof copy - 1);
+        copy[sizeof copy - 1] = '\0';
+        char *sp = copy;
+        while (*sp && !isspace((unsigned char)*sp)) sp++;
+        char *warg = "";
+        if (*sp) { *sp = '\0'; warg = sp + 1; while (*warg == ' ') warg++; }
+        app_run(copy, warg);
+
+        /* Wait interval, checking for quit */
+        for (int s = 0; s < interval * 10; s++) {
+            int ch = getchar_timeout_us(0);
+            if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
+            if (ch == 'q' || ch == 'Q' || ch == 0x03) return;
+            sleep_ms(100);
+        }
+    }
+}
+
+/* diff FILE1 FILE2 — simple line-by-line diff */
+static void app_diff(const char *arg) {
+    const char *p = skip_ws(arg);
+    if (!*p) { print_line("usage: diff <file1> <file2>"); return; }
+    char f1[256], f2[256];
+
+    const char *tok = p;
+    while (*p && !isspace((unsigned char)*p)) p++;
+    size_t len1 = (size_t)(p - tok);
+    if (len1 >= sizeof f1) len1 = sizeof f1 - 1;
+    memcpy(f1, tok, len1);
+    f1[len1] = '\0';
+
+    p = skip_ws(p);
+    if (!*p) { print_line("usage: diff <file1> <file2>"); return; }
+    strncpy(f2, p, sizeof f2 - 1);
+    f2[sizeof f2 - 1] = '\0';
+    /* Trim trailing whitespace */
+    for (int i = (int)strlen(f2) - 1; i >= 0 && isspace((unsigned char)f2[i]); i--)
+        f2[i] = '\0';
+
+    static char buf1[APP_READ_MAX + 1];
+    static char buf2[APP_READ_MAX + 1];
+    int n1 = read_text_file(f1, buf1, sizeof buf1, "diff");
+    if (n1 < 0) return;
+    int n2 = read_text_file(f2, buf2, sizeof buf2, "diff");
+    if (n2 < 0) return;
+
+    /* Compare line by line */
+    char *l1 = buf1, *l2 = buf2;
+    int lineno = 0;
+    bool same = true;
+    while (*l1 || *l2) {
+        lineno++;
+        char *e1 = l1; while (*e1 && *e1 != '\n') e1++;
+        char *e2 = l2; while (*e2 && *e2 != '\n') e2++;
+        size_t s1 = (size_t)(e1 - l1);
+        size_t s2 = (size_t)(e2 - l2);
+
+        if (s1 != s2 || memcmp(l1, l2, s1) != 0) {
+            same = false;
+            char out[80];
+            snprintf(out, sizeof out, "%d:", lineno);
+            sys_print(out);
+            uint32_t sf = lcd_get_fg();
+            lcd_set_fg(LCD_RED);
+            sys_print("< ");
+            char lineout[64];
+            size_t cp = s1 < sizeof lineout - 1 ? s1 : sizeof lineout - 1;
+            memcpy(lineout, l1, cp); lineout[cp] = '\0';
+            print_line(lineout);
+            lcd_set_fg(LCD_GREEN);
+            sys_print("> ");
+            cp = s2 < sizeof lineout - 1 ? s2 : sizeof lineout - 1;
+            memcpy(lineout, l2, cp); lineout[cp] = '\0';
+            print_line(lineout);
+            lcd_set_fg(sf);
+        }
+
+        l1 = *e1 ? e1 + 1 : e1;
+        l2 = *e2 ? e2 + 1 : e2;
+    }
+    if (same) print_line("Files are identical");
+}
+
+/* env — show shell environment */
+#define ENV_MAX 16
+#define ENV_NAME_SZ 16
+#define ENV_VALUE_SZ 64
+static struct { char name[ENV_NAME_SZ]; char value[ENV_VALUE_SZ]; bool used; } _env[ENV_MAX];
+
+static const char *env_get(const char *name) __attribute__((unused));
+static const char *env_get(const char *name) {
+    for (int i = 0; i < ENV_MAX; i++) {
+        if (_env[i].used && strcmp(_env[i].name, name) == 0)
+            return _env[i].value;
+    }
+    return NULL;
+}
+
+static void env_set(const char *name, const char *value) {
+    /* Update existing */
+    for (int i = 0; i < ENV_MAX; i++) {
+        if (_env[i].used && strcmp(_env[i].name, name) == 0) {
+            strncpy(_env[i].value, value, ENV_VALUE_SZ - 1);
+            _env[i].value[ENV_VALUE_SZ - 1] = '\0';
+            return;
+        }
+    }
+    /* Find empty slot */
+    for (int i = 0; i < ENV_MAX; i++) {
+        if (!_env[i].used) {
+            _env[i].used = true;
+            memcpy(_env[i].name, name, ENV_NAME_SZ - 1);
+            _env[i].name[ENV_NAME_SZ - 1] = '\0';
+            memcpy(_env[i].value, value, ENV_VALUE_SZ - 1);
+            _env[i].value[ENV_VALUE_SZ - 1] = '\0';
+            return;
+        }
+    }
+}
+
+static void app_env(const char *arg) {
+    const char *p = skip_ws(arg);
+    if (*p) {
+        /* set: env NAME=VALUE */
+        const char *eq = strchr(p, '=');
+        if (!eq) { print_line("usage: env [NAME=VALUE]"); return; }
+        char name[ENV_NAME_SZ];
+        size_t nlen = (size_t)(eq - p);
+        if (nlen >= sizeof name) nlen = sizeof name - 1;
+        memcpy(name, p, nlen);
+        name[nlen] = '\0';
+        env_set(name, eq + 1);
+    } else {
+        /* list all */
+        for (int i = 0; i < ENV_MAX; i++) {
+            if (_env[i].used) {
+                sys_print(_env[i].name);
+                sys_putchar('=');
+                print_line(_env[i].value);
+            }
+        }
+    }
+}
+
+/* lock — simple PIN screen lock */
+static void app_lock(const char *arg) {
+    (void)arg;
+    print_line("Set 4-digit PIN:");
+    char pin[5] = {0};
+    int pi = 0;
+    while (pi < 4) {
+        int ch = sys_getchar();
+        if (ch >= '0' && ch <= '9') {
+            pin[pi++] = (char)ch;
+            sys_putchar('*');
+        }
+    }
+    sys_putchar('\n');
+
+    sys_clear();
+    print_line("=== LOCKED ===");
+    print_line("Enter PIN to unlock:");
+
+    while (1) {
+        char attempt[5] = {0};
+        int ai = 0;
+        while (ai < 4) {
+            int ch = sys_getchar();
+            if (ch >= '0' && ch <= '9') {
+                attempt[ai++] = (char)ch;
+                sys_putchar('*');
+            }
+        }
+        sys_putchar('\n');
+        if (memcmp(pin, attempt, 4) == 0) {
+            print_line("Unlocked!");
+            sleep_ms(500);
+            sys_clear();
+            return;
+        }
+        print_line("Wrong PIN. Try again:");
+    }
+}
+
+/* xxd — hex dump with offset+ASCII (like Unix xxd) */
+static void app_xxd(const char *arg) {
+    const char *path = skip_ws(arg);
+    if (!*path) { print_line("usage: xxd <file>"); return; }
+    static char buf[APP_READ_MAX];
+    int n = read_text_file(path, buf, sizeof buf, "xxd");
+    if (n < 0) return;
+
+    for (int off = 0; off < n; off += 16) {
+        char line[80];
+        int pos = snprintf(line, sizeof line, "%08x: ", off);
+        int end = off + 16 < n ? off + 16 : n;
+        for (int i = off; i < end; i++) {
+            pos += snprintf(line + pos, sizeof line - (size_t)pos, "%02x",
+                           (unsigned char)buf[i]);
+            if ((i - off) % 2 == 1 && pos < (int)sizeof line - 1)
+                line[pos++] = ' ';
+        }
+        while (pos < 50 && pos < (int)sizeof line - 1) line[pos++] = ' ';
+        for (int i = off; i < end && pos < (int)sizeof line - 1; i++) {
+            unsigned char c = (unsigned char)buf[i];
+            line[pos++] = (c >= 0x20 && c <= 0x7e) ? (char)c : '.';
+        }
+        line[pos] = '\0';
+        print_line(line);
+    }
+}
+
+/* strings — print printable strings from a file */
+static void app_strings(const char *arg) {
+    const char *path = skip_ws(arg);
+    if (!*path) { print_line("usage: strings <file>"); return; }
+    static char buf[APP_READ_MAX];
+    int n = read_text_file(path, buf, sizeof buf, "strings");
+    if (n < 0) return;
+
+    char cur[80];
+    int ci = 0;
+    for (int i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)buf[i];
+        if (c >= 0x20 && c <= 0x7e) {
+            if (ci < (int)sizeof cur - 1) cur[ci++] = (char)c;
+        } else {
+            if (ci >= 4) { cur[ci] = '\0'; print_line(cur); }
+            ci = 0;
+        }
+    }
+    if (ci >= 4) { cur[ci] = '\0'; print_line(cur); }
+}
+
+/* yes [STRING] — repeatedly print a string */
+static void app_yes(const char *arg) {
+    const char *s = skip_ws(arg);
+    if (!*s) s = "y";
+    while (1) {
+        print_line(s);
+        int ch = getchar_timeout_us(0);
+        if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
+        if (ch == 'q' || ch == 0x03) return;
+    }
+}
+
+/* tee FILE — read stdin (line-by-line), write to both screen and file */
+static void app_tee(const char *arg) {
+    const char *path = skip_ws(arg);
+    if (!*path) { print_line("usage: tee <file>"); return; }
+
+    char buf[1024];
+    int pos = 0;
+    print_line("Enter text (Ctrl+D to finish):");
+    while (1) {
+        int ch = sys_getchar();
+        if (ch == 0x04 || ch == 0x03) break; /* Ctrl+D or Ctrl+C */
+        if (ch == '\r' || ch == '\n') {
+            sys_putchar('\n');
+            if (pos < (int)sizeof buf - 1) buf[pos++] = '\n';
+            continue;
+        }
+        sys_putchar((char)ch);
+        if (pos < (int)sizeof buf - 1) buf[pos++] = (char)ch;
+    }
+    buf[pos] = '\0';
+    sys_fwrite(path, buf, (uint32_t)pos);
+    char msg[64];
+    snprintf(msg, sizeof msg, "\nWrote %d bytes to %s", pos, path);
+    print_line(msg);
+}
+
+/* ============================================================
+ * New programs: life, tetris, mandelbrot, piano, forth
+ * ============================================================ */
+
+/* Conway's Game of Life */
+#define LIFE_W 38
+#define LIFE_H 16
+static void app_life(const char *arg) {
+    (void)arg;
+    static uint8_t grid[LIFE_H][LIFE_W];
+    static uint8_t next[LIFE_H][LIFE_W];
+
+    /* Random seed */
+    for (int y = 0; y < LIFE_H; y++)
+        for (int x = 0; x < LIFE_W; x++)
+            grid[y][x] = (games_rand_u32() % 3 == 0) ? 1 : 0;
+
+    int gen = 0;
+    while (1) {
+        sys_clear();
+        char hdr[48];
+        snprintf(hdr, sizeof hdr, "Game of Life  gen:%d  q=quit r=reset", gen);
+        print_line(hdr);
+
+        for (int y = 0; y < LIFE_H; y++) {
+            char row[LIFE_W + 1];
+            for (int x = 0; x < LIFE_W; x++)
+                row[x] = grid[y][x] ? '#' : '.';
+            row[LIFE_W] = '\0';
+            print_line(row);
+        }
+
+        /* Check for quit or let the gen advance */
+        for (int w = 0; w < 3; w++) {
+            int ch = getchar_timeout_us(0);
+            if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
+            if (ch == 'q' || ch == 0x03) { sys_clear(); return; }
+            if (ch == 'r') {
+                for (int y2 = 0; y2 < LIFE_H; y2++)
+                    for (int x2 = 0; x2 < LIFE_W; x2++)
+                        grid[y2][x2] = (games_rand_u32() % 3 == 0) ? 1 : 0;
+                gen = 0;
+                goto life_next;
+            }
+            sleep_ms(100);
+        }
+
+        /* Next generation */
+        for (int y = 0; y < LIFE_H; y++) {
+            for (int x = 0; x < LIFE_W; x++) {
+                int neighbors = 0;
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        if (dx == 0 && dy == 0) continue;
+                        int ny = (y + dy + LIFE_H) % LIFE_H;
+                        int nx = (x + dx + LIFE_W) % LIFE_W;
+                        neighbors += grid[ny][nx];
+                    }
+                }
+                if (grid[y][x])
+                    next[y][x] = (neighbors == 2 || neighbors == 3) ? 1 : 0;
+                else
+                    next[y][x] = (neighbors == 3) ? 1 : 0;
+            }
+        }
+        memcpy(grid, next, sizeof grid);
+        gen++;
+        life_next:;
+    }
+}
+
+/* Tetris */
+#define TETRIS_W 10
+#define TETRIS_H 18
+#define TETRIS_TYPES 7
+
+static const uint16_t _tetris_shapes[TETRIS_TYPES][4] = {
+    /* I */ {0x0F00, 0x2222, 0x00F0, 0x4444},
+    /* O */ {0x6600, 0x6600, 0x6600, 0x6600},
+    /* T */ {0x0E40, 0x4C40, 0x4E00, 0x4640},
+    /* S */ {0x06C0, 0x8C40, 0x6C00, 0x4620},
+    /* Z */ {0x0C60, 0x4C80, 0xC600, 0x2640},
+    /* J */ {0x0E80, 0xC440, 0x2E00, 0x44C0},
+    /* L */ {0x0E20, 0x44C0, 0x8E00, 0xC440},
+};
+
+static bool tetris_cell(uint16_t shape, int r, int c) {
+    return (shape & (0x8000u >> (r * 4 + c))) != 0;
+}
+
+static void app_tetris(const char *arg) {
+    (void)arg;
+    static uint8_t board[TETRIS_H][TETRIS_W];
+    memset(board, 0, sizeof board);
+    int score = 0;
+    int type = (int)(games_rand_u32() % TETRIS_TYPES);
+    int rot = 0, px = 3, py = 0;
+    uint32_t tick_ms = 500;
+    bool game_over = false;
+
+    while (!game_over) {
+        /* Render */
+        sys_clear();
+        char hdr[48];
+        snprintf(hdr, sizeof hdr, "Tetris  score:%d  q=quit", score);
+        print_line(hdr);
+
+        /* Merge current piece temporarily */
+        uint8_t disp[TETRIS_H][TETRIS_W];
+        memcpy(disp, board, sizeof board);
+        uint16_t shape = _tetris_shapes[type][rot % 4];
+        for (int r = 0; r < 4; r++)
+            for (int c = 0; c < 4; c++)
+                if (tetris_cell(shape, r, c) && py + r >= 0 &&
+                    py + r < TETRIS_H && px + c >= 0 && px + c < TETRIS_W)
+                    disp[py + r][px + c] = (uint8_t)(type + 1);
+
+        for (int y = 0; y < TETRIS_H; y++) {
+            char row[TETRIS_W + 3];
+            row[0] = '|';
+            for (int x = 0; x < TETRIS_W; x++)
+                row[x + 1] = disp[y][x] ? '#' : ' ';
+            row[TETRIS_W + 1] = '|';
+            row[TETRIS_W + 2] = '\0';
+            print_line(row);
+        }
+        {
+            char bot[TETRIS_W + 3];
+            bot[0] = '+';
+            for (int x = 0; x < TETRIS_W; x++) bot[x + 1] = '-';
+            bot[TETRIS_W + 1] = '+';
+            bot[TETRIS_W + 2] = '\0';
+            print_line(bot);
+        }
+
+        /* Wait and collect input */
+        uint32_t start = sys_time_ms();
+        int move = -1;
+        while (sys_time_ms() - start < tick_ms) {
+            int ch = getchar_timeout_us(0);
+            if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
+            if (ch == 'q' || ch == 0x03) goto tetris_end;
+            if (ch == 'a' || ch == 0xB6) move = 0; /* left */
+            else if (ch == 'd' || ch == 0xB7) move = 1; /* right */
+            else if (ch == 's' || ch == 0xB4) move = 2; /* down */
+            else if (ch == 'w' || ch == 0xB5 || ch == ' ') move = 3; /* rotate */
+            sleep_ms(20);
+        }
+
+        /* Apply move */
+        int npx = px, npy = py, nrot = rot;
+        if (move == 0) npx--;
+        else if (move == 1) npx++;
+        else if (move == 2) npy++;
+        else if (move == 3) nrot = (rot + 1) % 4;
+
+        /* Collision check for move */
+        bool ok = true;
+        uint16_t ns = _tetris_shapes[type][nrot % 4];
+        for (int r = 0; r < 4 && ok; r++)
+            for (int c = 0; c < 4 && ok; c++)
+                if (tetris_cell(ns, r, c)) {
+                    int ny = npy + r, nx = npx + c;
+                    if (nx < 0 || nx >= TETRIS_W || ny >= TETRIS_H) ok = false;
+                    else if (ny >= 0 && board[ny][nx]) ok = false;
+                }
+        if (ok && move != 2) { px = npx; py = npy; rot = nrot; }
+        if (ok && move == 2) { py = npy; }
+
+        /* Gravity: try to fall */
+        ok = true;
+        shape = _tetris_shapes[type][rot % 4];
+        for (int r = 0; r < 4 && ok; r++)
+            for (int c = 0; c < 4 && ok; c++)
+                if (tetris_cell(shape, r, c)) {
+                    int ny = py + 1 + r, nx = px + c;
+                    if (ny >= TETRIS_H) ok = false;
+                    else if (ny >= 0 && board[ny][nx]) ok = false;
+                }
+
+        if (ok) {
+            py++;
+        } else {
+            /* Lock piece */
+            for (int r = 0; r < 4; r++)
+                for (int c = 0; c < 4; c++)
+                    if (tetris_cell(shape, r, c) && py + r >= 0 &&
+                        py + r < TETRIS_H && px + c >= 0 && px + c < TETRIS_W)
+                        board[py + r][px + c] = (uint8_t)(type + 1);
+
+            /* Clear lines */
+            for (int y = TETRIS_H - 1; y >= 0; y--) {
+                bool full = true;
+                for (int x = 0; x < TETRIS_W; x++)
+                    if (!board[y][x]) { full = false; break; }
+                if (full) {
+                    memmove(board[1], board[0], (size_t)y * TETRIS_W);
+                    memset(board[0], 0, TETRIS_W);
+                    score += 10;
+                    y++; /* recheck same row */
+                }
+            }
+
+            /* New piece */
+            type = (int)(games_rand_u32() % TETRIS_TYPES);
+            rot = 0; px = 3; py = 0;
+
+            /* Check game over */
+            shape = _tetris_shapes[type][0];
+            for (int r = 0; r < 4; r++)
+                for (int c = 0; c < 4; c++)
+                    if (tetris_cell(shape, r, c) && py + r >= 0 && board[py + r][px + c])
+                        game_over = true;
+
+            /* Speed up */
+            if (tick_ms > 100 && score % 50 == 0) tick_ms -= 30;
+        }
+    }
+
+tetris_end:
+    {
+        char msg[48];
+        snprintf(msg, sizeof msg, "Game Over! Score: %d", score);
+        print_line(msg);
+    }
+    print_line("Press any key...");
+    (void)sys_getchar();
+    sys_clear();
+}
+
+/* Mandelbrot fractal renderer */
+static void app_mandelbrot(const char *arg) {
+    (void)arg;
+    sys_clear();
+    print_line("Mandelbrot set (computing...)");
+
+    /* Render to text grid: 38 cols x 17 rows */
+    #define MBW 38
+    #define MBH 17
+    static char grid[MBH][MBW + 1];
+
+    double x_min = -2.0, x_max = 1.0;
+    double y_min = -1.2, y_max = 1.2;
+    const char *shade = " .:-=+*#%@";
+    int shade_len = 10;
+    int max_iter = 50;
+
+    for (int row = 0; row < MBH; row++) {
+        for (int col = 0; col < MBW; col++) {
+            double cr = x_min + (x_max - x_min) * col / MBW;
+            double ci = y_min + (y_max - y_min) * row / MBH;
+            double zr = 0, zi = 0;
+            int iter = 0;
+            while (zr * zr + zi * zi < 4.0 && iter < max_iter) {
+                double tmp = zr * zr - zi * zi + cr;
+                zi = 2.0 * zr * zi + ci;
+                zr = tmp;
+                iter++;
+            }
+            int idx = iter * (shade_len - 1) / max_iter;
+            if (idx >= shade_len) idx = shade_len - 1;
+            grid[row][col] = shade[idx];
+        }
+        grid[row][MBW] = '\0';
+    }
+
+    sys_clear();
+    print_line("Mandelbrot set [-2,1]x[-1.2,1.2]");
+    for (int row = 0; row < MBH; row++) print_line(grid[row]);
+    print_line("Press any key...");
+    (void)sys_getchar();
+    sys_clear();
+}
+
+/* Piano — PWM audio using hardware PWM on GPIO 26/27 */
+static void app_piano(const char *arg) {
+    (void)arg;
+    sys_clear();
+    print_line("Piano — press keys to play notes");
+    print_line("  a s d f g h j k = C D E F G A B C'");
+    print_line("  q = quit");
+
+    /* Note frequencies (Hz) for one octave */
+    static const uint16_t notes[] = {
+        262, 294, 330, 349, 392, 440, 494, 523
+    };
+    static const char keys[] = "asdfghjk";
+
+    /* Initialize PWM on audio pins */
+    gpio_set_function(AUDIO_PIN_L, GPIO_FUNC_PWM);
+    gpio_set_function(AUDIO_PIN_R, GPIO_FUNC_PWM);
+    uint sl_l = pwm_gpio_to_slice_num(AUDIO_PIN_L);
+    uint sl_r = pwm_gpio_to_slice_num(AUDIO_PIN_R);
+    pwm_set_enabled(sl_l, false);
+    pwm_set_enabled(sl_r, false);
+
+    while (1) {
+        int ch = sys_getchar();
+        if (ch == 'q' || ch == 0x03) break;
+
+        /* Find note */
+        const char *k = strchr(keys, ch);
+        if (!k) continue;
+        int idx = (int)(k - keys);
+        uint16_t freq = notes[idx];
+
+        /* Configure PWM for this frequency */
+        uint32_t sys_clk = clock_get_hz(clk_sys);
+        uint32_t wrap = sys_clk / freq;
+        uint16_t div16 = 1;
+        while (wrap > 65535) { div16++; wrap = sys_clk / (freq * div16); }
+
+        pwm_set_clkdiv_int_frac(sl_l, div16, 0);
+        pwm_set_wrap(sl_l, (uint16_t)wrap);
+        pwm_set_chan_level(sl_l, PWM_CHAN_A, (uint16_t)(wrap / 4));
+        pwm_set_enabled(sl_l, true);
+        pwm_set_clkdiv_int_frac(sl_r, div16, 0);
+        pwm_set_wrap(sl_r, (uint16_t)wrap);
+        pwm_set_chan_level(sl_r, PWM_CHAN_A, (uint16_t)(wrap / 4));
+        pwm_set_enabled(sl_r, true);
+
+        /* Play for 200ms */
+        sleep_ms(200);
+        pwm_set_enabled(sl_l, false);
+        pwm_set_enabled(sl_r, false);
+    }
+    pwm_set_enabled(sl_l, false);
+    pwm_set_enabled(sl_r, false);
+    sys_clear();
+}
+
+/* Forth interpreter — minimal Forth with a small stack */
+#define FORTH_STACK_SZ 64
+#define FORTH_DICT_SZ 32
+#define FORTH_WORD_MAX 32
+
+typedef struct {
+    char name[FORTH_WORD_MAX];
+    char body[128];
+} forth_word_t;
+
+static void app_forth(const char *arg) {
+    (void)arg;
+    int32_t stack[FORTH_STACK_SZ];
+    int sp = 0;
+    forth_word_t dict[FORTH_DICT_SZ];
+    int nwords = 0;
+
+    sys_clear();
+    print_line("Forth interpreter (type 'bye' to exit)");
+
+    char line[128];
+    while (1) {
+        sys_print("forth> ");
+        int li = 0;
+        while (1) {
+            int ch = sys_getchar();
+            if (ch == '\r' || ch == '\n') { sys_putchar('\n'); break; }
+            if ((ch == 0x08 || ch == 0x7F) && li > 0) {
+                li--; sys_print("\b \b"); continue;
+            }
+            if (ch == 0x03) { sys_clear(); return; }
+            if (isprint((unsigned char)ch) && li < (int)sizeof line - 1) {
+                line[li++] = (char)ch;
+                sys_putchar((char)ch);
+            }
+        }
+        line[li] = '\0';
+
+        /* Tokenize and execute */
+        char *tok = line;
+        bool defining = false;
+        char def_name[FORTH_WORD_MAX] = {0};
+        char def_body[128] = {0};
+        int def_bpos = 0;
+
+        while (*tok) {
+            while (*tok == ' ') tok++;
+            if (!*tok) break;
+            char word[FORTH_WORD_MAX];
+            int wi = 0;
+            while (*tok && *tok != ' ' && wi < FORTH_WORD_MAX - 1)
+                word[wi++] = (char)tolower((unsigned char)*tok++);
+            word[wi] = '\0';
+
+            if (defining) {
+                if (strcmp(word, ";") == 0) {
+                    defining = false;
+                    if (nwords < FORTH_DICT_SZ) {
+                        memcpy(dict[nwords].name, def_name, FORTH_WORD_MAX);
+                        dict[nwords].name[FORTH_WORD_MAX - 1] = '\0';
+                        memcpy(dict[nwords].body, def_body, sizeof dict[0].body);
+                        dict[nwords].body[sizeof dict[0].body - 1] = '\0';
+                        nwords++;
+                    }
+                } else {
+                    if (def_bpos > 0 && def_bpos < (int)sizeof def_body - 1)
+                        def_body[def_bpos++] = ' ';
+                    for (int i = 0; word[i] && def_bpos < (int)sizeof def_body - 1; i++)
+                        def_body[def_bpos++] = word[i];
+                    def_body[def_bpos] = '\0';
+                }
+                continue;
+            }
+
+            if (strcmp(word, "bye") == 0) { sys_clear(); return; }
+            if (strcmp(word, ":") == 0) {
+                defining = true;
+                def_bpos = 0;
+                def_body[0] = '\0';
+                /* Next word is the name */
+                while (*tok == ' ') tok++;
+                wi = 0;
+                while (*tok && *tok != ' ' && wi < FORTH_WORD_MAX - 1)
+                    def_name[wi++] = (char)tolower((unsigned char)*tok++);
+                def_name[wi] = '\0';
+                continue;
+            }
+            if (strcmp(word, ".") == 0) {
+                if (sp > 0) {
+                    char out[16];
+                    snprintf(out, sizeof out, "%ld ", (long)stack[--sp]);
+                    sys_print(out);
+                } else sys_print("stack underflow ");
+                continue;
+            }
+            if (strcmp(word, ".s") == 0) {
+                char out[16];
+                snprintf(out, sizeof out, "<%d> ", sp);
+                sys_print(out);
+                for (int i = 0; i < sp; i++) {
+                    snprintf(out, sizeof out, "%ld ", (long)stack[i]);
+                    sys_print(out);
+                }
+                sys_putchar('\n');
+                continue;
+            }
+            if (strcmp(word, "cr") == 0) { sys_putchar('\n'); continue; }
+            if (strcmp(word, "dup") == 0) {
+                if (sp > 0 && sp < FORTH_STACK_SZ) { stack[sp] = stack[sp-1]; sp++; }
+                continue;
+            }
+            if (strcmp(word, "drop") == 0) { if (sp > 0) sp--; continue; }
+            if (strcmp(word, "swap") == 0) {
+                if (sp >= 2) { int32_t t = stack[sp-1]; stack[sp-1] = stack[sp-2]; stack[sp-2] = t; }
+                continue;
+            }
+            if (strcmp(word, "over") == 0) {
+                if (sp >= 2 && sp < FORTH_STACK_SZ) { stack[sp] = stack[sp-2]; sp++; }
+                continue;
+            }
+            if (strcmp(word, "+") == 0) { if (sp >= 2) { sp--; stack[sp-1] += stack[sp]; } continue; }
+            if (strcmp(word, "-") == 0) { if (sp >= 2) { sp--; stack[sp-1] -= stack[sp]; } continue; }
+            if (strcmp(word, "*") == 0) { if (sp >= 2) { sp--; stack[sp-1] *= stack[sp]; } continue; }
+            if (strcmp(word, "/") == 0) {
+                if (sp >= 2 && stack[sp-1] != 0) { sp--; stack[sp-1] /= stack[sp]; }
+                else if (sp >= 2) { print_line("div by zero"); sp -= 2; }
+                continue;
+            }
+            if (strcmp(word, "mod") == 0) {
+                if (sp >= 2 && stack[sp-1] != 0) { sp--; stack[sp-1] %= stack[sp]; }
+                continue;
+            }
+            if (strcmp(word, "=") == 0) { if (sp >= 2) { sp--; stack[sp-1] = (stack[sp-1] == stack[sp]) ? -1 : 0; } continue; }
+            if (strcmp(word, "<") == 0) { if (sp >= 2) { sp--; stack[sp-1] = (stack[sp-1] < stack[sp]) ? -1 : 0; } continue; }
+            if (strcmp(word, ">") == 0) { if (sp >= 2) { sp--; stack[sp-1] = (stack[sp-1] > stack[sp]) ? -1 : 0; } continue; }
+            if (strcmp(word, "emit") == 0) { if (sp > 0) sys_putchar((char)stack[--sp]); continue; }
+            if (strcmp(word, "words") == 0) {
+                for (int i = 0; i < nwords; i++) { sys_print(dict[i].name); sys_putchar(' '); }
+                sys_putchar('\n');
+                continue;
+            }
+
+            /* Check dictionary */
+            bool found = false;
+            for (int i = nwords - 1; i >= 0; i--) {
+                if (strcmp(word, dict[i].name) == 0) {
+                    /* Execute body — simple recursive call by re-tokenizing */
+                    char body_copy[128];
+                    strncpy(body_copy, dict[i].body, sizeof body_copy - 1);
+                    body_copy[sizeof body_copy - 1] = '\0';
+                    /* Push body tokens into a mini evaluator */
+                    char *bt = body_copy;
+                    while (*bt) {
+                        while (*bt == ' ') bt++;
+                        if (!*bt) break;
+                        char bw[FORTH_WORD_MAX];
+                        int bwi = 0;
+                        while (*bt && *bt != ' ' && bwi < FORTH_WORD_MAX - 1)
+                            bw[bwi++] = *bt++;
+                        bw[bwi] = '\0';
+                        /* Try as number */
+                        char *endp;
+                        long val = strtol(bw, &endp, 10);
+                        if (*endp == '\0' && bwi > 0) {
+                            if (sp < FORTH_STACK_SZ) stack[sp++] = (int32_t)val;
+                        } else if (strcmp(bw, ".") == 0) {
+                            if (sp > 0) { char o[16]; snprintf(o, sizeof o, "%ld ", (long)stack[--sp]); sys_print(o); }
+                        } else if (strcmp(bw, "+") == 0) { if (sp >= 2) { sp--; stack[sp-1] += stack[sp]; } }
+                        else if (strcmp(bw, "-") == 0) { if (sp >= 2) { sp--; stack[sp-1] -= stack[sp]; } }
+                        else if (strcmp(bw, "*") == 0) { if (sp >= 2) { sp--; stack[sp-1] *= stack[sp]; } }
+                        else if (strcmp(bw, "/") == 0) { if (sp >= 2 && stack[sp-1]) { sp--; stack[sp-1] /= stack[sp]; } }
+                        else if (strcmp(bw, "dup") == 0) { if (sp > 0 && sp < FORTH_STACK_SZ) { stack[sp] = stack[sp-1]; sp++; } }
+                        else if (strcmp(bw, "drop") == 0) { if (sp > 0) sp--; }
+                        else if (strcmp(bw, "swap") == 0) { if (sp >= 2) { int32_t t = stack[sp-1]; stack[sp-1] = stack[sp-2]; stack[sp-2] = t; } }
+                        else if (strcmp(bw, "cr") == 0) { sys_putchar('\n'); }
+                        else if (strcmp(bw, "emit") == 0) { if (sp > 0) sys_putchar((char)stack[--sp]); }
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            if (found) continue;
+
+            /* Try as number */
+            char *endp;
+            long val = strtol(word, &endp, 10);
+            if (*endp == '\0' && wi > 0) {
+                if (sp < FORTH_STACK_SZ) stack[sp++] = (int32_t)val;
+            } else {
+                char msg[48];
+                snprintf(msg, sizeof msg, "%s ?", word);
+                print_line(msg);
+            }
+        }
+        if (defining) print_line("  compiled");
+    }
+}
+
+/* ============================================================
+ * System: xmodem, theme
+ * ============================================================ */
+
+/* XMODEM receive (128-byte blocks, checksum mode) over USB serial */
+#define XMODEM_SOH 0x01
+#define XMODEM_EOT 0x04
+#define XMODEM_ACK 0x06
+#define XMODEM_NAK 0x15
+#define XMODEM_CAN 0x18
+
+static int _xmodem_getc(uint32_t timeout_ms) {
+    uint32_t start = sys_time_ms();
+    while (sys_time_ms() - start < timeout_ms) {
+        int ch = getchar_timeout_us(1000);
+        if (ch != PICO_ERROR_TIMEOUT) return ch;
+    }
+    return -1;
+}
+
+static void app_xmodem(const char *arg) {
+    const char *path = skip_ws(arg);
+    if (!*path) { print_line("usage: xmodem <filename>"); return; }
+
+    print_line("XMODEM receive: send file now...");
+    print_line("(Start transfer in your terminal)");
+
+#ifdef PICO_RP2350A
+    static uint8_t filebuf[65536]; /* 512 blocks on Pico 2 */
+#else
+    static uint8_t filebuf[16384]; /* 128 blocks on Pico 1 */
+#endif
+    int total = 0;
+    int expected_blk = 1;
+
+    /* Send NAK to initiate */
+    putchar_raw(XMODEM_NAK);
+
+    while (1) {
+        int header = _xmodem_getc(10000);
+        if (header == XMODEM_EOT) {
+            putchar_raw(XMODEM_ACK);
+            break;
+        }
+        if (header == XMODEM_CAN) {
+            print_line("Transfer cancelled by sender");
+            return;
+        }
+        if (header != XMODEM_SOH) {
+            print_line("XMODEM: bad header");
+            putchar_raw(XMODEM_NAK);
+            continue;
+        }
+
+        int blk = _xmodem_getc(1000);
+        int blk_inv = _xmodem_getc(1000);
+        if (blk < 0 || blk_inv < 0 || (blk + blk_inv) != 0xFF) {
+            putchar_raw(XMODEM_NAK);
+            continue;
+        }
+
+        uint8_t data[128];
+        uint8_t cksum = 0;
+        bool ok = true;
+        for (int i = 0; i < 128; i++) {
+            int b = _xmodem_getc(1000);
+            if (b < 0) { ok = false; break; }
+            data[i] = (uint8_t)b;
+            cksum += data[i];
+        }
+        int recv_ck = _xmodem_getc(1000);
+        if (!ok || recv_ck < 0 || (uint8_t)recv_ck != cksum) {
+            putchar_raw(XMODEM_NAK);
+            continue;
+        }
+
+        if (blk == (expected_blk & 0xFF)) {
+            if (total + 128 <= (int)sizeof filebuf) {
+                memcpy(filebuf + total, data, 128);
+                total += 128;
+            }
+            expected_blk++;
+        }
+        putchar_raw(XMODEM_ACK);
+    }
+
+    /* Write to file */
+    sys_fwrite(path, (const char *)filebuf, (uint32_t)total);
+    char msg[64];
+    snprintf(msg, sizeof msg, "Received %d bytes -> %s", total, path);
+    print_line(msg);
+}
+
+/* theme — switch color scheme */
+static void app_theme(const char *arg) {
+    const char *name = skip_ws(arg);
+
+    struct { const char *name; uint32_t fg; uint32_t bg; } themes[] = {
+        {"green",  LCD_GREEN,  LCD_BLACK},
+        {"amber",  LCD_AMBER,  LCD_BLACK},
+        {"white",  LCD_WHITE,  LCD_BLACK},
+        {"cyan",   LCD_CYAN,   LCD_BLACK},
+        {"blue",   LCD_WHITE,  LCD_BLUE},
+        {"matrix", LCD_GREEN,  LCD_BLACK},
+        {"paper",  LCD_BLACK,  LCD_WHITE},
+    };
+    int n = (int)(sizeof themes / sizeof themes[0]);
+
+    if (!*name) {
+        print_line("Themes:");
+        for (int i = 0; i < n; i++) print_line(themes[i].name);
+        return;
+    }
+
+    for (int i = 0; i < n; i++) {
+        if (strcmp(name, themes[i].name) == 0) {
+            lcd_set_fg(themes[i].fg);
+            lcd_set_bg(themes[i].bg);
+            lcd_cls(themes[i].bg);
+            char msg[32];
+            snprintf(msg, sizeof msg, "Theme: %s", themes[i].name);
+            print_line(msg);
+            return;
+        }
+    }
+    print_line("Unknown theme. Type 'theme' for list.");
+}
+
 typedef void (*app_handler_t)(const char *arg);
 
 typedef struct {
@@ -4880,6 +6151,16 @@ static bool app_dispatch_named(const char *cmd, const char *arg) {
         {"basic", app_basic}, {"tcc", app_tinyc}, {"tinyc", app_tinyc},
         {"script", app_script}, {"paint", app_paint}, {"sleep", app_sleep_ms},
         {"id", app_id}, {"true", app_noop}, {"false", app_noop},
+        /* New utilities */
+        {"watch", app_watch}, {"diff", app_diff}, {"env", app_env},
+        {"lock", app_lock}, {"xxd", app_xxd}, {"strings", app_strings},
+        {"yes", app_yes}, {"tee", app_tee},
+        /* New programs */
+        {"life", app_life}, {"tetris", app_tetris},
+        {"mandelbrot", app_mandelbrot}, {"fractal", app_mandelbrot},
+        {"piano", app_piano}, {"forth", app_forth},
+        /* System */
+        {"xmodem", app_xmodem}, {"theme", app_theme},
     };
 
     for (size_t i = 0; i < sizeof table / sizeof table[0]; i++) {

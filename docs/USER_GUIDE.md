@@ -20,10 +20,19 @@ When the firmware boots, you arrive at the command prompt.
 Useful shell behavior:
 
 - Up and Down browse history
+- `Tab` completes command names
 - `Ctrl-U` clears the current line
 - `Ctrl-L` redraws the screen
-- `Ctrl-C` exits many interactive tools
+- `Ctrl-C` cancels the current line or exits many interactive tools
 - `help` and `man` show built-in documentation
+
+Advanced shell features:
+
+- **Command chaining**: separate commands with `;` to run several on one line (e.g. `mount ; ls`)
+- **Output redirection**: `cmd > FILE` writes output to a file, `cmd >> FILE` appends
+- **Quoted arguments**: wrap an argument in double quotes to preserve spaces (e.g. `echo "hello world"`)
+- **Alias expansion**: aliases expand automatically up to 8 levels deep
+- **Key repeat**: holding a key generates repeated keystrokes after a short delay
 
 ## 3. Essential System Commands
 
@@ -59,13 +68,28 @@ Common file commands:
 - `write FILE TEXT` to replace a file with text
 - `mkdir DIR` to create a directory
 - `rm PATH` to remove a file or empty directory
-- `cp SRC DST` to copy files
+- `cp SRC DST` to copy files (also copies directories one level deep)
 - `mv SRC DST` to move or rename files
+- `rename OLD NEW` to rename a file in the same directory
 - `stat FILE` for quick file details
 - `tree` for a recursive directory view
 - `du` for directory size totals
 - `df` for total, used, and free space
 - append `| more` to long output when you want paging on the LCD
+
+Text processing commands:
+
+- `grep [-n] [-e] PATTERN FILE` to search file contents (`-n` shows line numbers, `-e` forces regex)
+- `sort [-r] [-n] FILE` to sort lines (`-r` reverse, `-n` numeric order)
+- `find [PATH] [-name PATTERN] [-type f|d]` to find files or directories
+- `head [-n NUM] FILE` to show the first N lines
+- `tail [-n NUM] FILE` to show the last N lines
+- `cut [-d CHAR] [-f NUM] FILE` to extract fields
+- `wc FILE` for line, word, and byte counts
+- `rev FILE` to reverse each line
+- `seq N` to print numbers 1 through N
+- `od FILE` for octal/hex dump
+- `hexdump FILE` for hex + ASCII dump
 
 ## 5. Interactive File Tools
 
@@ -97,7 +121,7 @@ Run:
 hexedit /FILE.BIN
 ```
 
-Use it to inspect or patch files at the byte level.
+Use it to inspect or patch files at the byte level. The `find` subcommand searches for hex byte sequences within the file.
 
 ## 6. Personal Productivity Apps
 
@@ -141,7 +165,7 @@ Keeps dated journal entries for logs, thoughts, or field notes.
 habits
 ```
 
-Tracks recurring routines and completion counts.
+Tracks recurring routines and completion counts. The habits tracker maintains current and best streaks for consecutive daily completions.
 
 ### Bookmarks
 
@@ -149,7 +173,7 @@ Tracks recurring routines and completion counts.
 bookmarks
 ```
 
-Saves favorite files, paths, and launch targets for quick access.
+Saves favorite files, paths, and launch targets for quick access. Each bookmark stores the current working directory at creation time so relative paths work correctly when opened later.
 
 ### Settings
 
@@ -222,7 +246,7 @@ coin 5
 guess
 ```
 
-These commands provide quick play sessions and simple demos.
+These commands provide quick play sessions and simple demos. Snake maintains a persistent high score saved to the SD card.
 
 ## 9. Calculator and Scripting
 
@@ -334,61 +358,10 @@ A practical device-first session often looks like this:
 - use `help fs` or `man TOPIC` for syntax reminders
 - reboot if an interactive tool becomes unresponsive
 
-Useful forms:
-
-- samples list
-- samples show hello.bas
-- samples write count.bas
-- samples run tinyc.tc
-
-## 10. Running Shell Scripts
-
-You can batch commands in a text file and run them with:
-
-```text
-script myscript.txt
-```
-
-The script file should contain one command per line. Lines starting with # are comments and empty lines are ignored.
-
-Example script file:
-
-```text
-# My script
-echo Hello from script
-ls
-calc 2 + 3
-```
-
-## 11. Pixel Paint Application
-
-Open the simple drawing app with:
-
-```text
-paint
-```
-
-Controls:
-
-- Arrow keys: move cursor
-- Space: toggle drawing mode
-- c: clear screen
-- s: save drawing to file
-- l: load drawing from file
-- q: quit
-
-Drawings are saved as text art with # for pixels.
-
-## 12. Typical Workflow
-
-1. Boot the device.
-2. Insert an SD card.
-3. Run mount.
-4. Use browse to inspect files and notes to keep quick text notes.
-5. Use edit, pager, calc, basic, and tcc for interactive work.
-
-## 13. Current Limitations
+## 14. Current Limitations
 
 - Utilities focus on compact embedded behavior rather than full desktop compatibility
 - Interactive language support is integer-oriented and intentionally small
 - Some commands do not yet support every flag found in larger Unix systems
+- File names must follow 8.3 format (uppercase, no long names)
+- Maximum file size for in-memory operations is limited by available RAM
