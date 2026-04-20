@@ -38,19 +38,19 @@ Important files and responsibilities:
 make picocalc
 ```
 
-3. flash the generated UF2 to hardware
-4. test the command or app directly in the shell
-5. update docs when user-visible behavior changes
+1. flash the generated UF2 to hardware
+2. test the command or app directly in the shell
+3. update docs when user-visible behavior changes
 
 ## 4. Choosing Between Built-ins and Apps
 
-### Add a shell built-in when:
+### Add a shell built-in when
 
 - the command is core to system management
 - it touches boot, battery, backlight, mount, or other platform behavior
 - it belongs beside `help`, `uname`, `history`, or `reboot`
 
-### Add an app-layer command when:
+### Add an app-layer command when
 
 - the feature behaves like a utility or small application
 - it mostly uses files, text, screen output, or lightweight input loops
