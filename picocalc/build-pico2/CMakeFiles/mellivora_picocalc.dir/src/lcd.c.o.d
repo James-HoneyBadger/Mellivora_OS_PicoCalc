@@ -66,6 +66,10 @@ CMakeFiles/mellivora_picocalc.dir/src/lcd.c.o: \
  /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_spi/include/hardware/spi.h \
  /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_structs/include/hardware/structs/spi.h \
  /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_regs/include/hardware/regs/spi.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_dma/include/hardware/dma.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_structs/include/hardware/structs/dma.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_regs/include/hardware/regs/dma.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_structs/include/hardware/structs/dma_debug.h \
  /usr/include/newlib/string.h /usr/include/newlib/sys/reent.h \
  /usr/include/newlib/_ansi.h /usr/include/newlib/sys/_types.h \
  /usr/include/newlib/machine/_types.h /usr/include/newlib/sys/lock.h \

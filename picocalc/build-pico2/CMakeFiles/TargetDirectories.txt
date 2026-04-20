@@ -170,12 +170,18 @@
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_async_context/CMakeFiles/rebuild_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_btstack/CMakeFiles/edit_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_btstack/CMakeFiles/rebuild_cache.dir
+/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_cyw43_driver/CMakeFiles/pioasmBuild.dir
+/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_cyw43_driver/CMakeFiles/cyw43_driver_picow_cyw43_bus_pio_spi_pio_h.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_cyw43_driver/CMakeFiles/edit_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_cyw43_driver/CMakeFiles/rebuild_cache.dir
+/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_cyw43_driver/cybt_shared_bus/CMakeFiles/edit_cache.dir
+/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_cyw43_driver/cybt_shared_bus/CMakeFiles/rebuild_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_mbedtls/CMakeFiles/edit_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_mbedtls/CMakeFiles/rebuild_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_lwip/CMakeFiles/edit_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_lwip/CMakeFiles/rebuild_cache.dir
+/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_lwip/tools/CMakeFiles/edit_cache.dir
+/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_lwip/tools/CMakeFiles/rebuild_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_cyw43_arch/CMakeFiles/edit_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_cyw43_arch/CMakeFiles/rebuild_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_time_adapter/CMakeFiles/edit_cache.dir
@@ -194,7 +200,6 @@
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_fix/CMakeFiles/rebuild_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/CMakeFiles/edit_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_fix/rp2040_usb_device_enumeration/CMakeFiles/rebuild_cache.dir
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_status_led/CMakeFiles/pioasmBuild.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_status_led/CMakeFiles/pico_status_led_ws2812_pio_h.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_status_led/CMakeFiles/edit_cache.dir
 /home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/pico-sdk/src/rp2_common/pico_status_led/CMakeFiles/rebuild_cache.dir

@@ -75,6 +75,14 @@ CMakeFiles/mellivora_picocalc.dir/src/main.c.o: \
  /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_regs/include/hardware/regs/resets.h \
  /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/pico_stdio_uart/include/pico/stdio_uart.h \
  /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/pico_stdio_usb/include/pico/stdio_usb.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/pico_multicore/include/pico/multicore.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/common/pico_sync/include/pico/sync.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/common/pico_sync/include/pico/sem.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/common/pico_sync/include/pico/lock_core.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_sync/include/hardware/sync.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_sync_spin_lock/include/hardware/sync/spin_lock.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/common/pico_sync/include/pico/mutex.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/common/pico_sync/include/pico/critical_section.h \
  /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_clocks/include/hardware/clocks.h \
  /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_structs/include/hardware/structs/clocks.h \
  /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_regs/include/hardware/regs/clocks.h \

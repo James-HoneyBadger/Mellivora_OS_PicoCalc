@@ -204,8 +204,21 @@ pioasmBuild: cmake_check_build_system
 
 # fast build rule for target.
 pioasmBuild/fast:
-	$(MAKE) $(MAKESILENT) -f pico-sdk/src/rp2_common/pico_status_led/CMakeFiles/pioasmBuild.dir/build.make pico-sdk/src/rp2_common/pico_status_led/CMakeFiles/pioasmBuild.dir/build
+	$(MAKE) $(MAKESILENT) -f pico-sdk/src/rp2_common/pico_cyw43_driver/CMakeFiles/pioasmBuild.dir/build.make pico-sdk/src/rp2_common/pico_cyw43_driver/CMakeFiles/pioasmBuild.dir/build
 .PHONY : pioasmBuild/fast
+
+#=============================================================================
+# Target rules for targets named cyw43_driver_picow_cyw43_bus_pio_spi_pio_h
+
+# Build rule for target.
+cyw43_driver_picow_cyw43_bus_pio_spi_pio_h: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 cyw43_driver_picow_cyw43_bus_pio_spi_pio_h
+.PHONY : cyw43_driver_picow_cyw43_bus_pio_spi_pio_h
+
+# fast build rule for target.
+cyw43_driver_picow_cyw43_bus_pio_spi_pio_h/fast:
+	$(MAKE) $(MAKESILENT) -f pico-sdk/src/rp2_common/pico_cyw43_driver/CMakeFiles/cyw43_driver_picow_cyw43_bus_pio_spi_pio_h.dir/build.make pico-sdk/src/rp2_common/pico_cyw43_driver/CMakeFiles/cyw43_driver_picow_cyw43_bus_pio_spi_pio_h.dir/build
+.PHONY : cyw43_driver_picow_cyw43_bus_pio_spi_pio_h/fast
 
 #=============================================================================
 # Target rules for targets named pico_status_led_ws2812_pio_h
@@ -987,6 +1000,30 @@ pico-sdk/src/rp2_common/hardware_divider/divider.s: pico-sdk/src/rp2_common/hard
 pico-sdk/src/rp2_common/hardware_divider/divider.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/mellivora_picocalc.dir/build.make CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_divider/divider.c.s
 .PHONY : pico-sdk/src/rp2_common/hardware_divider/divider.c.s
+
+pico-sdk/src/rp2_common/hardware_dma/dma.o: pico-sdk/src/rp2_common/hardware_dma/dma.c.o
+.PHONY : pico-sdk/src/rp2_common/hardware_dma/dma.o
+
+# target to build an object file
+pico-sdk/src/rp2_common/hardware_dma/dma.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mellivora_picocalc.dir/build.make CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_dma/dma.c.o
+.PHONY : pico-sdk/src/rp2_common/hardware_dma/dma.c.o
+
+pico-sdk/src/rp2_common/hardware_dma/dma.i: pico-sdk/src/rp2_common/hardware_dma/dma.c.i
+.PHONY : pico-sdk/src/rp2_common/hardware_dma/dma.i
+
+# target to preprocess a source file
+pico-sdk/src/rp2_common/hardware_dma/dma.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mellivora_picocalc.dir/build.make CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_dma/dma.c.i
+.PHONY : pico-sdk/src/rp2_common/hardware_dma/dma.c.i
+
+pico-sdk/src/rp2_common/hardware_dma/dma.s: pico-sdk/src/rp2_common/hardware_dma/dma.c.s
+.PHONY : pico-sdk/src/rp2_common/hardware_dma/dma.s
+
+# target to generate assembly for a file
+pico-sdk/src/rp2_common/hardware_dma/dma.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mellivora_picocalc.dir/build.make CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_dma/dma.c.s
+.PHONY : pico-sdk/src/rp2_common/hardware_dma/dma.c.s
 
 pico-sdk/src/rp2_common/hardware_flash/flash.o: pico-sdk/src/rp2_common/hardware_flash/flash.c.o
 .PHONY : pico-sdk/src/rp2_common/hardware_flash/flash.o
@@ -2196,6 +2233,54 @@ src/main.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/mellivora_picocalc.dir/build.make CMakeFiles/mellivora_picocalc.dir/src/main.c.s
 .PHONY : src/main.c.s
 
+src/net.o: src/net.c.o
+.PHONY : src/net.o
+
+# target to build an object file
+src/net.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mellivora_picocalc.dir/build.make CMakeFiles/mellivora_picocalc.dir/src/net.c.o
+.PHONY : src/net.c.o
+
+src/net.i: src/net.c.i
+.PHONY : src/net.i
+
+# target to preprocess a source file
+src/net.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mellivora_picocalc.dir/build.make CMakeFiles/mellivora_picocalc.dir/src/net.c.i
+.PHONY : src/net.c.i
+
+src/net.s: src/net.c.s
+.PHONY : src/net.s
+
+# target to generate assembly for a file
+src/net.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mellivora_picocalc.dir/build.make CMakeFiles/mellivora_picocalc.dir/src/net.c.s
+.PHONY : src/net.c.s
+
+src/netapps.o: src/netapps.c.o
+.PHONY : src/netapps.o
+
+# target to build an object file
+src/netapps.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mellivora_picocalc.dir/build.make CMakeFiles/mellivora_picocalc.dir/src/netapps.c.o
+.PHONY : src/netapps.c.o
+
+src/netapps.i: src/netapps.c.i
+.PHONY : src/netapps.i
+
+# target to preprocess a source file
+src/netapps.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mellivora_picocalc.dir/build.make CMakeFiles/mellivora_picocalc.dir/src/netapps.c.i
+.PHONY : src/netapps.c.i
+
+src/netapps.s: src/netapps.c.s
+.PHONY : src/netapps.s
+
+# target to generate assembly for a file
+src/netapps.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mellivora_picocalc.dir/build.make CMakeFiles/mellivora_picocalc.dir/src/netapps.c.s
+.PHONY : src/netapps.c.s
+
 src/sd.o: src/sd.c.o
 .PHONY : src/sd.o
 
@@ -2253,6 +2338,7 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... bs2_default_bin"
+	@echo "... cyw43_driver_picow_cyw43_bus_pio_spi_pio_h"
 	@echo "... pico_status_led_ws2812_pio_h"
 	@echo "... picotoolBuild"
 	@echo "... picotoolForceReconfigure"
@@ -2356,6 +2442,9 @@ help:
 	@echo "... pico-sdk/src/rp2_common/hardware_divider/divider.o"
 	@echo "... pico-sdk/src/rp2_common/hardware_divider/divider.i"
 	@echo "... pico-sdk/src/rp2_common/hardware_divider/divider.s"
+	@echo "... pico-sdk/src/rp2_common/hardware_dma/dma.o"
+	@echo "... pico-sdk/src/rp2_common/hardware_dma/dma.i"
+	@echo "... pico-sdk/src/rp2_common/hardware_dma/dma.s"
 	@echo "... pico-sdk/src/rp2_common/hardware_flash/flash.o"
 	@echo "... pico-sdk/src/rp2_common/hardware_flash/flash.i"
 	@echo "... pico-sdk/src/rp2_common/hardware_flash/flash.s"
@@ -2507,6 +2596,12 @@ help:
 	@echo "... src/main.o"
 	@echo "... src/main.i"
 	@echo "... src/main.s"
+	@echo "... src/net.o"
+	@echo "... src/net.i"
+	@echo "... src/net.s"
+	@echo "... src/netapps.o"
+	@echo "... src/netapps.i"
+	@echo "... src/netapps.s"
 	@echo "... src/sd.o"
 	@echo "... src/sd.i"
 	@echo "... src/sd.s"

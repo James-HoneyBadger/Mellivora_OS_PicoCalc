@@ -154,6 +154,7 @@ set(CMAKE_ASM_TARGET_INCLUDE_PATH
   "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_spi/include"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_i2c/include"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_pwm/include"
+  "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_dma/include"
   )
 
 # The set of dependency files which are needed:
@@ -189,6 +190,7 @@ set(CMAKE_DEPENDS_DEPENDENCY_FILES
   "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2040/pico_platform/platform.c" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2040/pico_platform/platform.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2040/pico_platform/platform.c.o.d"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_boot_lock/boot_lock.c.o.d"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_clocks/clocks.c" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_clocks/clocks.c.o.d"
+  "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_dma/dma.c" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_dma/dma.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_dma/dma.c.o.d"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_flash/flash.c" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_flash/flash.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_flash/flash.c.o.d"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_gpio/gpio.c" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_gpio/gpio.c.o.d"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_i2c/i2c.c" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/hardware_i2c/i2c.c.o.d"
@@ -236,6 +238,8 @@ set(CMAKE_DEPENDS_DEPENDENCY_FILES
   "/home/james/Mellivora_OS_PicoCalc/picocalc/src/kbd.c" "CMakeFiles/mellivora_picocalc.dir/src/kbd.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/src/kbd.c.o.d"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/src/lcd.c" "CMakeFiles/mellivora_picocalc.dir/src/lcd.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/src/lcd.c.o.d"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/src/main.c" "CMakeFiles/mellivora_picocalc.dir/src/main.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/src/main.c.o.d"
+  "/home/james/Mellivora_OS_PicoCalc/picocalc/src/net.c" "CMakeFiles/mellivora_picocalc.dir/src/net.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/src/net.c.o.d"
+  "/home/james/Mellivora_OS_PicoCalc/picocalc/src/netapps.c" "CMakeFiles/mellivora_picocalc.dir/src/netapps.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/src/netapps.c.o.d"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/src/sd.c" "CMakeFiles/mellivora_picocalc.dir/src/sd.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/src/sd.c.o.d"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/src/syscall.c" "CMakeFiles/mellivora_picocalc.dir/src/syscall.c.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/src/syscall.c.o.d"
   "/home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.o" "gcc" "CMakeFiles/mellivora_picocalc.dir/pico-sdk/src/rp2_common/pico_cxx_options/new_delete.cpp.o.d"

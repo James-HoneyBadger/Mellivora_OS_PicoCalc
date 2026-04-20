@@ -80,4 +80,10 @@ CMakeFiles/mellivora_picocalc.dir/src/apps.c.o: \
  /home/james/Mellivora_OS_PicoCalc/picocalc/src/fat.h \
  /home/james/Mellivora_OS_PicoCalc/picocalc/src/lcd.h \
  /home/james/Mellivora_OS_PicoCalc/picocalc/src/picocalc_hw.h \
- /home/james/Mellivora_OS_PicoCalc/picocalc/src/kbd.h
+ /home/james/Mellivora_OS_PicoCalc/picocalc/src/kbd.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_pwm/include/hardware/pwm.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_structs/include/hardware/structs/pwm.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_regs/include/hardware/regs/pwm.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2_common/hardware_clocks/include/hardware/clocks.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_structs/include/hardware/structs/clocks.h \
+ /home/james/Mellivora_OS_PicoCalc/picocalc/pico-sdk/src/rp2350/hardware_regs/include/hardware/regs/clocks.h
