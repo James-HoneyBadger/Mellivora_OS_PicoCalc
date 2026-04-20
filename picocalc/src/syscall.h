@@ -107,6 +107,12 @@ typedef struct {
 
 SYSCALL_EXTERN _sys_fd_t _sys_fds[SYSCALL_MAX_FD];
 SYSCALL_EXTERN char      _sys_cwd[256];
+SYSCALL_EXTERN bool      _sys_more_enabled;
+SYSCALL_EXTERN bool      _sys_more_abort;
+
+void sys_more_set(bool enabled);
+void sys_more_reset(void);
+int sys_console_write_char(char c);
 
 /* ------------------------------------------------------------------ */
 /* Syscall wrappers                                                     */
@@ -159,8 +165,7 @@ static inline void sys_exit(int code) {
 /* Raw console output helper. */
 static inline int sys_console_write(const char *buf, int len) {
     for (int i = 0; i < len; i++) {
-        putchar_raw(buf[i]);
-        lcd_putc(buf[i]);
+        sys_console_write_char(buf[i]);
     }
     return len;
 }
@@ -171,8 +176,7 @@ static inline int sys_print(const char *s) {
 }
 
 static inline void sys_putchar(char c) {
-    putchar_raw(c);
-    lcd_putc(c);
+    (void)sys_console_write_char(c);
 }
 
 static inline int sys_getchar(void) {

@@ -16,6 +16,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
 
 /* ============================================================
  * Low-level SPI helpers
@@ -32,25 +33,92 @@ static void _spi_write_byte(uint8_t b) {
     spi_write_blocking(LCD_SPI_PORT, &b, 1);
 }
 
-static void _write_cmd(uint8_t cmd) {
-    _cs_low();
-    _dc_low();
-    _spi_write_byte(cmd);
-    _cs_high();
+static void _spi_write_fast(const uint8_t *src, size_t len) {
+    if (!src || len == 0) return;
+    spi_write_blocking(LCD_SPI_PORT, src, len);
 }
 
-static void _write_data(uint8_t data) {
-    _cs_low();
-    _dc_high();
+static void _spi_finish(void) {
+    while (spi_is_readable(LCD_SPI_PORT)) {
+        (void)spi_get_hw(LCD_SPI_PORT)->dr;
+    }
+    while (spi_get_hw(LCD_SPI_PORT)->sr & SPI_SSPSR_BSY_BITS) {
+        tight_loop_contents();
+    }
+    while (spi_is_readable(LCD_SPI_PORT)) {
+        (void)spi_get_hw(LCD_SPI_PORT)->dr;
+    }
+    spi_get_hw(LCD_SPI_PORT)->icr = SPI_SSPICR_RORIC_BITS;
+}
+
+static void _pin_set_bit(int pin, unsigned int offset) {
+    switch (offset) {
+        case 5: /* LATCLR */
+            gpio_set_pulls(pin, false, false);
+            gpio_pull_down(pin);
+            gpio_put(pin, 0);
+            return;
+        case 6: /* LATSET */
+            gpio_set_pulls(pin, false, false);
+            gpio_pull_up(pin);
+            gpio_put(pin, 1);
+            return;
+        case -3: /* TRISCLR */
+            gpio_set_dir(pin, GPIO_OUT);
+            gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_12MA);
+            sleep_us(2);
+            return;
+        case -2: /* TRISSET */
+            gpio_set_dir(pin, GPIO_IN);
+            sleep_us(2);
+            return;
+        default:
+            return;
+    }
+}
+
+static void _lcd_spi_raise_cs(void) {
+    gpio_put(LCD_PIN_CS, 1);
+}
+
+static void _lcd_spi_lower_cs(void) {
+    gpio_put(LCD_PIN_CS, 0);
+}
+
+static void _spi_write_data(uint8_t data) {
+    gpio_put(LCD_PIN_DC, 1);
+    _lcd_spi_lower_cs();
     _spi_write_byte(data);
-    _cs_high();
+    _lcd_spi_raise_cs();
 }
 
-static void _write_data_buf(const uint8_t *buf, size_t len) {
-    _cs_low();
-    _dc_high();
-    spi_write_blocking(LCD_SPI_PORT, buf, len);
-    _cs_high();
+static void _spi_write_command(uint8_t data) {
+    gpio_put(LCD_PIN_DC, 0);
+    _lcd_spi_lower_cs();
+    _spi_write_byte(data);
+    _lcd_spi_raise_cs();
+}
+
+static void _spi_write_cd(uint8_t command, int data, ...) {
+    va_list ap;
+    va_start(ap, data);
+    _spi_write_command(command);
+    for (int i = 0; i < data; i++) {
+        _spi_write_data((uint8_t)va_arg(ap, int));
+    }
+    va_end(ap);
+}
+
+static void _spi_write_data24(uint32_t data) {
+    uint8_t data_array[3];
+    data_array[0] = (uint8_t)((data >> 16) & 0xFC);
+    data_array[1] = (uint8_t)((data >> 8) & 0xFC);
+    data_array[2] = (uint8_t)(data & 0xFC);
+
+    gpio_put(LCD_PIN_DC, 1);
+    gpio_put(LCD_PIN_CS, 0);
+    spi_write_blocking(LCD_SPI_PORT, data_array, 3);
+    gpio_put(LCD_PIN_CS, 1);
 }
 
 /* ============================================================
@@ -58,17 +126,43 @@ static void _write_data_buf(const uint8_t *buf, size_t len) {
  * ============================================================ */
 
 static void _set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
-    uint8_t caset[4] = {
-        (uint8_t)(x0 >> 8), (uint8_t)x0,
-        (uint8_t)(x1 >> 8), (uint8_t)x1
-    };
-    uint8_t paset[4] = {
-        (uint8_t)(y0 >> 8), (uint8_t)y0,
-        (uint8_t)(y1 >> 8), (uint8_t)y1
-    };
-    _write_cmd(0x2A); _write_data_buf(caset, 4);
-    _write_cmd(0x2B); _write_data_buf(paset, 4);
-    _write_cmd(0x2C); /* Memory Write */
+    uint8_t coord[4];
+    _lcd_spi_lower_cs();
+    gpio_put(LCD_PIN_DC, 0);
+    _spi_write_fast(&(uint8_t){0x2A}, 1);
+    gpio_put(LCD_PIN_DC, 1);
+    coord[0] = x0 >> 8;
+    coord[1] = x0;
+    coord[2] = x1 >> 8;
+    coord[3] = x1;
+    _spi_write_fast(coord, 4);
+
+    gpio_put(LCD_PIN_DC, 0);
+    _spi_write_fast(&(uint8_t){0x2B}, 1);
+    gpio_put(LCD_PIN_DC, 1);
+    coord[0] = y0 >> 8;
+    coord[1] = y0;
+    coord[2] = y1 >> 8;
+    coord[3] = y1;
+    _spi_write_fast(coord, 4);
+
+    gpio_put(LCD_PIN_DC, 0);
+    _spi_write_fast(&(uint8_t){0x2C}, 1);
+    gpio_put(LCD_PIN_DC, 1);
+}
+
+static void _end_window_write(void) {
+    _spi_finish();
+    _lcd_spi_raise_cs();
+}
+
+static void _reset_controller(void) {
+    _pin_set_bit(LCD_PIN_RST, 6);
+    sleep_us(10000);
+    _pin_set_bit(LCD_PIN_RST, 5);
+    sleep_us(10000);
+    _pin_set_bit(LCD_PIN_RST, 6);
+    sleep_us(200000);
 }
 
 /* ============================================================
@@ -76,58 +170,62 @@ static void _set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
  * ============================================================ */
 
 void lcd_init(void) {
-    /* SPI1 init */
+    gpio_init(LCD_PIN_SCK);
+    gpio_init(LCD_PIN_MOSI);
+    gpio_init(LCD_PIN_MISO);
+    gpio_init(LCD_PIN_CS);
+    gpio_init(LCD_PIN_DC);
+    gpio_init(LCD_PIN_RST);
+
+    gpio_set_dir(LCD_PIN_SCK, GPIO_OUT);
+    gpio_set_dir(LCD_PIN_MOSI, GPIO_OUT);
+    gpio_set_dir(LCD_PIN_CS, GPIO_OUT);
+    gpio_set_dir(LCD_PIN_DC, GPIO_OUT);
+    gpio_set_dir(LCD_PIN_RST, GPIO_OUT);
+
     spi_init(LCD_SPI_PORT, LCD_SPI_SPEED);
-    gpio_set_function(LCD_PIN_SCK,  GPIO_FUNC_SPI);
+    spi_set_format(LCD_SPI_PORT, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+    gpio_set_function(LCD_PIN_SCK, GPIO_FUNC_SPI);
     gpio_set_function(LCD_PIN_MOSI, GPIO_FUNC_SPI);
     gpio_set_function(LCD_PIN_MISO, GPIO_FUNC_SPI);
+    gpio_set_input_hysteresis_enabled(LCD_PIN_MISO, true);
 
-    gpio_init(LCD_PIN_CS);  gpio_set_dir(LCD_PIN_CS,  GPIO_OUT); _cs_high();
-    gpio_init(LCD_PIN_DC);  gpio_set_dir(LCD_PIN_DC,  GPIO_OUT); _dc_high();
-    gpio_init(LCD_PIN_RST); gpio_set_dir(LCD_PIN_RST, GPIO_OUT);
+    gpio_put(LCD_PIN_CS, 1);
+    gpio_put(LCD_PIN_RST, 1);
 
-    /* Hardware reset */
-    _rst_high(); sleep_ms(5);
-    _rst_low();  sleep_ms(20);
-    _rst_high(); sleep_ms(150);
+    _reset_controller();
 
-    /* ILI9488 init sequence */
-    _write_cmd(0x01); sleep_ms(120);  /* Software reset */
-    _write_cmd(0x11); sleep_ms(120);  /* Sleep out */
+    _spi_write_command(0xE0);
+    _spi_write_data(0x00); _spi_write_data(0x03); _spi_write_data(0x09); _spi_write_data(0x08);
+    _spi_write_data(0x16); _spi_write_data(0x0A); _spi_write_data(0x3F); _spi_write_data(0x78);
+    _spi_write_data(0x4C); _spi_write_data(0x09); _spi_write_data(0x0A); _spi_write_data(0x08);
+    _spi_write_data(0x16); _spi_write_data(0x1A); _spi_write_data(0x0F);
 
-    /* Interface Pixel Format: 24-bit */
-    _write_cmd(0x3A); _write_data(0x66);
+    _spi_write_command(0xE1);
+    _spi_write_data(0x00); _spi_write_data(0x16); _spi_write_data(0x19); _spi_write_data(0x03);
+    _spi_write_data(0x0F); _spi_write_data(0x05); _spi_write_data(0x32); _spi_write_data(0x45);
+    _spi_write_data(0x46); _spi_write_data(0x04); _spi_write_data(0x0E); _spi_write_data(0x0D);
+    _spi_write_data(0x35); _spi_write_data(0x37); _spi_write_data(0x0F);
 
-    /* Memory Access Control: MX | BGR */
-    _write_cmd(0x36); _write_data(0x48);
+    _spi_write_command(0xC0); _spi_write_data(0x17); _spi_write_data(0x15);
+    _spi_write_command(0xC1); _spi_write_data(0x41);
+    _spi_write_command(0xC5); _spi_write_data(0x00); _spi_write_data(0x12); _spi_write_data(0x80);
+    _spi_write_command(0x36); _spi_write_data(0x48);
+    _spi_write_command(0x3A); _spi_write_data(0x66);
+    _spi_write_command(0xB0); _spi_write_data(0x00);
+    _spi_write_command(0xB1); _spi_write_data(0xA0);
+    _spi_write_command(0x21);
+    _spi_write_command(0xB4); _spi_write_data(0x02);
+    _spi_write_command(0xB6); _spi_write_data(0x02); _spi_write_data(0x02); _spi_write_data(0x3B);
+    _spi_write_command(0xB7); _spi_write_data(0xC6);
+    _spi_write_command(0xE9); _spi_write_data(0x00);
+    _spi_write_command(0xF7); _spi_write_data(0xA9); _spi_write_data(0x51); _spi_write_data(0x2C); _spi_write_data(0x82);
 
-    /* Display inversion off */
-    _write_cmd(0x20);
-
-    /* Power control */
-    _write_cmd(0xC0); _write_data(0x10); _write_data(0x10);
-    _write_cmd(0xC1); _write_data(0x41);
-    _write_cmd(0xC5); _write_data(0x00); _write_data(0x22); _write_data(0x80);
-
-    /* Gamma (positive / negative) */
-    _write_cmd(0xE0);
-    {
-        static const uint8_t pg[] = {
-            0x00,0x07,0x0F,0x0D,0x1B,0x0A,0x3C,0x78,
-            0x4A,0x07,0x0E,0x09,0x1B,0x1E,0x0F
-        };
-        _write_data_buf(pg, sizeof pg);
-    }
-    _write_cmd(0xE1);
-    {
-        static const uint8_t ng[] = {
-            0x00,0x22,0x24,0x06,0x12,0x07,0x36,0x47,
-            0x47,0x06,0x0A,0x07,0x30,0x37,0x0F
-        };
-        _write_data_buf(ng, sizeof ng);
-    }
-
-    _write_cmd(0x29); sleep_ms(25);  /* Display on */
+    _spi_write_command(0x11);
+    sleep_ms(120);
+    _spi_write_command(0x29);
+    sleep_ms(120);
+    _spi_write_cd(0x36, 1, 0x48);
 }
 
 /* ============================================================
@@ -135,32 +233,28 @@ void lcd_init(void) {
  * ============================================================ */
 
 void lcd_fill(uint32_t color) {
-    uint8_t r = (color >> 16) & 0xFF;
-    uint8_t g = (color >>  8) & 0xFF;
-    uint8_t b =  color        & 0xFF;
+    uint8_t r = (uint8_t)((color >> 16) & 0xFC);
+    uint8_t g = (uint8_t)((color >>  8) & 0xFC);
+    uint8_t b = (uint8_t)(color & 0xFC);
+
+    static uint8_t linebuf[LCD_WIDTH * 3];
+    for (int x = 0; x < LCD_WIDTH; x++) {
+        linebuf[x * 3 + 0] = r;
+        linebuf[x * 3 + 1] = g;
+        linebuf[x * 3 + 2] = b;
+    }
 
     _set_window(0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);
-
-    _cs_low();
-    _dc_high();
-    uint32_t total = (uint32_t)LCD_WIDTH * LCD_HEIGHT;
-    for (uint32_t i = 0; i < total; i++) {
-        spi_write_blocking(LCD_SPI_PORT, &r, 1);
-        spi_write_blocking(LCD_SPI_PORT, &g, 1);
-        spi_write_blocking(LCD_SPI_PORT, &b, 1);
+    for (int y = 0; y < LCD_HEIGHT; y++) {
+        _spi_write_fast(linebuf, sizeof linebuf);
     }
-    _cs_high();
+    _end_window_write();
 }
 
 void lcd_draw_pixel(uint16_t x, uint16_t y, uint32_t color) {
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     _set_window(x, y, x, y);
-    uint8_t pix[3] = {
-        (uint8_t)((color >> 16) & 0xFF),
-        (uint8_t)((color >>  8) & 0xFF),
-        (uint8_t)( color        & 0xFF)
-    };
-    _write_data_buf(pix, 3);
+    _spi_write_data24(color);
 }
 
 /* ============================================================
@@ -367,26 +461,28 @@ void lcd_draw_char(uint16_t x, uint16_t y, char c, uint32_t fg, uint32_t bg) {
     if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) c = '?';
     const uint8_t *glyph = _font8x16[(uint8_t)c - 0x20];
 
-    uint8_t r_fg = (fg >> 16) & 0xFF, g_fg = (fg >> 8) & 0xFF, b_fg = fg & 0xFF;
-    uint8_t r_bg = (bg >> 16) & 0xFF, g_bg = (bg >> 8) & 0xFF, b_bg = bg & 0xFF;
+    uint8_t fr = (uint8_t)((fg >> 16) & 0xFC);
+    uint8_t fgc = (uint8_t)((fg >> 8) & 0xFC);
+    uint8_t fb = (uint8_t)(fg & 0xFC);
+    uint8_t br = (uint8_t)((bg >> 16) & 0xFC);
+    uint8_t bgc = (uint8_t)((bg >> 8) & 0xFC);
+    uint8_t bb = (uint8_t)(bg & 0xFC);
 
-    _set_window(x, y, x + LCD_CHAR_W - 1, y + LCD_CHAR_H - 1);
-    _cs_low(); _dc_high();
+    uint8_t cell[LCD_CHAR_W * LCD_CHAR_H * 3];
+    size_t idx = 0;
     for (int row = 0; row < LCD_CHAR_H; row++) {
         uint8_t bits = glyph[row];
-        for (int col = 7; col >= 0; col--) {
-            if (bits & (1 << col)) {
-                spi_write_blocking(LCD_SPI_PORT, &r_fg, 1);
-                spi_write_blocking(LCD_SPI_PORT, &g_fg, 1);
-                spi_write_blocking(LCD_SPI_PORT, &b_fg, 1);
-            } else {
-                spi_write_blocking(LCD_SPI_PORT, &r_bg, 1);
-                spi_write_blocking(LCD_SPI_PORT, &g_bg, 1);
-                spi_write_blocking(LCD_SPI_PORT, &b_bg, 1);
-            }
+        for (int bit = 0; bit < LCD_CHAR_W; bit++) {
+            bool on = (bits & (0x80u >> bit)) != 0;
+            cell[idx++] = on ? fr : br;
+            cell[idx++] = on ? fgc : bgc;
+            cell[idx++] = on ? fb : bb;
         }
     }
-    _cs_high();
+
+    _set_window(x, y, (uint16_t)(x + LCD_CHAR_W - 1), (uint16_t)(y + LCD_CHAR_H - 1));
+    _spi_write_fast(cell, sizeof cell);
+    _end_window_write();
 }
 
 void lcd_draw_str(uint16_t x, uint16_t y, const char *s, uint32_t fg, uint32_t bg) {
@@ -405,19 +501,71 @@ static uint32_t _fg = LCD_GREEN;
 static uint32_t _bg = LCD_BLACK;
 static int _cur_col = 0;
 static int _cur_row = 0;
+static char _text_buf[LCD_ROWS][LCD_COLS];
+
+static void _clear_text_buf(void) {
+    for (int r = 0; r < LCD_ROWS; r++) {
+        for (int c = 0; c < LCD_COLS; c++) {
+            _text_buf[r][c] = ' ';
+        }
+    }
+}
+
+static void _redraw_text_row(int row) {
+    if (row < 0 || row >= LCD_ROWS) return;
+
+    uint8_t fr = (uint8_t)((_fg >> 16) & 0xFC);
+    uint8_t fgc = (uint8_t)((_fg >> 8) & 0xFC);
+    uint8_t fb = (uint8_t)(_fg & 0xFC);
+    uint8_t br = (uint8_t)((_bg >> 16) & 0xFC);
+    uint8_t bgc = (uint8_t)((_bg >> 8) & 0xFC);
+    uint8_t bb = (uint8_t)(_bg & 0xFC);
+
+    static uint8_t rowbuf[LCD_WIDTH * LCD_CHAR_H * 3];
+    size_t idx = 0;
+
+    for (int glyph_row = 0; glyph_row < LCD_CHAR_H; glyph_row++) {
+        for (int col = 0; col < LCD_COLS; col++) {
+            char ch = _text_buf[row][col];
+            if ((uint8_t)ch < 0x20 || (uint8_t)ch > 0x7E) ch = '?';
+            const uint8_t *glyph = _font8x16[(uint8_t)ch - 0x20];
+            uint8_t bits = glyph[glyph_row];
+
+            for (int bit = 0; bit < LCD_CHAR_W; bit++) {
+                bool on = (bits & (0x80u >> bit)) != 0;
+                rowbuf[idx++] = on ? fr : br;
+                rowbuf[idx++] = on ? fgc : bgc;
+                rowbuf[idx++] = on ? fb : bb;
+            }
+        }
+    }
+
+    uint16_t y0 = (uint16_t)(row * LCD_CHAR_H);
+    _set_window(0, y0, LCD_WIDTH - 1, (uint16_t)(y0 + LCD_CHAR_H - 1));
+    _spi_write_fast(rowbuf, sizeof rowbuf);
+    _end_window_write();
+}
+
+static void _redraw_text_buf(void) {
+    for (int r = 0; r < LCD_ROWS; r++) {
+        _redraw_text_row(r);
+    }
+}
 
 /* Scroll entire screen up by one text row */
 static void _scroll_up(void) {
-    /* Re-draw rows 0..ROWS-2 from rows 1..ROWS-1 */
-    /* This is expensive on raw SPI: we must re-draw from a shadow buffer.
-     * For now we use a simple but slow pixel-copy approach: redraw blank. */
-    lcd_fill(_bg);
+    memmove(_text_buf[0], _text_buf[1], (LCD_ROWS - 1) * LCD_COLS * sizeof(char));
+    for (int c = 0; c < LCD_COLS; c++) {
+        _text_buf[LCD_ROWS - 1][c] = ' ';
+    }
     _cur_col = 0;
     _cur_row = LCD_ROWS - 1;
+    _redraw_text_buf();
 }
 
 void lcd_cls(uint32_t bg) {
     _bg = bg;
+    _clear_text_buf();
     lcd_fill(bg);
     _cur_col = 0;
     _cur_row = 0;
@@ -434,14 +582,19 @@ void lcd_putc(char c) {
         _cur_col = 0;
         return;
     }
+    uint16_t py = (uint16_t)(_cur_row * LCD_CHAR_H);
+
     if (c == '\b') {
         if (_cur_col > 0) {
             _cur_col--;
-            lcd_draw_char(_cur_col * LCD_CHAR_W, _cur_row * LCD_CHAR_H, ' ', _fg, _bg);
+            _text_buf[_cur_row][_cur_col] = ' ';
+            lcd_draw_char((uint16_t)(_cur_col * LCD_CHAR_W), py, ' ', _fg, _bg);
         }
         return;
     }
-    lcd_draw_char(_cur_col * LCD_CHAR_W, _cur_row * LCD_CHAR_H, c, _fg, _bg);
+    if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) c = '?';
+    _text_buf[_cur_row][_cur_col] = c;
+    lcd_draw_char((uint16_t)(_cur_col * LCD_CHAR_W), py, c, _fg, _bg);
     _cur_col++;
     if (_cur_col >= LCD_COLS) {
         _cur_col = 0;

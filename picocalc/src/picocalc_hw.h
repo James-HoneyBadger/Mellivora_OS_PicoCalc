@@ -7,8 +7,9 @@
  *         Code/picocalc_helloworld reference drivers.
  */
 
-/* ----- Display: ILI9488 320x320 IPS, SPI1 at 25 MHz ----- */
+/* ----- Display: ILI9488 320x320 IPS, SPI1 ----- */
 #define LCD_SPI_PORT    spi1
+/* Match the official Clockwork PicoCalc LCD driver. */
 #define LCD_SPI_SPEED   25000000U
 
 #define LCD_PIN_SCK     10
@@ -29,23 +30,31 @@
 #define KBD_I2C_ADDR    0x1F
 
 /* I2C register selectors sent to the keyboard controller */
-#define KBD_REG_KEY     0x09    /* 2-byte key state (keycode | status) */
-#define KBD_REG_BKLT    0x8A    /* backlight level (write, bit7 set)   */
-#define KBD_REG_BAT     0x0B    /* battery state (read)                */
+#define KBD_REG_KEY         0x09    /* 2-byte key state (keycode | status) */
+#define KBD_REG_LCD_BKLT    0x85    /* LCD backlight, REG_ID_BKL | write    */
+#define KBD_REG_KBD_BKLT    0x8A    /* keyboard backlight, REG_ID_BK2 | write */
+#define KBD_REG_BAT         0x0B    /* battery state (read)                  */
 
 /* Key status bits returned in low byte of 2-byte read */
 #define KBD_STAT_PRESSED  1
 #define KBD_CTRL_HELD     0x7E02
 #define KBD_CTRL_RELEASE  0x7E03
 
-/* ----- SD card: SPI0 ----- */
+/* ----- SD card: SPI0 -----
+ * Clockwork PicoCalc wiring matches the official sd_boot config:
+ *   SCK=18 MOSI=19 MISO=16 CS=17 DET=22 (active low)
+ */
 #define SD_SPI_PORT     spi0
-#define SD_SPI_SPEED    12500000U
+#define SD_SPI_SPEED    4000000U
 
-#define SD_PIN_SCK      2
-#define SD_PIN_MOSI     3
-#define SD_PIN_MISO     4
-#define SD_PIN_CS       5
+#define SD_PIN_SCK      18
+#define SD_PIN_MOSI     19
+#define SD_PIN_MISO     16
+#define SD_PIN_CS       17
+#define SD_PIN_DET      22
+
+/* ----- Board control ----- */
+#define PICO_PIN_PS     23
 
 /* ----- Audio: dual PWM channels ----- */
 #define AUDIO_PIN_L     26

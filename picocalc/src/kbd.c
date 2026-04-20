@@ -17,6 +17,15 @@
 static int _inited = 0;
 static int _ctrl_held = 0;
 
+static void _kbd_write_reg(uint8_t reg, uint8_t value) {
+    if (!_inited) return;
+    uint8_t msg[2] = { reg, value };
+    i2c_write_timeout_us(KBD_I2C_PORT, KBD_I2C_ADDR, msg, 2, false, 50000);
+    sleep_ms(16);
+    uint16_t dummy = 0;
+    i2c_read_timeout_us(KBD_I2C_PORT, KBD_I2C_ADDR, (uint8_t *)&dummy, 2, false, 50000);
+}
+
 void kbd_init(void) {
     i2c_init(KBD_I2C_PORT, KBD_I2C_SPEED);
     gpio_set_function(KBD_PIN_SDA, GPIO_FUNC_I2C);
@@ -60,12 +69,15 @@ int kbd_getc(void) {
 
 void kbd_set_backlight(uint8_t level) {
     if (!_inited) return;
-    uint8_t msg[2] = { KBD_REG_BKLT, level };
-    i2c_write_timeout_us(KBD_I2C_PORT, KBD_I2C_ADDR, msg, 2, false, 50000);
-    sleep_ms(16);
-    /* Drain the 2-byte reply from the controller */
-    uint16_t dummy = 0;
-    i2c_read_timeout_us(KBD_I2C_PORT, KBD_I2C_ADDR, (uint8_t *)&dummy, 2, false, 50000);
+
+    /* PicoCalc exposes two distinct backlights over I2C:
+       0x85 -> LCD panel backlight, 0x8A -> keyboard backlight. */
+    uint8_t lcd_level = level;
+    if (lcd_level > 240) lcd_level = 240;
+    if (lcd_level > 0 && lcd_level < 16) lcd_level = 16;
+
+    _kbd_write_reg(KBD_REG_LCD_BKLT, lcd_level);
+    _kbd_write_reg(KBD_REG_KBD_BKLT, level);
 }
 
 int kbd_battery_percent(void) {

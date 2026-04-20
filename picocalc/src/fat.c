@@ -111,8 +111,10 @@ static uint8_t  _sector_buf[512];
  * ------------------------------------------------------------------ */
 
 static fat_result_t read_sector(uint32_t lba) {
-    if (sd_read_block(lba, _sector_buf) != SD_OK) return FAT_ERR_IO;
-    return FAT_OK;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (sd_read_block(lba, _sector_buf) == SD_OK) return FAT_OK;
+    }
+    return FAT_ERR_IO;
 }
 
 static fat_result_t write_sector(uint32_t lba) {
@@ -152,6 +154,40 @@ static uint32_t fat_entry(uint32_t cluster) {
 static bool is_eoc(uint32_t entry) {
     if (_fat32) return entry >= FAT_EOC32;
     return (uint16_t)entry >= (uint16_t)FAT_EOC16;
+}
+
+static bool is_pow2_u8(uint8_t v) {
+    return v && ((v & (v - 1)) == 0);
+}
+
+static bool looks_like_bpb(const bpb_t *bpb) {
+    uint32_t total = bpb->total_sectors_16 ? bpb->total_sectors_16
+                                           : bpb->total_sectors_32;
+    uint32_t fat_size = bpb->fat_size_16 ? bpb->fat_size_16
+                                         : bpb->fat_size_32;
+
+    if (bpb->bytes_per_sector != 512) return false;
+    if (!is_pow2_u8(bpb->sectors_per_cluster)) return false;
+    if (bpb->sectors_per_cluster > 128) return false;
+    if (bpb->reserved_sectors == 0) return false;
+    if (bpb->num_fats == 0 || bpb->num_fats > 4) return false;
+    if (fat_size == 0) return false;
+    if (total == 0) return false;
+    return true;
+}
+
+static bool is_fat_partition_type(uint8_t type) {
+    switch (type) {
+        case 0x01: /* FAT12 */
+        case 0x04: /* FAT16 <32M */
+        case 0x06: /* FAT16 */
+        case 0x0B: /* FAT32 CHS */
+        case 0x0C: /* FAT32 LBA */
+        case 0x0E: /* FAT16 LBA */
+            return true;
+        default:
+            return false;
+    }
 }
 
 /* ------------------------------------------------------------------
@@ -324,25 +360,39 @@ fat_result_t fat_mount(void) {
 
     if (sd_init() != SD_OK) return FAT_ERR_IO;
 
-    /* Read sector 0 — could be MBR or BPB */
+    /* Read sector 0 — could be a raw FAT boot sector or an MBR. */
     if (read_sector(0) != FAT_OK) return FAT_ERR_IO;
 
     uint16_t sig = (uint16_t)(_sector_buf[510]) |
                    (uint16_t)(_sector_buf[511] << 8);
 
     _part_lba = 0;
-    /* Detect MBR: signature 0xAA55 and first partition type != 0 */
-    if (sig == MBR_SIGNATURE && _sector_buf[446 + 4] != 0) {
-        const mbr_part_t *p = (const mbr_part_t *)(_sector_buf + 446);
-        if (p->lba_first != 0) {
-            _part_lba = p->lba_first;
-            if (read_sector(_part_lba) != FAT_OK) return FAT_ERR_IO;
-        }
-    }
-
     const bpb_t *bpb = (const bpb_t *)_sector_buf;
 
-    if (bpb->bytes_per_sector != 512) return FAT_ERR_IO; /* unsupported */
+    /* Prefer a directly valid BPB at LBA 0. */
+    if (!looks_like_bpb(bpb) && sig == MBR_SIGNATURE) {
+        const mbr_part_t *parts = (const mbr_part_t *)(_sector_buf + 446);
+        bool found = false;
+
+        for (int i = 0; i < 4; i++) {
+            if (!is_fat_partition_type(parts[i].type)) continue;
+            if (parts[i].lba_first == 0) continue;
+            if (read_sector(parts[i].lba_first) != FAT_OK) continue;
+
+            bpb = (const bpb_t *)_sector_buf;
+            if (looks_like_bpb(bpb)) {
+                _part_lba = parts[i].lba_first;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) return FAT_ERR_UNSUPPORTED;
+    }
+
+    bpb = (const bpb_t *)_sector_buf;
+    if (!looks_like_bpb(bpb)) return FAT_ERR_UNSUPPORTED;
+
     _spc = bpb->sectors_per_cluster;
 
     uint32_t fat_size = bpb->fat_size_16 ? bpb->fat_size_16 : bpb->fat_size_32;
@@ -517,6 +567,7 @@ const char *fat_result_str(fat_result_t r) {
         case FAT_ERR_NOSPC:      return "no space left";
         case FAT_ERR_RDONLY:     return "read-only";
         case FAT_ERR_NOTEMPTY:   return "directory not empty";
+        case FAT_ERR_UNSUPPORTED: return "unsupported filesystem; use FAT32";
         default:                 return "unknown";
     }
 }

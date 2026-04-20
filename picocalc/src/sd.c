@@ -43,12 +43,13 @@
 #define DATA_ACCEPT_TOKEN   0x05
 
 /* Timeouts */
-#define SD_INIT_RETRIES     2000
-#define SD_READ_TIMEOUT     2000
-#define SD_WRITE_TIMEOUT    2000
+#define SD_INIT_RETRIES     10000
+#define SD_READ_TIMEOUT     100000
+#define SD_WRITE_TIMEOUT    100000
 
 static int  _sdhc = 0;   /* 1 = SDHC/SDXC (block addressing), 0 = byte addressing */
 static int  _inited = 0;
+static int  _use_bitbang = 1;
 
 /* ------------------------------------------------------------------ */
 /* SPI helpers                                                          */
@@ -57,7 +58,47 @@ static int  _inited = 0;
 static inline void _cs_low(void)  { gpio_put(SD_PIN_CS, 0); }
 static inline void _cs_high(void) { gpio_put(SD_PIN_CS, 1); }
 
+static void _bitbang_init(void) {
+    gpio_init(SD_PIN_SCK);
+    gpio_init(SD_PIN_MOSI);
+    gpio_init(SD_PIN_MISO);
+    gpio_init(SD_PIN_CS);
+
+    gpio_set_function(SD_PIN_SCK, GPIO_FUNC_SIO);
+    gpio_set_function(SD_PIN_MOSI, GPIO_FUNC_SIO);
+    gpio_set_function(SD_PIN_MISO, GPIO_FUNC_SIO);
+    gpio_set_function(SD_PIN_CS, GPIO_FUNC_SIO);
+
+    gpio_set_dir(SD_PIN_SCK, GPIO_OUT);
+    gpio_set_dir(SD_PIN_MOSI, GPIO_OUT);
+    gpio_set_dir(SD_PIN_MISO, GPIO_IN);
+    gpio_set_dir(SD_PIN_CS, GPIO_OUT);
+
+    gpio_set_drive_strength(SD_PIN_SCK, GPIO_DRIVE_STRENGTH_8MA);
+    gpio_set_drive_strength(SD_PIN_MOSI, GPIO_DRIVE_STRENGTH_8MA);
+    gpio_pull_up(SD_PIN_MISO);
+    gpio_set_input_hysteresis_enabled(SD_PIN_MISO, true);
+
+    gpio_put(SD_PIN_SCK, 0);
+    gpio_put(SD_PIN_MOSI, 1);
+    gpio_put(SD_PIN_CS, 1);
+}
+
 static uint8_t _spi_xchg(uint8_t out) {
+    if (_use_bitbang) {
+        uint8_t in = 0;
+        for (int i = 0; i < 8; i++) {
+            gpio_put(SD_PIN_MOSI, (out & 0x80u) ? 1 : 0);
+            busy_wait_us_32(2);
+            gpio_put(SD_PIN_SCK, 1);
+            in = (uint8_t)((in << 1) | (gpio_get(SD_PIN_MISO) ? 1 : 0));
+            busy_wait_us_32(2);
+            gpio_put(SD_PIN_SCK, 0);
+            out <<= 1;
+        }
+        return in;
+    }
+
     uint8_t in = 0xFF;
     spi_write_read_blocking(SD_SPI_PORT, &out, &in, 1);
     return in;
@@ -80,8 +121,36 @@ static void _spi_flush(int n) {
 static int _wait_ready(int max_retries) {
     for (int i = 0; i < max_retries; i++) {
         if (_spi_xchg(0xFF) == 0xFF) return 1;
+        busy_wait_us_32(5);
     }
     return 0;
+}
+
+static void _deselect(void) {
+    _cs_high();
+    busy_wait_us_32(5);
+    _spi_xchg(0xFF); /* release bus */
+}
+
+static int _select(void) {
+    _cs_low();
+    busy_wait_us_32(5);
+    _spi_xchg(0xFF); /* enable DO */
+    if (_wait_ready(SD_INIT_RETRIES)) return 1;
+    _deselect();
+    return 0;
+}
+
+static uint8_t _crc7(const uint8_t *message, unsigned length) {
+    const uint8_t poly = 0x89;
+    uint8_t crc = 0;
+    for (unsigned i = 0; i < length; i++) {
+        crc ^= message[i];
+        for (int j = 0; j < 8; j++) {
+            crc = (crc & 0x80u) ? (uint8_t)((crc << 1) ^ (poly << 1)) : (uint8_t)(crc << 1);
+        }
+    }
+    return (uint8_t)(crc >> 1);
 }
 
 /* Send 6-byte command, return R1 response byte. */
@@ -89,17 +158,16 @@ static uint8_t _cmd(uint8_t cmd, uint32_t arg) {
     /* Wait for card ready before every command */
     _wait_ready(SD_INIT_RETRIES);
 
-    _spi_xchg(cmd);
-    _spi_xchg((uint8_t)(arg >> 24));
-    _spi_xchg((uint8_t)(arg >> 16));
-    _spi_xchg((uint8_t)(arg >>  8));
-    _spi_xchg((uint8_t)(arg      ));
+    uint8_t packet[5] = {
+        cmd,
+        (uint8_t)(arg >> 24),
+        (uint8_t)(arg >> 16),
+        (uint8_t)(arg >> 8),
+        (uint8_t)(arg)
+    };
 
-    /* CRC: valid only for CMD0 (0x95) and CMD8 (0x87), else 0xFF dummy */
-    uint8_t crc = 0xFF;
-    if (cmd == CMD0) crc = 0x95;
-    if (cmd == CMD8) crc = 0x87;
-    _spi_xchg(crc);
+    for (int i = 0; i < 5; i++) _spi_xchg(packet[i]);
+    _spi_xchg((uint8_t)((_crc7(packet, 5) << 1) | 1));
 
     /* Skip up to 8 bytes looking for a non-0xFF R1 response */
     uint8_t r1 = 0xFF;
@@ -115,114 +183,128 @@ static uint8_t _cmd(uint8_t cmd, uint32_t arg) {
 /* ------------------------------------------------------------------ */
 
 sd_result_t sd_init(void) {
-    /* Low-speed SPI for init: 400 kHz */
-    spi_init(SD_SPI_PORT, 400000);
-    gpio_set_function(SD_PIN_SCK,  GPIO_FUNC_SPI);
-    gpio_set_function(SD_PIN_MOSI, GPIO_FUNC_SPI);
-    gpio_set_function(SD_PIN_MISO, GPIO_FUNC_SPI);
+    if (_inited) return SD_OK;
 
-    gpio_init(SD_PIN_CS);
-    gpio_set_dir(SD_PIN_CS, GPIO_OUT);
-    _cs_high();
+    /* Card-detect is useful as a hint only; do not hard-fail on it. */
+    bool inserted_hint = true;
+    gpio_init(SD_PIN_DET);
+    gpio_set_dir(SD_PIN_DET, GPIO_IN);
+    gpio_pull_up(SD_PIN_DET);
+    inserted_hint = !gpio_get(SD_PIN_DET);
 
-    /* ≥74 clock cycles with CS high to enter native SPI mode */
-    sleep_ms(1);
+    /* Use the more tolerant PicoCalc-style bit-banged transport. */
+    _bitbang_init();
+    _deselect();
+
+    /* ≥74 clock cycles with CS high to enter SPI mode. */
+    sleep_ms(2);
     _spi_flush(10);
 
     /* CMD0: GO_IDLE_STATE */
-    _cs_low();
+    if (!_select()) return inserted_hint ? SD_TIMEOUT : SD_NOCARD;
     uint8_t r1 = _cmd(CMD0, 0);
-    _cs_high();
-    if (r1 != R1_IDLE) return SD_NOCARD;
+    _deselect();
+    if (r1 != R1_IDLE) return inserted_hint ? SD_ERROR : SD_NOCARD;
 
     /* CMD8: SEND_IF_COND — detect v2 card */
-    _cs_low();
-    r1 = _cmd(CMD8, 0x000001AA);
     int is_v2 = 0;
-    if (r1 == R1_IDLE) {
-        uint8_t r7[4];
-        _spi_read(r7, 4);
-        if (r7[3] == 0xAA) is_v2 = 1;
+    if (_select()) {
+        r1 = _cmd(CMD8, 0x000001AA);
+        if (r1 == R1_IDLE) {
+            uint8_t r7[4];
+            _spi_read(r7, 4);
+            if (r7[2] == 0x01 && r7[3] == 0xAA) is_v2 = 1;
+        }
+        _deselect();
     }
-    _cs_high();
 
-    /* ACMD41 / CMD1 loop: bring card out of idle */
+    /* ACMD41, with CMD1 fallback for older cards. */
     int ok = 0;
+    int use_cmd1 = 0;
     for (int i = 0; i < SD_INIT_RETRIES; i++) {
-        _cs_low();
-        _cmd(CMD55, 0);
-        _cs_high();
+        if (!use_cmd1) {
+            if (!_select()) break;
+            r1 = _cmd(CMD55, 0);
+            _deselect();
+            if (r1 & R1_ILLEGAL_CMD) use_cmd1 = 1;
+        }
 
-        _cs_low();
-        r1 = _cmd(ACMD41, is_v2 ? 0x40000000 : 0);
-        _cs_high();
+        if (!_select()) break;
+        r1 = _cmd(use_cmd1 ? CMD1 : ACMD41,
+                  (is_v2 && !use_cmd1) ? 0x40000000 : 0);
+        _deselect();
 
         if (r1 == 0) { ok = 1; break; }
-        sleep_us(500);
+        busy_wait_us_32(500);
     }
     if (!ok) return SD_TIMEOUT;
 
-    /* Read OCR to check SDHC bit (CCS) */
+    /* Read OCR to check SDHC bit (CCS). */
     _sdhc = 0;
-    if (is_v2) {
-        _cs_low();
+    if (is_v2 && _select()) {
         r1 = _cmd(CMD58, 0);
         if (r1 == 0) {
             uint8_t ocr[4];
             _spi_read(ocr, 4);
             if (ocr[0] & 0x40) _sdhc = 1;
         }
-        _cs_high();
+        _deselect();
     }
 
-    /* For byte-addressed cards, set block length to 512 */
+    /* For byte-addressed cards, set block length to 512. */
     if (!_sdhc) {
-        _cs_low();
+        if (!_select()) return SD_TIMEOUT;
         r1 = _cmd(CMD16, SD_BLOCK_SIZE);
-        _cs_high();
+        _deselect();
         if (r1 != 0) return SD_ERROR;
     }
-
-    /* Raise SPI speed for data transfers */
-    spi_set_baudrate(SD_SPI_PORT, SD_SPI_SPEED);
 
     _inited = 1;
     return SD_OK;
 }
 
 sd_result_t sd_read_block(uint32_t lba, uint8_t *buf) {
-    if (!_inited) return SD_NOCARD;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (!_inited) {
+            sd_result_t init_r = sd_init();
+            if (init_r != SD_OK) return init_r;
+        }
 
-    uint32_t addr = _sdhc ? lba : lba * SD_BLOCK_SIZE;
+        uint32_t addr = _sdhc ? lba : lba * SD_BLOCK_SIZE;
 
-    _cs_low();
-    uint8_t r1 = _cmd(CMD17, addr);
-    if (r1 != 0) { _cs_high(); return SD_ERROR; }
+        if (!_select()) { _inited = 0; continue; }
+        uint8_t r1 = _cmd(CMD17, addr);
+        if (r1 != 0) { _deselect(); _inited = 0; continue; }
 
-    /* Wait for data start token */
-    int tok_ok = 0;
-    for (int i = 0; i < SD_READ_TIMEOUT; i++) {
-        uint8_t tok = _spi_xchg(0xFF);
-        if (tok == DATA_START_TOKEN) { tok_ok = 1; break; }
+        /* Wait for data start token. */
+        int tok_ok = 0;
+        for (int i = 0; i < SD_READ_TIMEOUT; i++) {
+            uint8_t tok = _spi_xchg(0xFF);
+            if (tok == DATA_START_TOKEN) { tok_ok = 1; break; }
+            busy_wait_us_32(2);
+        }
+        if (!tok_ok) { _deselect(); _inited = 0; continue; }
+
+        _spi_read(buf, SD_BLOCK_SIZE);
+        _spi_xchg(0xFF); /* CRC hi */
+        _spi_xchg(0xFF); /* CRC lo */
+        _deselect();
+        return SD_OK;
     }
-    if (!tok_ok) { _cs_high(); return SD_TIMEOUT; }
-
-    _spi_read(buf, SD_BLOCK_SIZE);
-    _spi_xchg(0xFF); /* CRC hi */
-    _spi_xchg(0xFF); /* CRC lo */
-    _cs_high();
-    _spi_xchg(0xFF); /* release bus */
-    return SD_OK;
+    return SD_TIMEOUT;
 }
 
 sd_result_t sd_write_block(uint32_t lba, const uint8_t *buf) {
-    if (!_inited) return SD_NOCARD;
+    if (!_inited) {
+        sd_result_t init_r = sd_init();
+        if (init_r != SD_OK) return init_r;
+    }
 
     uint32_t addr = _sdhc ? lba : lba * SD_BLOCK_SIZE;
 
-    _cs_low();
+    if (!_select()) return SD_TIMEOUT;
     uint8_t r1 = _cmd(CMD24, addr);
-    if (r1 != 0) { _cs_high(); return SD_ERROR; }
+    if (r1 != 0) { _deselect(); return SD_ERROR; }
 
     _spi_xchg(0xFF); /* preamble */
     _spi_xchg(DATA_START_TOKEN);
@@ -231,12 +313,11 @@ sd_result_t sd_write_block(uint32_t lba, const uint8_t *buf) {
     _spi_xchg(0xFF);
 
     uint8_t resp = _spi_xchg(0xFF) & 0x1F;
-    if (resp != DATA_ACCEPT_TOKEN) { _cs_high(); return SD_ERROR; }
+    if (resp != DATA_ACCEPT_TOKEN) { _deselect(); return SD_ERROR; }
 
-    /* Wait for write to complete */
+    /* Wait for write to complete. */
     int done = _wait_ready(SD_WRITE_TIMEOUT);
-    _cs_high();
-    _spi_xchg(0xFF);
+    _deselect();
     return done ? SD_OK : SD_TIMEOUT;
 }
 

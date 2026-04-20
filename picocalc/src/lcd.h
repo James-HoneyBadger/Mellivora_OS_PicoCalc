@@ -29,6 +29,7 @@
 #define LCD_CYAN    LCD_RGB(0,200,200)
 #define LCD_YELLOW  LCD_RGB(255,255,0)
 #define LCD_RED     LCD_RGB(200,0,0)
+#define LCD_BLUE    LCD_RGB(0,0,200)
 
 /* Character cell size (using built-in 8×16 bitmap font) */
 #define LCD_CHAR_W  8

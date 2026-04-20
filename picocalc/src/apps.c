@@ -4856,7 +4856,7 @@ static bool app_dispatch_named(const char *cmd, const char *arg) {
         {"wc", app_wc}, {"cut", app_cut}, {"grep", app_grep},
         {"find", app_find}, {"tree", app_tree}, {"du", app_du},
         {"df", app_df}, {"disk", app_df}, {"space", app_df},
-        {"pager", app_pager}, {"rev", app_rev},
+        {"pager", app_pager}, {"more", app_pager}, {"rev", app_rev},
         {"sort", app_sort}, {"hexdump", app_hexdump}, {"od", app_od},
         {"hexedit", app_hexedit}, {"hex", app_hexedit},
         {"calc", app_calc}, {"cp", app_cp}, {"mv", app_mv},

@@ -25,6 +25,7 @@
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
 #include "hardware/watchdog.h"
+#include "hardware/uart.h"
 
 #include "picocalc_hw.h"
 #include "lcd.h"
@@ -48,11 +49,8 @@
 #define ALIAS_FILE      "/ALIASES.CFG"
 
 #define BANNER \
-    "  __  __     _ _ _\n" \
-    " |  \\/  |___| | (_)___ ____ _ _ _ __ _\n" \
-    " | |\\/| / -_) | | \\ V / _ \\ '_/ _` |\n" \
-    " |_|  |_\\___|_|_|_|\\_/\\___/_| \\__,_|\n" \
-    "  PicoCalc -- RP2040 native firmware\n\n"
+    "Mellivora OS\n" \
+    "PicoCalc ready\n\n"
 
 /* ANSI escape sequences forwarded to the serial console */
 #define ANSI_UP   "\x1b[A"
@@ -62,9 +60,14 @@
 /* Output helpers — mirror to both LCD and serial                       */
 /* ------------------------------------------------------------------ */
 
+static bool _lcd_ready = false;
+
 static void out_char(char c) {
-    putchar_raw(c);
-    lcd_putc(c);
+    if (!_lcd_ready) {
+        putchar_raw(c);
+        return;
+    }
+    sys_putchar(c);
 }
 
 static void out_str(const char *s) {
@@ -581,6 +584,7 @@ static void cmd_help(const char *arg) {
         out_str("  bookmarks games snake dice coin guess sprite terminal home dashboard sysmon\n");
         out_str("  samples clock cal script paint settings set sleep id true false basic tcc\n");
         out_str("\nUse UP/DOWN for history, Ctrl-U to clear a line, and Ctrl-L to redraw.\n");
+        out_str("Tip: append | more to long commands for paging.\n");
         return;
     }
 
@@ -842,6 +846,24 @@ static char *split_arg(char *line) {
     return NULL;
 }
 
+static int parse_pipe_mode(char *line) {
+    char *pipe = strchr(line, '|');
+    if (!pipe) return 0;
+
+    *pipe++ = '\0';
+    trim_right(line);
+    pipe = skip_spaces(pipe);
+    trim_right(pipe);
+
+    if (!*pipe || strcmp(pipe, "more") == 0 || strcmp(pipe, "pager") == 0) {
+        return 1;
+    }
+
+    out_str("Only '| more' is supported right now.\n");
+    line[0] = '\0';
+    return -1;
+}
+
 static void dispatch(char *line) {
     /* Strip trailing whitespace */
     int len = (int)strlen(line);
@@ -861,6 +883,10 @@ static void dispatch(char *line) {
 
     /* Save to history */
     hist_push(line);
+
+    bool use_more = parse_pipe_mode(line) > 0;
+    if (line[0] == '\0') return;
+    if (use_more) sys_more_set(true);
 
     /* Separate command from optional argument */
     char *arg = split_arg(line);
@@ -894,6 +920,12 @@ static void dispatch(char *line) {
         _cwd[CWD_MAX - 1] = '\0';
     }
     else out_fmt("unknown: %s  (type 'help')\n", line);
+
+    if (use_more) {
+        bool aborted = _sys_more_abort;
+        sys_more_set(false);
+        if (aborted) out_char('\n');
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -915,161 +947,77 @@ static int read_input(void) {
 /* ------------------------------------------------------------------ */
 
 int main(void) {
+    char line[LINE_BUF];
+    int idx = 0;
+
     set_sys_clock_khz(133000, true);
     stdio_init_all();
-    sleep_ms(500);  /* let USB enumerate */
+    sleep_ms(250);
+
+    gpio_init(PICO_PIN_PS);
+    gpio_set_dir(PICO_PIN_PS, GPIO_OUT);
+    gpio_put(PICO_PIN_PS, 1);
 
     g_boot_time = get_absolute_time();
     strncpy(_sys_cwd, _cwd, sizeof _sys_cwd - 1);
     _sys_cwd[sizeof _sys_cwd - 1] = '\0';
 
-    /* Init display first so the user sees something immediately */
-    lcd_init();
-    lcd_cls(LCD_BLACK);
-
-    /* Init keyboard */
     kbd_init();
-    kbd_set_backlight(128); /* 50% backlight */
+    kbd_set_backlight(255);
+    sleep_ms(20);
+    lcd_init();
+    kbd_set_backlight(255);
+    _lcd_ready = true;
 
-    /* Auto-mount SD card */
-    if (fat_mount() == FAT_OK) _fat_mounted = true;
+    lcd_cls(LCD_BLACK);
+    out_str("\x1b[2J\x1b[H");
 
-    /* Load settings and apply boot preferences */
-    app_init();
-    alias_load();
-    strncpy(_cwd, _sys_cwd, CWD_MAX - 1);
-    _cwd[CWD_MAX - 1] = '\0';
+    /* Match the official PicoCalc boot flow: give the SD card time to settle. */
+    sleep_ms(1500);
 
-    /* Print banner */
-    out_str(BANNER);
-    out_fmt("SD: %s\n", _fat_mounted ? "mounted" : "no card / not FAT");
-    out_str("Type 'help' for commands.\n\n");
-
-    /* Run optional startup actions after the banner */
-    if (_fat_mounted) {
-        app_boot();
-        strncpy(_cwd, _sys_cwd, CWD_MAX - 1);
-        _cwd[CWD_MAX - 1] = '\0';
+    if (sd_init() == SD_OK && fat_mount() == FAT_OK) {
+        _fat_mounted = true;
+        alias_load();
     }
 
+    out_str(BANNER);
     out_prompt();
 
-    char line[LINE_BUF];
-    int  idx      = 0;         /* current cursor position in line */
-    int  hist_pos = -1;        /* -1 = live edit; >=0 = browsing history */
-
-    /* ANSI escape state machine: 0=normal, 1=got ESC, 2=got ESC[ */
-    int esc_state = 0;
+    memset(line, 0, sizeof line);
 
     for (;;) {
-        sleep_ms(20);
-
         int ch = read_input();
-        if (ch < 0) continue;
-
-        /* ----- ANSI escape sequence handling ----- */
-        if (esc_state == 1) {
-            esc_state = (ch == '[') ? 2 : 0;
+        if (ch < 0) {
+            sleep_ms(20);
             continue;
         }
-        if (esc_state == 2) {
-            esc_state = 0;
-            if (ch == 'A') ch = 0x10; /* remap UP    -> Ctrl-P */
-            else if (ch == 'B') ch = 0x0E; /* remap DOWN  -> Ctrl-N */
-            else continue;
-        }
-        if (ch == 0x1B) { esc_state = 1; continue; }
 
-        /* ----- Enter ----- */
         if (ch == '\r' || ch == '\n') {
             out_char('\n');
             line[idx] = '\0';
-            hist_pos  = -1;
-            dispatch(line);
+            if (idx > 0) dispatch(line);
             idx = 0;
-            out_prompt();
-            continue;
-        }
-
-        /* ----- Backspace / DEL ----- */
-        if ((ch == 0x08 || ch == 0x7F) && idx > 0) {
-            idx--;
-            out_str("\b \b");
-            continue;
-        }
-
-        /* ----- Ctrl-C: cancel line ----- */
-        if (ch == 0x03) {
-            out_char('\n');
-            idx      = 0;
-            hist_pos = -1;
-            out_prompt();
-            continue;
-        }
-
-        /* ----- Ctrl-U: clear current line ----- */
-        if (ch == 0x15) {
-            while (idx-- > 0) out_str("\b \b");
-            idx = 0;
-            hist_pos = -1;
             line[0] = '\0';
-            continue;
-        }
-
-        /* ----- Ctrl-L: clear and redraw ----- */
-        if (ch == 0x0C) {
-            cmd_clear();
             out_prompt();
-            line[idx] = '\0';
-            out_str(line);
             continue;
         }
 
-        /* ----- Ctrl-P / UP: history previous ----- */
-        if (ch == 0x10) {
-            int next = (hist_pos < 0) ? _hist_count - 1 : hist_pos - 1;
-            if (next < 0) continue;
-            const char *entry = hist_get(next);
-            if (!entry) continue;
-            /* Erase current input */
-            while (idx-- > 0) out_str("\b \b");
-            idx = 0;
-            strncpy(line, entry, LINE_BUF - 1);
-            line[LINE_BUF - 1] = '\0';
-            idx = (int)strlen(line);
-            out_str(line);
-            hist_pos = next;
-            continue;
-        }
-
-        /* ----- Ctrl-N / DOWN: history next ----- */
-        if (ch == 0x0E) {
-            if (hist_pos < 0) continue;
-            int next = hist_pos + 1;
-            /* Erase current input */
-            while (idx-- > 0) out_str("\b \b");
-            idx = 0;
-            if (next >= _hist_count) {
-                /* Past end: clear line */
-                line[0] = '\0';
-                hist_pos = -1;
-            } else {
-                const char *entry = hist_get(next);
-                if (entry) {
-                    strncpy(line, entry, LINE_BUF - 1);
-                    line[LINE_BUF - 1] = '\0';
-                }
-                hist_pos = next;
+        if (ch == 0x08 || ch == 0x7F) {
+            if (idx > 0) {
+                idx--;
+                line[idx] = '\0';
+                out_str("\b \b");
             }
-            idx = (int)strlen(line);
-            out_str(line);
             continue;
         }
 
-        /* ----- Normal printable character ----- */
-        if (isprint(ch) && idx + 1 < LINE_BUF) {
-            hist_pos    = -1;
+        if (ch == 0x1B || ch == 0xB4 || ch == 0xB5 || ch == 0xB6 || ch == 0xB7) {
+            continue;
+        }
+
+        if (isprint((unsigned char)ch) && idx < LINE_BUF - 1) {
             line[idx++] = (char)ch;
+            line[idx] = '\0';
             out_char((char)ch);
         }
     }

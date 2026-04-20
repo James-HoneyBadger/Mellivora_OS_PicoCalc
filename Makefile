@@ -7,14 +7,17 @@
 PICO_DIR = picocalc
 PICO_BUILD_DIR = $(PICO_DIR)/build
 PICO_BOARD ?= pico
+PICO_ELF = $(PICO_BUILD_DIR)/mellivora_picocalc.elf
+PICO_UF2 = $(PICO_BUILD_DIR)/mellivora_picocalc.uf2
+PICOTOOL = $(PICO_BUILD_DIR)/_deps/picotool/picotool
 
-.PHONY: all picocalc picocalc-sdk picocalc-config picocalc-build picocalc-clean clean
+.PHONY: all picocalc picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean clean
 
 all: picocalc
 
-picocalc: picocalc-sdk picocalc-config picocalc-build
+picocalc: picocalc-sdk picocalc-config picocalc-build picocalc-uf2
 	@echo "=== PicoCalc UF2 ready ==="
-	@echo "  $(PICO_BUILD_DIR)/mellivora_picocalc.uf2"
+	@echo "  $(PICO_UF2)"
 
 picocalc-sdk:
 	@if [ -z "$(PICO_SDK_PATH)" ] && [ ! -d "$(PICO_DIR)/pico-sdk/external" ]; then \
@@ -34,6 +37,12 @@ picocalc-config:
 picocalc-build:
 	@echo "=== Building PicoCalc target ==="
 	@cmake --build "$(PICO_BUILD_DIR)" -j
+
+picocalc-uf2:
+	@echo "=== Generating PicoCalc UF2 ==="
+	@test -f "$(PICO_ELF)" || { echo "Missing ELF: $(PICO_ELF)"; exit 1; }
+	@test -x "$(PICOTOOL)" || { echo "Missing picotool: $(PICOTOOL)"; exit 1; }
+	@"$(PICOTOOL)" uf2 convert --quiet "$(PICO_ELF)" "$(PICO_UF2)" --family rp2040
 
 picocalc-clean:
 	@echo "=== Cleaning PicoCalc build directory ==="
