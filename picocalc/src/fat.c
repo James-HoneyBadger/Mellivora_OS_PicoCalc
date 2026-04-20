@@ -1,5 +1,5 @@
 /*
- * fat.c — Read-only FAT16/FAT32 filesystem driver for PicoCalc SD card
+ * fat.c — FAT16/FAT32 filesystem driver for PicoCalc SD card
  *
  * Supports:
  *   - MBR partition table (reads first partition, or sector 0 if no MBR)
@@ -7,10 +7,13 @@
  *   - 8.3 file names only (upper-case, space-padded)
  *   - Subdirectory traversal
  *   - Sequential file reading
+ *   - File creation, overwrite, and append
+ *   - Rename (same directory), delete, mkdir
+ *   - 2-slot FAT sector cache for read performance
+ *   - SD block CRC16 validation
  *
  * NOT supported:
  *   - LFN (long file names)
- *   - Write operations
  *   - Multiple open files simultaneously
  */
 

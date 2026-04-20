@@ -25,6 +25,9 @@ Important files and responsibilities:
 - `picocalc/src/sd.c` — low-level SD card block I/O
 - `picocalc/src/lcd.c` — display handling
 - `picocalc/src/kbd.c` — keyboard and battery support
+- `picocalc/src/net.c` and `net.h` — WiFi, TCP, DNS, ICMP, NTP, HTTP (Pico 2W only)
+- `picocalc/src/netapps.c` and `netapps.h` — network application commands (Pico 2W only)
+- `picocalc/src/lwipopts.h` — lwIP stack configuration (Pico 2W only)
 
 ## 3. Normal Edit and Test Cycle
 
@@ -108,7 +111,7 @@ Guidelines:
 The FAT layer (`fat.h`) provides these functions for app development:
 
 | Function | Purpose |
-|---|---|
+| --- | --- |
 | `fat_mount()` | Mount the SD card |
 | `fat_ls(path, cb, ctx)` | Enumerate directory entries |
 | `fat_open(path, f)` | Open a file for reading |

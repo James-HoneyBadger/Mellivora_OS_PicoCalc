@@ -4,7 +4,7 @@ Mellivora PicoCalc is a compact shell-based operating environment for PicoCalc h
 
 ## Short GitHub About Text
 
-Mellivora PicoCalc is a handheld Pico and Pico 2 shell environment with SD-backed apps, editors, built-in BASIC and Tiny C, and a practical on-device productivity workflow.
+Mellivora PicoCalc is a handheld Pico, Pico 2, and Pico 2W shell environment with SD-backed apps, editors, built-in BASIC and Tiny C, WiFi networking (Pico 2W), and a practical on-device productivity workflow.
 
 ## Suggested GitHub Topics
 
@@ -30,6 +30,7 @@ Mellivora PicoCalc is a handheld Pico and Pico 2 shell environment with SD-backe
 - creative tools including paint and sprite editing
 - interactive BASIC, Tiny C, and calculator support
 - real-hardware LCD and SD improvements for a smoother handheld workflow
+- WiFi networking with HTTP, IRC, telnet, NTP, and DNS (Pico 2W only)
 - launcher, dashboard, terminal mode, and mini games
 
 ## Intended Audience

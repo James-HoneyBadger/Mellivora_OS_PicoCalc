@@ -3,7 +3,7 @@
 ## Keyboard Shortcuts
 
 | Key | Action |
-|---|---|
+| --- | --- |
 | `Up` / `Down` | Browse command history |
 | `Tab` | Auto-complete command name |
 | `Ctrl-C` | Cancel current line / exit tools |
@@ -15,7 +15,7 @@
 ## Shell Features
 
 | Feature | Syntax | Example |
-|---|---|---|
+| --- | --- | --- |
 | Chain commands | `cmd1 ; cmd2` | `mount ; ls` |
 | Redirect output | `cmd > FILE` | `ls > DIR.TXT` |
 | Append output | `cmd >> FILE` | `echo hi >> LOG.TXT` |
@@ -26,7 +26,7 @@
 ## System Commands
 
 | Command | Description |
-|---|---|
+| --- | --- |
 | `help` | Command overview |
 | `man TOPIC` | Detailed help |
 | `history` | Command history |
@@ -43,7 +43,7 @@
 ## File Commands
 
 | Command | Syntax |
-|---|---|
+| --- | --- |
 | `ls` / `dir` | `ls [PATH]` |
 | `cd` | `cd [PATH]` |
 | `pwd` | Print working directory |
@@ -63,7 +63,7 @@
 ## Text Processing
 
 | Command | Syntax |
-|---|---|
+| --- | --- |
 | `grep` | `grep [-n] [-e] PATTERN FILE` |
 | `sort` | `sort [-r] [-n] FILE` |
 | `find` | `find [PATH] [-name PAT] [-type f\|d]` |
@@ -79,7 +79,7 @@
 ## Interactive Tools
 
 | Command | Description |
-|---|---|
+| --- | --- |
 | `browse` | File browser (j/k, Enter, d, n, m, u, q) |
 | `edit FILE` | Line editor |
 | `hexedit FILE` | Hex editor (find subcommand) |
@@ -92,7 +92,7 @@
 ## Productivity Apps
 
 | Command | Key Subcommands |
-|---|---|
+| --- | --- |
 | `todo` | `list`, `add TEXT`, `done N`, `undo N`, `del N`, `purge`, `edit` |
 | `planner` | `list`, `add DATE TEXT`, `today`, `month YYYY-MM`, `next`, `del N`, `edit` |
 | `journal` | `list`, `add [DATE] TEXT`, `today`, `month YYYY-MM`, `edit` |
@@ -103,7 +103,7 @@
 ## Games
 
 | Command | Description |
-|---|---|
+| --- | --- |
 | `snake` | Step-based snake (wasd/hjkl, persistent high score) |
 | `dice [N] [S]` | Roll N dice with S sides |
 | `coin [N]` | Flip N coins |
@@ -113,17 +113,50 @@
 ## Languages
 
 | Command | Description |
-|---|---|
+| --- | --- |
 | `basic [FILE.BAS]` | BASIC interpreter |
 | `tcc [FILE.TC]` | Tiny C interpreter |
 | `calc [EXPR]` | Calculator / expression REPL |
 | `script FILE` | Run shell script file |
 | `samples` | Bundled example programs |
 
+## Additional Shell Commands
+
+| Command | Description |
+| --- | --- |
+| `echo TEXT` | Print text to the console |
+| `sleep N` | Pause for N seconds |
+| `clock` | Show current time |
+| `cal` | Show a calendar |
+| `id` | Show current user identity |
+| `basename PATH` | Print filename part of a path |
+| `dirname PATH` | Print directory part of a path |
+| `sdinfo` | SD card hardware status |
+| `true` / `false` | Return success or failure |
+
 ## Launchers
 
 | Command | Description |
-|---|---|
+| --- | --- |
 | `home` | App launcher menu |
 | `dashboard` | System status + shortcuts |
 | `sysmon` | Detailed system monitor |
+
+## Network Commands (Pico 2W Only)
+
+| Command | Description |
+| --- | --- |
+| `wifi scan` | Scan for WiFi networks |
+| `wifi connect SSID` | Connect to a WiFi network |
+| `wifi status` | Show WiFi connection status |
+| `wifi disconnect` | Disconnect from WiFi |
+| `ping HOST` | ICMP echo to a host |
+| `ifconfig` | Show IP, gateway, and DNS |
+| `dns HOSTNAME` | Resolve hostname to IP |
+| `ntp` | Sync time from NTP server |
+| `fetch URL` | HTTP GET and display response |
+| `wget URL FILE` | HTTP GET and save to file |
+| `weather LOCATION` | Fetch weather for a location |
+| `irc` | Minimal IRC client |
+| `telnet HOST [PORT]` | Minimal telnet client |
+| `netstat` | Show network status |

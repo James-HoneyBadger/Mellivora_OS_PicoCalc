@@ -63,6 +63,10 @@ notes
 
 - full setup: [INSTALL.md](INSTALL.md)
 - daily usage: [USER_GUIDE.md](USER_GUIDE.md)
+- command cheatsheet: [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
+- step-by-step onboarding: [TUTORIAL.md](TUTORIAL.md)
+- command cheatsheet: [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
+- step-by-step onboarding: [TUTORIAL.md](TUTORIAL.md)
 - step-by-step onboarding: [TUTORIAL.md](TUTORIAL.md)
 - development internals: [PROGRAMMING_GUIDE.md](PROGRAMMING_GUIDE.md)
 - architecture details: [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md)

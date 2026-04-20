@@ -1,3 +1,11 @@
+/*
+ * apps.c — Application layer for Mellivora OS PicoCalc
+ *
+ * Implements all user-facing apps, utilities, file tools, editors,
+ * productivity apps, creative tools, games, and language interpreters.
+ * Commands are dispatched by name from the PicoLair shell in main.c.
+ */
+
 #include "apps.h"
 
 #include <ctype.h>

@@ -1,6 +1,6 @@
 # Mellivora PicoCalc Firmware
 
-This directory contains the active RP2040 firmware implementation for Mellivora on PicoCalc-class hardware.
+This directory contains the active firmware implementation for Mellivora on PicoCalc-class hardware, supporting RP2040 (Pico), RP2350 (Pico 2), and RP2350 + CYW43 (Pico 2W) boards.
 
 ## Firmware capabilities
 
@@ -11,6 +11,7 @@ This directory contains the active RP2040 firmware implementation for Mellivora 
 - creative tools including paint and sprite editing
 - mini games including snake, dice, coin, and guess
 - on-device calculator, BASIC, and Tiny C environments
+- WiFi networking with TCP, DNS, NTP, HTTP, IRC, and telnet (Pico 2W only)
 
 ## Build
 

@@ -28,6 +28,8 @@ Key modules:
 - `sd.c` — block-level storage transport
 - `lcd.c` — screen drawing and mirrored output
 - `kbd.c` — keyboard input, battery reporting, and backlight control
+- `net.c` and `net.h` — WiFi, TCP, DNS, ICMP, NTP, and HTTP networking (Pico 2W only)
+- `netapps.c` and `netapps.h` — network application commands (Pico 2W only)
 
 ## 3. Runtime Flow
 
@@ -137,6 +139,22 @@ The app layer currently exposes a broad command set including:
 - games and fun commands such as `games`, `snake`, `dice`, `coin`, and `guess`
 - language tools such as `calc`, `basic`, and `tcc`
 
+### Network commands (Pico 2W only)
+
+When built for the Pico 2W (`make pico2w`), the firmware includes WiFi networking via the CYW43 radio and lwIP stack:
+
+- `wifi` — connect, scan, check status, or disconnect from WiFi networks
+- `ping` — ICMP echo to a host
+- `ifconfig` — show IP address, gateway, and DNS configuration
+- `ntp` — synchronise time from an NTP server
+- `dns` — resolve a hostname to an IP address
+- `fetch` — HTTP GET and display response body
+- `wget` — HTTP GET and save response to a file on the SD card
+- `weather` — fetch weather data for a location
+- `irc` — minimal IRC client
+- `telnet` — minimal telnet client
+- `netstat` — show network connection status
+
 ## 8. BASIC Runtime Notes
 
 The BASIC environment is intentionally minimal and device-friendly.
@@ -179,7 +197,31 @@ Main limits:
 - no separate compilation model
 - intentionally small syntax surface
 
-## 10. Resource and Design Constraints
+## 10. Network Layer (Pico 2W Only)
+
+When built for the Pico 2W board (`make pico2w`), the firmware includes a WiFi networking stack.
+
+Architecture:
+
+- `net.c` implements the low-level network layer on top of the CYW43 WiFi driver and lwIP TCP/IP stack
+- `netapps.c` provides user-facing commands that call into `net.c`
+- Network code is conditionally compiled using `#ifdef PICO_CYW43_SUPPORTED`
+- WiFi credentials are held in memory for the current session (not persisted to SD)
+
+Capabilities:
+
+- WiFi scanning and WPA2 connection management
+- ICMP ping with round-trip timing
+- DNS hostname resolution
+- NTP time synchronisation
+- TCP client connections
+- HTTP GET with response display or file save
+- Minimal IRC and telnet clients
+- Network status reporting
+
+The lwIP configuration is in `lwipopts.h` and is tuned for the constrained RAM environment.
+
+## 11. Resource and Design Constraints
 
 This firmware is shaped by embedded constraints:
 
@@ -191,37 +233,37 @@ This firmware is shaped by embedded constraints:
 
 These limits strongly influence implementation style and are a key reason many tools prefer small text formats and simple menus.
 
-## 11. Limits and Constraints
+## 12. Limits and Constraints
 
-| Resource | Limit | Notes |
-| --- | --- | --- |
-| Shell line buffer | 256 bytes | Input line maximum |
-| Output format buffer | 512 bytes | `out_fmt()` single call |
-| Output redirection buffer | 4096 bytes | Max redirected output per command |
-| History entries | 16 | Circular ring |
-| Alias storage | 2560 bytes | All aliases combined |
-| Alias expansion depth | 8 | Prevents circular aliases |
-| Command chain segments | 16 | Max `;`-separated commands |
-| LCD text grid | 40 cols × 20 rows | 8×16 pixel font on 320×320 |
-| Editor lines | 128 | Max lines per file in editor |
-| BASIC program lines | 256 | Max BASIC line-numbered lines |
-| BASIC variables | 26 | A through Z, integer only |
-| Tiny C variables | 26 | a through z, integer only |
-| Todo items | 32 | Max todo entries |
-| Planner items | 32 | Max planner entries |
-| Habits items | 16 | Max tracked habits |
-| Bookmarks | 16 | Max saved bookmarks |
-| Journal entries | 32 | Max journal entries |
-| File read buffer | 8192 bytes | Max file size for in-memory tools |
-| FAT sector cache | 2 slots | LRU for FAT table reads |
-| SD CRC validation | Per-block | CRC16-CCITT on every read |
-| Sort lines | 256 | Max sortable lines |
-| Find results | 128 | Max find callback entries |
-| File names | 8.3 format | Uppercase, no long filenames |
-| Key repeat delay | 500ms | Initial delay before repeat |
-| Key repeat rate | 100ms | Interval between repeats |
+Many limits differ between the RP2040 (Pico) and RP2350 (Pico 2 / Pico 2W) builds because the RP2350 has more RAM (520 KB vs 264 KB).
 
-## 12. Build Artifact
+| Resource | RP2040 | RP2350 | Notes |
+| --- | --- | --- | --- |
+| Shell line buffer | 256 bytes | 256 bytes | Input line maximum |
+| Output format buffer | 512 bytes | 512 bytes | `out_fmt()` single call |
+| Output redirection buffer | 4096 bytes | 8192 bytes | Max redirected output per command |
+| History entries | 32 | 64 | Circular ring |
+| Alias storage | 2560 bytes | 2560 bytes | All aliases combined |
+| Alias expansion depth | 8 | 8 | Prevents circular aliases |
+| Command chain segments | 16 | 16 | Max `;`-separated commands |
+| LCD text grid | 40 cols × 20 rows | 40 cols × 20 rows | 8×16 pixel font on 320×320 |
+| Editor lines | 128 | 256 | Max lines per file in editor |
+| BASIC program lines | 128 | 256 | Max BASIC line-numbered lines |
+| BASIC variables | 26 | 26 | A through Z, integer only |
+| Tiny C variables | 64 | 64 | Named variables, integer only |
+| Todo items | 64 | 64 | Max todo entries |
+| Planner items | 96 | 96 | Max planner entries |
+| Habits items | 32 | 32 | Max tracked habits |
+| Bookmarks | 32 | 32 | Max saved bookmarks |
+| Journal entries | 96 | 96 | Max journal entries |
+| File read buffer | 4096 bytes | 8192 bytes | Max file size for in-memory tools |
+| FAT sector cache | 2 slots | 2 slots | LRU for FAT table reads |
+| SD CRC validation | Per-block | Per-block | CRC16-CCITT on every read |
+| File names | 8.3 format | 8.3 format | Uppercase, no long filenames |
+| Key repeat delay | 500ms | 500ms | Initial delay before repeat |
+| Key repeat rate | 100ms | 100ms | Interval between repeats |
+
+## 13. Build Artifact
 
 The normal firmware output is:
 
@@ -241,6 +283,6 @@ For Pico 2W (RP2350 with WiFi):
 picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
 ```
 
-## 13. Scope and Direction
+## 14. Scope and Direction
 
 This repository now centers on the PicoCalc firmware target. The maintained direction is a practical RP2040/RP2350 handheld shell environment with apps and interpreters, not the older desktop-oriented runtime flow.

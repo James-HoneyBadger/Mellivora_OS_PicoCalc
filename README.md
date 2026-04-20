@@ -12,6 +12,7 @@ Mellivora PicoCalc is a keyboard-first micro operating environment for Clockwork
 - interactive utilities including browser, editor, hex editor (with byte search), paint, sprite editor, and terminal mode
 - text processing: grep (with regex), sort, find, head, tail, cut, wc, and more
 - built-in calculator, BASIC environment, and Tiny C environment
+- WiFi networking with HTTP, IRC, telnet, NTP, and DNS (Pico 2W only)
 - smoother LCD console with optimized scrolling and software key repeat
 - launcher, dashboard, system monitor, samples, and mini games including snake (with persistent high scores)
 

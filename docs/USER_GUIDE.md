@@ -4,7 +4,7 @@ This guide explains everyday use of Mellivora PicoCalc on real hardware. It is a
 
 ## 1. What Mellivora PicoCalc Is
 
-Mellivora PicoCalc is a compact shell environment for PicoCalc-class hardware using RP2040 and Pico 2 class RP2350 boards. It is designed to make the device feel like a tiny portable workstation with:
+Mellivora PicoCalc is a compact shell environment for PicoCalc-class hardware using RP2040 (Pico), RP2350 (Pico 2), and RP2350 + CYW43 (Pico 2W) boards. It is designed to make the device feel like a tiny portable workstation with:
 
 - a text shell
 - mirrored LCD and serial output
@@ -37,7 +37,7 @@ Advanced shell features:
 ## 3. Essential System Commands
 
 | Command | What it does |
-|---|---|
+| --- | --- |
 | `help` | Show the command overview |
 | `man TOPIC` | Show a deeper help page |
 | `history` | Show or replay recent commands |
@@ -48,6 +48,7 @@ Advanced shell features:
 | `battery` | Report battery state when available |
 | `backlight N` | Set keyboard backlight from 0 to 255 |
 | `clear` | Clear the display and console |
+| `echo TEXT` | Print text to the console |
 | `reboot` | Restart the device |
 
 ## 4. Working with Files and Storage
@@ -339,7 +340,64 @@ n = n + 1;
 vars
 ```
 
-## 12. Suggested Daily Workflow
+## 12. Network Commands (Pico 2W Only)
+
+If you are running the Pico 2W firmware build, the following WiFi and network commands are available.
+
+### Connect to WiFi
+
+```text
+wifi scan
+wifi connect MyNetwork
+```
+
+You will be prompted for the password. Once connected, the device has a full TCP/IP stack.
+
+### Check connection status
+
+```text
+wifi status
+ifconfig
+```
+
+### Useful network tools
+
+| Command | What it does |
+| --- | --- |
+| `ping HOST` | Send ICMP echo requests to a host |
+| `dns HOSTNAME` | Resolve a hostname to an IP address |
+| `ntp` | Synchronise time from an NTP server |
+| `fetch URL` | HTTP GET and display the response body |
+| `wget URL FILE` | HTTP GET and save the response to a file |
+| `weather LOCATION` | Fetch weather data for a location |
+| `irc` | Minimal IRC client |
+| `telnet HOST [PORT]` | Minimal telnet client |
+| `netstat` | Show network connection status |
+
+### Disconnect
+
+```text
+wifi disconnect
+```
+
+## 13. Additional Shell Commands
+
+These smaller built-in commands are useful in scripts and day-to-day work:
+
+| Command | What it does |
+| --- | --- |
+| `echo TEXT` | Print text to the console |
+| `sleep N` | Pause for N seconds |
+| `clock` | Show the current time |
+| `cal` | Show a calendar |
+| `id` | Show the current user identity |
+| `basename PATH` | Print the filename part of a path |
+| `dirname PATH` | Print the directory part of a path |
+| `sdinfo` | Show SD card hardware status |
+| `sdread LBA` | Read a raw SD block (debugging) |
+| `true` / `false` | Return success or failure (for scripts) |
+
+## 14. Suggested Daily Workflow
 
 A practical device-first session often looks like this:
 
@@ -351,17 +409,17 @@ A practical device-first session often looks like this:
 6. edit scripts or text with `edit`
 7. use `calc`, `basic`, or `tcc` for quick work
 
-## 13. If Something Fails
+## 15. If Something Fails
 
 - run `mount` again if storage commands stop working
 - use `pwd` and `ls` to confirm your location
 - use `help fs` or `man TOPIC` for syntax reminders
 - reboot if an interactive tool becomes unresponsive
 
-## 14. Current Limitations
+## 16. Current Limitations
 
 - Utilities focus on compact embedded behavior rather than full desktop compatibility
 - Interactive language support is integer-oriented and intentionally small
 - Some commands do not yet support every flag found in larger Unix systems
-- File names must follow 8.3 format (uppercase, no long names)
+- File names must follow 8.3 format (uppercase only, no long filenames)
 - Maximum file size for in-memory operations is limited by available RAM

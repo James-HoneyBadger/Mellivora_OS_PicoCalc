@@ -1,3 +1,11 @@
+/*
+ * syscall.c — Mellivora syscall compatibility shim for PicoCalc
+ *
+ * Maps the Mellivora-style syscall surface to concrete C function
+ * calls on PicoCalc hardware.  Provides console output with paging,
+ * ANSI filtering for the LCD, and file I/O wrappers.
+ */
+
 #define SYSCALL_IMPLEMENTATION
 #include "syscall.h"
 

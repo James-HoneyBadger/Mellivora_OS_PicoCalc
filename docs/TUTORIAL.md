@@ -16,6 +16,8 @@ dashboard
 
 This confirms the system is running and shows the available command families.
 
+If the screen looks cluttered, press `Ctrl-L` or type `clear` to redraw it.
+
 ## 2. Mount the SD Card
 
 Insert your SD card and run:
@@ -244,7 +246,26 @@ set backlight 180
 
 This makes the device feel more personal and shows how configuration is preserved.
 
-## 15. Next Steps
+## 15. Connect to WiFi (Pico 2W Only)
+
+If you are running the Pico 2W firmware, you can connect to a WiFi network:
+
+```text
+wifi scan
+wifi connect MyNetwork
+```
+
+Enter your password when prompted. Once connected, try:
+
+```text
+ifconfig
+ping 1.1.1.1
+fetch http://example.com
+```
+
+This confirms that networking is working. See the User Guide for the full list of network commands.
+
+## 16. Next Steps
 
 Once you are comfortable, the best next moves are:
 
@@ -253,3 +274,4 @@ Once you are comfortable, the best next moves are:
 - build tiny BASIC or Tiny C experiments
 - explore the file browser, hex editor, and samples library
 - customize your startup workflow with settings
+- if using a Pico 2W, try the network tools for fetching data and syncing time

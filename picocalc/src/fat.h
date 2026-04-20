@@ -1,8 +1,9 @@
 #pragma once
 /*
- * fat.h — Read-only FAT16/FAT32 filesystem layer for PicoCalc SD card
+ * fat.h — FAT16/FAT32 filesystem layer for PicoCalc SD card
  *
- * Sits on top of sd.c and provides directory listing and file reading.
+ * Sits on top of sd.c and provides directory listing, file reading,
+ * file creation, append, rename, delete, and directory management.
  * Only the features needed by the shell are implemented.
  *
  * Public API
