@@ -1,6 +1,0 @@
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/_deps/picotool/picotool
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/_deps/picotool/picotoolTargets.cmake
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/_deps/picotool/picotoolTargets-release.cmake
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/_deps/picotool/picotoolConfig.cmake
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/_deps/picotool/picotoolConfigVersion.cmake
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2/_deps/picotool/enc_bootloader.elf

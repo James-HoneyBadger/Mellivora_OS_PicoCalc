@@ -1,5 +1,0 @@
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm-install/pioasm/pioasm
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm-install/pioasm/pioasmTargets.cmake
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm-install/pioasm/pioasmTargets-release.cmake
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm-install/pioasm/pioasmConfig.cmake
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm-install/pioasm/pioasmConfigVersion.cmake

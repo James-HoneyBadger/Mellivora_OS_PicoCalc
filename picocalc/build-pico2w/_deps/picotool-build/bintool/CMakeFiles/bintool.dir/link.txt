@@ -1,2 +1,0 @@
-/usr/bin/ar qc libbintool.a CMakeFiles/bintool.dir/bintool.cpp.o
-/usr/bin/ranlib libbintool.a

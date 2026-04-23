@@ -13,8 +13,10 @@
 *.iso
 .build/
 
-# PicoCalc build directory
+# PicoCalc build directories
 picocalc/build/
+picocalc/build-pico2/
+picocalc/build-pico2w/
 
 # Pico SDK (fetched by build)
 picocalc/pico-sdk/

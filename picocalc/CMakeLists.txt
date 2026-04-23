@@ -17,6 +17,9 @@ add_executable(mellivora_picocalc
     src/fat.c
     src/syscall.c
     src/apps.c
+    src/apps/text.c
+    src/apps/hex.c
+    src/apps/fs.c
     src/net.c
     src/netapps.c
 )

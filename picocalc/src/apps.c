@@ -19,30 +19,8 @@
 #include "hardware/pwm.h"
 #include "hardware/clocks.h"
 
-/* RP2350 (Pico 2) has 520KB RAM — use larger buffers */
-#ifdef PICO_RP2350A
-#define APP_TOKEN_MAX    512
-#define APP_READ_MAX     8192
-#define BASIC_LINE_MAX   256
-#define EDIT_LINES_MAX   256
-#define PAINT_WIDTH      256
-#define PAINT_HEIGHT     128
-#else
-#define APP_TOKEN_MAX    256
-#define APP_READ_MAX     4096
-#define BASIC_LINE_MAX   128
-#define EDIT_LINES_MAX   128
-#define PAINT_WIDTH      128
-#define PAINT_HEIGHT     64
-#endif
-
-#define APP_PAGE_LINES   23
-#define BASIC_STACK_MAX  16
-#define TINYC_VAR_MAX    64
-#define EDIT_LINE_MAX    96
-#define EDIT_SAVE_MAX    (EDIT_LINES_MAX * (EDIT_LINE_MAX + 1) + 1)
-#define BROWSE_ITEMS_MAX 64
-#define BROWSE_NAME_MAX  32
+/* RP2350 sizes are set in apps.h */
+/* Private compile-time constants used only by apps.c */
 #define PAINT_SAVE_MAX   (PAINT_WIDTH * PAINT_HEIGHT + PAINT_HEIGHT + 1)
 #define SETTINGS_FILE    "/SETTINGS.CFG"
 #define TODO_FILE        "/TODO.TXT"
@@ -63,19 +41,6 @@
 #define SNAKE_W          16
 #define SNAKE_H          10
 #define SNAKE_MAX_CELLS  (SNAKE_W * SNAKE_H)
-#define HEXEDIT_BYTES_MAX APP_READ_MAX
-
-typedef struct {
-    const char *pattern;
-    char root[APP_TOKEN_MAX];
-    int count;
-    int type_filter;  /* 0=any, 1=file only, 2=dir only */
-} find_ctx_t;
-
-typedef struct {
-    int count;
-    uint32_t total_size;
-} dir_stat_t;
 
 typedef struct {
     int number;
@@ -113,18 +78,6 @@ typedef struct {
     int line_count;
     bool dirty;
 } editor_state_t;
-
-typedef struct {
-    char name[BROWSE_NAME_MAX];
-    bool is_dir;
-    uint32_t size;
-} browser_entry_t;
-
-typedef struct {
-    char cwd[APP_TOKEN_MAX];
-    browser_entry_t items[BROWSE_ITEMS_MAX];
-    int count;
-} browser_state_t;
 
 typedef struct {
     tinyc_var_t vars[TINYC_VAR_MAX];
@@ -169,25 +122,6 @@ typedef struct {
     int best_streak;
 } habit_item_t;
 
-typedef struct {
-    char path[APP_TOKEN_MAX];
-    int depth;
-    int max_depth;
-    int *file_count;
-    int *dir_count;
-} tree_walk_t;
-
-typedef struct {
-    uint32_t total_bytes;
-    int files;
-    int dirs;
-} du_stat_t;
-
-typedef struct {
-    char path[APP_TOKEN_MAX];
-    du_stat_t stat;
-} du_walk_ctx_t;
-
 typedef int (*expr_lookup_fn)(void *ctx, const char *name, size_t len);
 
 typedef struct {
@@ -204,16 +138,12 @@ static tinyc_env_t g_tinyc_env;
 static editor_state_t g_editor;
 static app_settings_state_t g_settings;
 
-static void app_make_abs(const char *path, char *out, size_t out_sz);
 static bool app_dispatch_named(const char *cmd, const char *arg);
-static const char *next_token(const char *s, char *tok, size_t tok_sz);
 static int expr_lookup_tinyc(void *ctx, const char *name, size_t len);
 static void tinyc_set_var(tinyc_env_t *env, const char *name, int value);
 static int expr_eval(const char *expr, expr_lookup_fn lookup, void *ctx, bool *ok);
-static void rtrim_in_place(char *s);
-static int app_read_line(const char *prompt, char *buf, size_t size);
-static bool ci_eq(const char *a, const char *b);
 static void tinyc_show_vars(void);
+static void app_calc(const char *arg);
 static void app_basic(const char *arg);
 static void app_tinyc(const char *arg);
 static void app_home(const char *arg);
@@ -232,22 +162,13 @@ static void app_guess(const char *arg);
 static void app_snake(const char *arg);
 static void app_sprite(const char *arg);
 static void app_terminal(const char *arg);
-static void app_tree(const char *arg);
-static void app_du(const char *arg);
-static void app_df(const char *arg);
-static void app_hexedit(const char *arg);
-static void app_join_path(const char *root, const char *name, char *out, size_t out_sz);
-static void app_tree_cb(const char *name, uint32_t size, bool is_dir, void *opaque);
-static void app_du_accum_cb(const char *name, uint32_t size, bool is_dir, void *opaque);
-static void app_du_list_cb(const char *name, uint32_t size, bool is_dir, void *opaque);
-static uint32_t app_du_path(const char *path, du_stat_t *out);
 
-static const char *skip_ws(const char *s) {
+const char *skip_ws(const char *s) {
     while (s && (*s == ' ' || *s == '\t')) s++;
     return s ? s : "";
 }
 
-static void copy_cstr(char *dst, size_t dst_sz, const char *src) {
+void copy_cstr(char *dst, size_t dst_sz, const char *src) {
     if (!dst || dst_sz == 0) return;
     if (!src) src = "";
     size_t n = strlen(src);
@@ -256,19 +177,19 @@ static void copy_cstr(char *dst, size_t dst_sz, const char *src) {
     dst[n] = '\0';
 }
 
-static void append_cstr(char *dst, size_t dst_sz, const char *src) {
+void append_cstr(char *dst, size_t dst_sz, const char *src) {
     if (!dst || dst_sz == 0 || !src) return;
     size_t len = strlen(dst);
     while (*src && len + 1 < dst_sz) dst[len++] = *src++;
     dst[len] = '\0';
 }
 
-static void print_line(const char *s) {
+void print_line(const char *s) {
     sys_print(s);
     sys_putchar('\n');
 }
 
-static int read_text_file(const char *path, char *buf, size_t cap, const char *label) {
+int read_text_file(const char *path, char *buf, size_t cap, const char *label) {
     if (!path || !*path) {
         sys_print(label);
         sys_print(": missing file operand\n");
@@ -303,7 +224,7 @@ static int write_text_file(const char *path, const char *buf, const char *label)
     return n;
 }
 
-static int load_file_bytes(const char *path, uint8_t *buf, size_t cap,
+int load_file_bytes(const char *path, uint8_t *buf, size_t cap,
                            uint32_t *out_len, const char *label) {
     char abs[APP_TOKEN_MAX];
     fat_file_t f;
@@ -343,7 +264,7 @@ static int load_file_bytes(const char *path, uint8_t *buf, size_t cap,
     return (int)total;
 }
 
-static void app_make_abs(const char *path, char *out, size_t out_sz) {
+void app_make_abs(const char *path, char *out, size_t out_sz) {
     if (!out || out_sz == 0) return;
     out[0] = '\0';
 
@@ -361,7 +282,7 @@ static void app_make_abs(const char *path, char *out, size_t out_sz) {
     }
 }
 
-static void app_join_path(const char *root, const char *name, char *out, size_t out_sz) {
+void app_join_path(const char *root, const char *name, char *out, size_t out_sz) {
     if (!out || out_sz == 0) return;
     out[0] = '\0';
 
@@ -574,7 +495,7 @@ static void app_set(const char *arg) {
     app_settings(arg);
 }
 
-static const char *next_token(const char *s, char *tok, size_t tok_sz) {
+const char *next_token(const char *s, char *tok, size_t tok_sz) {
     size_t i = 0;
     s = skip_ws(s);
     if (!s || !*s) {
@@ -589,7 +510,7 @@ static const char *next_token(const char *s, char *tok, size_t tok_sz) {
     return s;
 }
 
-static bool str_contains_ci(const char *hay, const char *needle) {
+bool str_contains_ci(const char *hay, const char *needle) {
     if (!needle || !*needle) return true;
     for (; *hay; hay++) {
         const char *h = hay;
@@ -603,7 +524,7 @@ static bool str_contains_ci(const char *hay, const char *needle) {
     return false;
 }
 
-static int str_casecmp_local(const char *a, const char *b) {
+int str_casecmp_local(const char *a, const char *b) {
     while (*a && *b) {
         int ca = tolower((unsigned char)*a);
         int cb = tolower((unsigned char)*b);
@@ -612,63 +533,6 @@ static int str_casecmp_local(const char *a, const char *b) {
         b++;
     }
     return tolower((unsigned char)*a) - tolower((unsigned char)*b);
-}
-
-static bool glob_match_star(const char *pattern, const char *str) {
-    const char *star_pat = NULL;
-    const char *star_str = NULL;
-
-    while (1) {
-        if (*pattern == '*') {
-            pattern++;
-            star_pat = pattern;
-            star_str = str;
-            continue;
-        }
-        if (*pattern == '\0') {
-            if (*str == '\0') return true;
-            if (!star_pat) return false;
-            if (*star_str == '\0') return false;
-            star_str++;
-            str = star_str;
-            pattern = star_pat;
-            continue;
-        }
-        if (*str != '\0' && *pattern == *str) {
-            pattern++;
-            str++;
-            continue;
-        }
-        if (!star_pat) return false;
-        if (*star_str == '\0') return false;
-        star_str++;
-        str = star_str;
-        pattern = star_pat;
-    }
-}
-
-static void app_find_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
-    (void)size;
-    find_ctx_t *ctx = (find_ctx_t *)opaque;
-    if (!ctx || !name || !*name) return;
-
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
-    if (ctx->pattern && !glob_match_star(ctx->pattern, name)) return;
-    if (ctx->type_filter == 1 && is_dir) return;   /* -type f: skip dirs */
-    if (ctx->type_filter == 2 && !is_dir) return;  /* -type d: skip files */
-
-    char path[APP_TOKEN_MAX];
-    path[0] = '\0';
-    if (strcmp(ctx->root, "/") == 0) {
-        append_cstr(path, sizeof path, "/");
-        append_cstr(path, sizeof path, name);
-    } else {
-        append_cstr(path, sizeof path, ctx->root);
-        append_cstr(path, sizeof path, "/");
-        append_cstr(path, sizeof path, name);
-    }
-    print_line(path);
-    ctx->count++;
 }
 
 static void app_hello(const char *arg) {
@@ -744,830 +608,6 @@ static void app_seq(const char *arg) {
     }
 }
 
-static void app_head(const char *arg) {
-    const char *s = skip_ws(arg);
-    long num_lines = 10;
-
-    if (strncmp(s, "-n", 2) == 0 && isspace((unsigned char)s[2])) {
-        s = skip_ws(s + 2);
-        char *endptr = NULL;
-        long parsed = strtol(s, &endptr, 10);
-        if (endptr == s || parsed < 1) {
-            print_line("usage: head [-n NUM] FILE");
-            return;
-        }
-        num_lines = parsed;
-        s = skip_ws(endptr);
-    }
-
-    if (!*s) {
-        print_line("usage: head [-n NUM] FILE");
-        return;
-    }
-
-    char path[256];
-    size_t i = 0;
-    while (*s && !isspace((unsigned char)*s) && i < sizeof path - 1) {
-        path[i++] = *s++;
-    }
-    path[i] = '\0';
-
-    char buf[2048 + 1];
-    int n = sys_fread(path, buf, 2048);
-    if (n < 0) {
-        print_line("head: cannot open file");
-        return;
-    }
-    buf[n] = '\0';
-
-    long seen = 0;
-    for (int j = 0; j < n; j++) {
-        sys_putchar(buf[j]);
-        if (buf[j] == '\n' && ++seen >= num_lines) break;
-    }
-    if (n > 0 && buf[n - 1] != '\n' && seen < num_lines) sys_putchar('\n');
-}
-
-/* Simple regex: supports '.' (any char) and '*' (zero-or-more of preceding) */
-static bool match_re_here(const char *re, const char *text);
-
-static bool match_re_star(char c, const char *re, const char *text) {
-    /* c* matches zero or more of c (c may be '.') */
-    do {
-        if (match_re_here(re, text)) return true;
-    } while (*text != '\0' && (c == '.' || tolower((unsigned char)*text) == tolower((unsigned char)c)) && text++);
-    return false;
-}
-
-static bool match_re_here(const char *re, const char *text) {
-    if (re[0] == '\0') return true;
-    if (re[1] == '*') return match_re_star(re[0], re + 2, text);
-    if (re[0] == '.' && *text != '\0') return match_re_here(re + 1, text + 1);
-    if (*text != '\0' && tolower((unsigned char)re[0]) == tolower((unsigned char)*text))
-        return match_re_here(re + 1, text + 1);
-    return false;
-}
-
-/* Search for re anywhere in text (unanchored) */
-static bool match_simple_re(const char *re, const char *text) {
-    if (re[0] == '^') return match_re_here(re + 1, text);
-    do {
-        if (match_re_here(re, text)) return true;
-    } while (*text++ != '\0');
-    return false;
-}
-
-static void app_grep(const char *arg) {
-    const char *s = skip_ws(arg);
-    bool show_nums = false;
-    bool use_regex = false;
-
-    /* Parse flags */
-    while (s && *s == '-') {
-        if (s[1] == 'n') { show_nums = true; s = skip_ws(s + 2); }
-        else if (s[1] == 'e') { use_regex = true; s = skip_ws(s + 2); }
-        else break;
-    }
-
-    char pat[APP_TOKEN_MAX];
-    char path[APP_TOKEN_MAX];
-    s = next_token(s, pat, sizeof pat);
-    s = next_token(s, path, sizeof path);
-
-    if (!*pat) {
-        print_line("usage: grep [-n] [-e] PATTERN FILE");
-        return;
-    }
-    if (!*path) {
-        print_line("grep: stdin mode not implemented on PicoCalc yet");
-        return;
-    }
-
-    char file_buf[APP_READ_MAX + 1];
-    int n = sys_fread(path, file_buf, APP_READ_MAX);
-    if (n < 0) {
-        print_line("grep: cannot open file");
-        return;
-    }
-    file_buf[n] = '\0';
-
-    /* Auto-detect regex if pattern contains . or * */
-    if (!use_regex) {
-        for (const char *c = pat; *c; c++) {
-            if (*c == '.' || *c == '*' || *c == '^' || *c == '$') {
-                use_regex = true;
-                break;
-            }
-        }
-    }
-
-    int line = 1;
-    int matches = 0;
-    const char *p = file_buf;
-    while (*p) {
-        const char *start = p;
-        while (*p && *p != '\n') p++;
-
-        char line_buf[APP_TOKEN_MAX];
-        size_t len = (size_t)(p - start);
-        if (len >= sizeof line_buf) len = sizeof line_buf - 1;
-        memcpy(line_buf, start, len);
-        line_buf[len] = '\0';
-
-        bool hit = use_regex ? match_simple_re(pat, line_buf)
-                             : str_contains_ci(line_buf, pat);
-        if (hit) {
-            if (show_nums) {
-                char num[32];
-                snprintf(num, sizeof num, "%d:", line);
-                sys_print(num);
-            }
-            sys_print(line_buf);
-            sys_putchar('\n');
-            matches++;
-        }
-
-        if (*p == '\n') p++;
-        line++;
-    }
-
-    {
-        char sum[48];
-        snprintf(sum, sizeof sum, "matches: %d", matches);
-        print_line(sum);
-    }
-}
-
-static void app_pager(const char *arg) {
-    char path[APP_TOKEN_MAX];
-    next_token(arg, path, sizeof path);
-    if (!*path) {
-        print_line("usage: pager FILE");
-        return;
-    }
-
-    char file_buf[APP_READ_MAX + 1];
-    int n = sys_fread(path, file_buf, APP_READ_MAX);
-    if (n < 0) {
-        print_line("pager: cannot open file");
-        return;
-    }
-    file_buf[n] = '\0';
-
-    int line_count = 0;
-    for (int i = 0; i < n; i++) {
-        char c = file_buf[i];
-        sys_putchar(c);
-        if (c != '\n') continue;
-
-        line_count++;
-        if (line_count < APP_PAGE_LINES) continue;
-
-        sys_print(" -- MORE -- (Space=page, Enter=line, q=quit) ");
-        int key = sys_getchar();
-        sys_print("\r                                                \r");
-
-        if (key == 'q' || key == 'Q' || key == 27) return;
-        if (key == ' ') line_count = 0;
-        else line_count = APP_PAGE_LINES - 1;
-    }
-
-    if (n > 0 && file_buf[n - 1] != '\n') sys_putchar('\n');
-}
-
-static void app_rev(const char *arg) {
-    char path[APP_TOKEN_MAX];
-    next_token(arg, path, sizeof path);
-    if (!*path) {
-        print_line("usage: rev FILE");
-        return;
-    }
-
-    char file_buf[APP_READ_MAX + 1];
-    int n = sys_fread(path, file_buf, APP_READ_MAX);
-    if (n < 0) {
-        print_line("rev: cannot open file");
-        return;
-    }
-    file_buf[n] = '\0';
-
-    const char *p = file_buf;
-    while (*p) {
-        const char *start = p;
-        while (*p && *p != '\n') p++;
-        for (const char *q = p; q > start; ) {
-            q--;
-            sys_putchar(*q);
-        }
-        sys_putchar('\n');
-        if (*p == '\n') p++;
-    }
-}
-
-static void app_sort(const char *arg) {
-    const char *s = skip_ws(arg);
-    bool reverse = false;
-    bool numeric = false;
-
-    while (s && *s == '-') {
-        if (s[1] == 'r') { reverse = true; s = skip_ws(s + 2); }
-        else if (s[1] == 'n') { numeric = true; s = skip_ws(s + 2); }
-        else break;
-    }
-
-    char path[APP_TOKEN_MAX];
-    next_token(s, path, sizeof path);
-    if (!*path) {
-        print_line("usage: sort [-r] [-n] FILE");
-        return;
-    }
-
-    char file_buf[APP_READ_MAX + 1];
-    int n = sys_fread(path, file_buf, APP_READ_MAX);
-    if (n < 0) {
-        print_line("sort: cannot open file");
-        return;
-    }
-    file_buf[n] = '\0';
-
-    char *lines[128];
-    int line_count = 0;
-    char *p = file_buf;
-    while (*p && line_count < 128) {
-        lines[line_count++] = p;
-        while (*p && *p != '\n') p++;
-        if (*p == '\n') {
-            *p = '\0';
-            p++;
-        }
-    }
-
-    for (int i = 0; i < line_count; i++) {
-        for (int j = i + 1; j < line_count; j++) {
-            int cmp;
-            if (numeric) {
-                long a = strtol(lines[i], NULL, 10);
-                long b = strtol(lines[j], NULL, 10);
-                cmp = (a > b) ? 1 : (a < b) ? -1 : 0;
-            } else {
-                cmp = str_casecmp_local(lines[i], lines[j]);
-            }
-            if (reverse) cmp = -cmp;
-            if (cmp > 0) {
-                char *tmp = lines[i];
-                lines[i] = lines[j];
-                lines[j] = tmp;
-            }
-        }
-    }
-
-    for (int i = 0; i < line_count; i++) {
-        sys_print(lines[i]);
-        sys_putchar('\n');
-    }
-}
-
-static void app_tail(const char *arg) {
-    const char *s = skip_ws(arg);
-    long num_lines = 10;
-
-    if (strncmp(s, "-n", 2) == 0 && isspace((unsigned char)s[2])) {
-        s = skip_ws(s + 2);
-        char *endptr = NULL;
-        long parsed = strtol(s, &endptr, 10);
-        if (endptr == s || parsed < 1) {
-            print_line("usage: tail [-n NUM] FILE");
-            return;
-        }
-        num_lines = parsed;
-        s = skip_ws(endptr);
-    }
-
-    char path[APP_TOKEN_MAX];
-    next_token(s, path, sizeof path);
-    if (!*path) {
-        print_line("usage: tail [-n NUM] FILE");
-        return;
-    }
-
-    char buf[APP_READ_MAX + 1];
-    int n = read_text_file(path, buf, sizeof buf, "tail");
-    if (n < 0) return;
-
-    int start = n;
-    long seen = 0;
-    while (start > 0) {
-        start--;
-        if (buf[start] == '\n') {
-            if (seen++ >= num_lines) {
-                start++;
-                break;
-            }
-        }
-    }
-    if (start < 0) start = 0;
-    sys_print(buf + start);
-    if (n > 0 && buf[n - 1] != '\n') sys_putchar('\n');
-}
-
-static void app_wc(const char *arg) {
-    char path[APP_TOKEN_MAX];
-    next_token(arg, path, sizeof path);
-    if (!*path) {
-        print_line("usage: wc FILE");
-        return;
-    }
-
-    char buf[APP_READ_MAX + 1];
-    int n = read_text_file(path, buf, sizeof buf, "wc");
-    if (n < 0) return;
-
-    int lines = 0;
-    int words = 0;
-    bool in_word = false;
-    for (int i = 0; i < n; i++) {
-        unsigned char ch = (unsigned char)buf[i];
-        if (ch == '\n') lines++;
-        if (isspace(ch)) {
-            in_word = false;
-        } else if (!in_word) {
-            words++;
-            in_word = true;
-        }
-    }
-
-    char out[128];
-    snprintf(out, sizeof out, "%d %d %d %.80s", lines, words, n, path);
-    print_line(out);
-}
-
-static void app_hexdump_core(const char *arg, const char *label) {
-    char path[APP_TOKEN_MAX];
-    next_token(arg, path, sizeof path);
-    if (!*path) {
-        sys_print("usage: ");
-        sys_print(label);
-        sys_print(" FILE\n");
-        return;
-    }
-
-    char buf[APP_READ_MAX + 1];
-    int n = read_text_file(path, buf, sizeof buf, label);
-    if (n < 0) return;
-
-    for (int offset = 0; offset < n; offset += 16) {
-        char line[160];
-        int pos = snprintf(line, sizeof line, "%08X  ", offset);
-        for (int i = 0; i < 16; i++) {
-            if (offset + i < n) {
-                pos += snprintf(line + pos, sizeof line - pos, "%02X ",
-                                (unsigned char)buf[offset + i]);
-            } else {
-                pos += snprintf(line + pos, sizeof line - pos, "   ");
-            }
-        }
-        pos += snprintf(line + pos, sizeof line - pos, " |");
-        for (int i = 0; i < 16 && offset + i < n; i++) {
-            unsigned char ch = (unsigned char)buf[offset + i];
-            line[pos++] = isprint(ch) ? (char)ch : '.';
-        }
-        line[pos++] = '|';
-        line[pos] = '\0';
-        print_line(line);
-    }
-}
-
-static void app_hexdump(const char *arg) {
-    app_hexdump_core(arg, "hexdump");
-}
-
-static void app_od(const char *arg) {
-    app_hexdump_core(arg, "od");
-}
-
-static bool parse_hex_byte_token(const char *tok, uint8_t *out) {
-    if (!tok || !*tok || !out) return false;
-    char *endptr = NULL;
-    long value = strtol(tok, &endptr, 16);
-    if (endptr == tok || *endptr != '\0' || value < 0 || value > 255) return false;
-    *out = (uint8_t)value;
-    return true;
-}
-
-static void app_hexedit_dump(const uint8_t *buf, size_t len, size_t start, size_t span) {
-    if (!buf || len == 0) {
-        print_line("hexedit: empty buffer");
-        return;
-    }
-    if (start >= len) {
-        print_line("hexedit: offset beyond end of file");
-        return;
-    }
-
-    size_t end = start + span;
-    if (end > len || end < start) end = len;
-
-    for (size_t offset = start; offset < end; offset += 16) {
-        char line[160];
-        int pos = snprintf(line, sizeof line, "%08lX  ", (unsigned long)offset);
-        for (int i = 0; i < 16; i++) {
-            size_t idx = offset + (size_t)i;
-            if (idx < end) pos += snprintf(line + pos, sizeof line - (size_t)pos, "%02X ", buf[idx]);
-            else pos += snprintf(line + pos, sizeof line - (size_t)pos, "   ");
-        }
-        pos += snprintf(line + pos, sizeof line - (size_t)pos, " |" );
-        for (int i = 0; i < 16 && offset + (size_t)i < end; i++) {
-            unsigned char ch = buf[offset + (size_t)i];
-            if (pos + 2 >= (int)sizeof line) break;
-            line[pos++] = isprint(ch) ? (char)ch : '.';
-        }
-        if (pos + 2 < (int)sizeof line) {
-            line[pos++] = '|';
-            line[pos] = '\0';
-        } else {
-            line[sizeof line - 1] = '\0';
-        }
-        print_line(line);
-    }
-}
-
-static void app_hexedit(const char *arg) {
-    char path[APP_TOKEN_MAX];
-    next_token(arg, path, sizeof path);
-    if (!*path) {
-        print_line("usage: hexedit FILE");
-        return;
-    }
-
-    char target[APP_TOKEN_MAX];
-    app_make_abs(path, target, sizeof target);
-
-    static uint8_t buf[HEXEDIT_BYTES_MAX];
-    memset(buf, 0, sizeof buf);
-
-    int n = sys_fread(target, buf, (uint32_t)sizeof buf);
-    size_t len = 0;
-    bool dirty = false;
-
-    if (n >= 0) {
-        len = (size_t)n;
-        if ((size_t)n == sizeof buf) print_line("hexedit: showing first 4096 bytes of file");
-    } else {
-        print_line("hexedit: file not found; starting empty buffer");
-    }
-
-    print_line("Mellivora hex editor");
-    print_line("Commands: view [OFF [LEN]], set OFF HH.., ascii OFF TEXT, fill OFF LEN HH");
-    print_line("          resize N, save, saveas PATH, info, quit");
-    if (len > 0) app_hexedit_dump(buf, len, 0, 128);
-
-    while (1) {
-        char line[APP_TOKEN_MAX];
-        char cmd[APP_TOKEN_MAX];
-        if (app_read_line("hex> ", line, sizeof line) < 0) break;
-        rtrim_in_place(line);
-        const char *s = next_token(line, cmd, sizeof cmd);
-
-        if (!*cmd || ci_eq(cmd, "view") || ci_eq(cmd, "list") || ci_eq(cmd, "ls")) {
-            char off_tok[32] = {0};
-            char len_tok[32] = {0};
-            next_token(s, off_tok, sizeof off_tok);
-            next_token(next_token(s, off_tok, sizeof off_tok), len_tok, sizeof len_tok);
-            size_t start = *off_tok ? (size_t)strtoul(off_tok, NULL, 0) : 0;
-            size_t span = *len_tok ? (size_t)strtoul(len_tok, NULL, 0) : 128;
-            if (span == 0) span = 128;
-            app_hexedit_dump(buf, len, start, span);
-            continue;
-        }
-
-        if (ci_eq(cmd, "info") || ci_eq(cmd, "status")) {
-            char out[160];
-            snprintf(out, sizeof out, "file: %.96s | size: %lu bytes | %s",
-                     target, (unsigned long)len, dirty ? "modified" : "saved");
-            print_line(out);
-            continue;
-        }
-
-        if (ci_eq(cmd, "set")) {
-            char off_tok[32];
-            s = next_token(s, off_tok, sizeof off_tok);
-            if (!*off_tok) {
-                print_line("usage: set OFFSET HH [HH ...]");
-                continue;
-            }
-            size_t pos = (size_t)strtoul(off_tok, NULL, 0);
-            int changed = 0;
-            while (1) {
-                char byte_tok[16];
-                uint8_t value;
-                s = next_token(s, byte_tok, sizeof byte_tok);
-                if (!*byte_tok) break;
-                if (!parse_hex_byte_token(byte_tok, &value)) {
-                    print_line("hexedit: bytes must be hex values like FF or 0A");
-                    changed = -1;
-                    break;
-                }
-                if (pos >= sizeof buf) {
-                    print_line("hexedit: write exceeds buffer limit");
-                    break;
-                }
-                buf[pos++] = value;
-                changed++;
-            }
-            if (changed > 0) {
-                if (pos > len) len = pos;
-                dirty = true;
-                print_line("hexedit: bytes updated");
-            } else if (changed == 0) {
-                print_line("usage: set OFFSET HH [HH ...]");
-            }
-            continue;
-        }
-
-        if (ci_eq(cmd, "ascii")) {
-            char off_tok[32];
-            s = next_token(s, off_tok, sizeof off_tok);
-            const char *text = skip_ws(s);
-            if (!*off_tok || !*text) {
-                print_line("usage: ascii OFFSET TEXT");
-                continue;
-            }
-            size_t pos = (size_t)strtoul(off_tok, NULL, 0);
-            size_t wrote = 0;
-            while (*text && pos < sizeof buf) {
-                buf[pos++] = (uint8_t)*text++;
-                wrote++;
-            }
-            if (wrote == 0) {
-                print_line("hexedit: nothing written");
-            } else {
-                if (pos > len) len = pos;
-                dirty = true;
-                print_line("hexedit: text written");
-            }
-            continue;
-        }
-
-        if (ci_eq(cmd, "fill")) {
-            char off_tok[32], len_tok[32], byte_tok[16];
-            s = next_token(s, off_tok, sizeof off_tok);
-            s = next_token(s, len_tok, sizeof len_tok);
-            next_token(s, byte_tok, sizeof byte_tok);
-            uint8_t value;
-            if (!*off_tok || !*len_tok || !parse_hex_byte_token(byte_tok, &value)) {
-                print_line("usage: fill OFFSET LEN HH");
-                continue;
-            }
-            size_t pos = (size_t)strtoul(off_tok, NULL, 0);
-            size_t span = (size_t)strtoul(len_tok, NULL, 0);
-            if (pos >= sizeof buf) {
-                print_line("hexedit: offset beyond buffer");
-                continue;
-            }
-            if (span > sizeof buf - pos) span = sizeof buf - pos;
-            memset(buf + pos, value, span);
-            if (pos + span > len) len = pos + span;
-            dirty = true;
-            print_line("hexedit: range filled");
-            continue;
-        }
-
-        if (ci_eq(cmd, "resize")) {
-            char size_tok[32];
-            next_token(s, size_tok, sizeof size_tok);
-            size_t new_len = (size_t)strtoul(size_tok, NULL, 0);
-            if (!*size_tok || new_len > sizeof buf) {
-                print_line("usage: resize N   (max 4096)");
-                continue;
-            }
-            if (new_len > len) memset(buf + len, 0, new_len - len);
-            len = new_len;
-            dirty = true;
-            print_line("hexedit: size updated");
-            continue;
-        }
-
-        if (ci_eq(cmd, "find")) {
-            /* find XX XX ... — search for hex byte sequence */
-            uint8_t needle[32];
-            int nlen = 0;
-            const char *fp = skip_ws(s);
-            while (*fp && nlen < (int)sizeof needle) {
-                char hb[3] = {0};
-                if (!isxdigit((unsigned char)fp[0])) break;
-                hb[0] = fp[0];
-                hb[1] = (fp[1] && isxdigit((unsigned char)fp[1])) ? fp[1] : '\0';
-                needle[nlen++] = (uint8_t)strtoul(hb, NULL, 16);
-                fp += hb[1] ? 2 : 1;
-                while (*fp == ' ') fp++;
-            }
-            if (nlen == 0) {
-                print_line("usage: find XX [XX ...]");
-                continue;
-            }
-            bool found = false;
-            for (size_t i = 0; i + (size_t)nlen <= len; i++) {
-                if (memcmp(buf + i, needle, (size_t)nlen) == 0) {
-                    char msg[64];
-                    snprintf(msg, sizeof msg, "found at offset 0x%04X (%u)", (unsigned)i, (unsigned)i);
-                    print_line(msg);
-                    found = true;
-                }
-            }
-            if (!found) print_line("hexedit: pattern not found");
-            continue;
-        }
-
-        if (ci_eq(cmd, "saveas")) {
-            char new_path[APP_TOKEN_MAX];
-            next_token(s, new_path, sizeof new_path);
-            if (!*new_path) {
-                print_line("usage: saveas PATH");
-                continue;
-            }
-            app_make_abs(new_path, target, sizeof target);
-            if (sys_fwrite(target, buf, (uint32_t)len) < 0) print_line("hexedit: save failed");
-            else {
-                dirty = false;
-                print_line("hexedit: file saved");
-            }
-            continue;
-        }
-
-        if (ci_eq(cmd, "save") || ci_eq(cmd, "write") || ci_eq(cmd, "w")) {
-            if (sys_fwrite(target, buf, (uint32_t)len) < 0) print_line("hexedit: save failed");
-            else {
-                dirty = false;
-                print_line("hexedit: file saved");
-            }
-            continue;
-        }
-
-        if (ci_eq(cmd, "quit!") || ci_eq(cmd, "q!")) break;
-        if (ci_eq(cmd, "quit") || ci_eq(cmd, "exit") || ci_eq(cmd, "q")) {
-            if (dirty) print_line("hexedit: unsaved changes; use save or quit!");
-            else break;
-            continue;
-        }
-        if (ci_eq(cmd, "help") || ci_eq(cmd, "?")) {
-            print_line("hexedit commands: view, set, ascii, fill, resize, save, saveas, info, quit");
-            continue;
-        }
-
-        print_line("hexedit: unknown command (type help)");
-    }
-}
-
-static void app_cut(const char *arg) {
-    const char *s = skip_ws(arg);
-    char path[APP_TOKEN_MAX] = {0};
-    char tok[APP_TOKEN_MAX];
-    char val[APP_TOKEN_MAX];
-    char delim = ',';
-    long field = 1;
-
-    while (s && *s) {
-        s = next_token(s, tok, sizeof tok);
-        if (!*tok) break;
-
-        if (strcmp(tok, "-d") == 0) {
-            s = next_token(s, val, sizeof val);
-            if (!*val) {
-                print_line("usage: cut [-d CHAR] [-f NUM] FILE");
-                return;
-            }
-            delim = val[0];
-        } else if (strcmp(tok, "-f") == 0) {
-            s = next_token(s, val, sizeof val);
-            if (!*val) {
-                print_line("usage: cut [-d CHAR] [-f NUM] FILE");
-                return;
-            }
-            field = strtol(val, NULL, 10);
-            if (field < 1) {
-                print_line("cut: field number must be >= 1");
-                return;
-            }
-        } else {
-            copy_cstr(path, sizeof path, tok);
-            break;
-        }
-    }
-
-    if (!*path) {
-        print_line("usage: cut [-d CHAR] [-f NUM] FILE");
-        return;
-    }
-
-    char buf[APP_READ_MAX + 1];
-    int n = read_text_file(path, buf, sizeof buf, "cut");
-    if (n < 0) return;
-
-    char *line = buf;
-    while (line && *line) {
-        char *next = strchr(line, '\n');
-        if (next) *next = '\0';
-
-        long cur = 1;
-        char *start = line;
-        char *p = line;
-        while (1) {
-            if (*p == delim || *p == '\0') {
-                if (cur == field) {
-                    char saved = *p;
-                    *p = '\0';
-                    print_line(start);
-                    *p = saved;
-                    break;
-                }
-                if (*p == '\0') {
-                    sys_putchar('\n');
-                    break;
-                }
-                cur++;
-                start = p + 1;
-            }
-            if (*p == '\0') break;
-            p++;
-        }
-
-        if (!next) break;
-        line = next + 1;
-    }
-}
-
-static void app_find(const char *arg) {
-    char tok1[APP_TOKEN_MAX];
-    char tok2[APP_TOKEN_MAX];
-    char tok3[APP_TOKEN_MAX];
-    char root[APP_TOKEN_MAX];
-    const char *pattern = NULL;
-    const char *s = next_token(arg, tok1, sizeof tok1);
-
-    root[0] = '\0';
-    tok2[0] = '\0';
-    tok3[0] = '\0';
-
-    if (!*tok1) {
-        copy_cstr(root, sizeof root, _sys_cwd);
-    } else if (strcmp(tok1, "-name") == 0) {
-        s = next_token(s, tok2, sizeof tok2);
-        if (!*tok2) {
-            print_line("usage: find [PATH] [-name PATTERN]");
-            return;
-        }
-        pattern = tok2;
-        copy_cstr(root, sizeof root, _sys_cwd);
-    } else {
-        app_make_abs(tok1, root, sizeof root);
-        s = next_token(s, tok2, sizeof tok2);
-        if (*tok2) {
-            if (strcmp(tok2, "-name") != 0) {
-                print_line("usage: find [PATH] [-name PATTERN]");
-                return;
-            }
-            s = next_token(s, tok3, sizeof tok3);
-            if (!*tok3) {
-                print_line("usage: find [PATH] [-name PATTERN]");
-                return;
-            }
-            pattern = tok3;
-        }
-    }
-
-    if (fat_is_dir(root) != FAT_OK) {
-        print_line("find: path is not a directory");
-        return;
-    }
-
-    find_ctx_t ctx = {
-        .pattern = pattern,
-        .count = 0,
-        .type_filter = 0,
-    };
-    copy_cstr(ctx.root, sizeof ctx.root, root);
-
-    /* Scan remaining tokens for -type f|d */
-    {
-        char tflag[APP_TOKEN_MAX];
-        const char *scan = s;
-        while (scan && *skip_ws(scan)) {
-            char tok[APP_TOKEN_MAX];
-            scan = next_token(scan, tok, sizeof tok);
-            if (strcmp(tok, "-type") == 0) {
-                scan = next_token(scan, tflag, sizeof tflag);
-                if (tflag[0] == 'f') ctx.type_filter = 1;
-                else if (tflag[0] == 'd') ctx.type_filter = 2;
-                break;
-            }
-        }
-    }
-
-    if (fat_ls(root, app_find_cb, &ctx) != FAT_OK) {
-        print_line("find: unable to list directory");
-    }
-}
-
 static void app_calc(const char *arg) {
     const char *s = skip_ws(arg);
     if (*s) {
@@ -1583,10 +623,7 @@ static void app_calc(const char *arg) {
             if (*p == '=' && p[1] != '=') {
                 bool ok = false;
                 int value = expr_eval(p + 1, expr_lookup_tinyc, &g_tinyc_env, &ok);
-                if (!ok) {
-                    print_line("calc: bad expression");
-                    return;
-                }
+                if (!ok) { print_line("calc: bad expression"); return; }
                 tinyc_set_var(&g_tinyc_env, name, value);
                 tinyc_set_var(&g_tinyc_env, "ans", value);
                 char out[64];
@@ -1595,20 +632,15 @@ static void app_calc(const char *arg) {
                 return;
             }
         }
-
         bool ok = false;
         int value = expr_eval(s, expr_lookup_tinyc, &g_tinyc_env, &ok);
-        if (!ok) {
-            print_line("calc: bad expression");
-            return;
-        }
+        if (!ok) { print_line("calc: bad expression"); return; }
         tinyc_set_var(&g_tinyc_env, "ans", value);
         char out[48];
         snprintf(out, sizeof out, "%d", value);
         print_line(out);
         return;
     }
-
     print_line("Mellivora calc");
     print_line("Enter EXPR or NAME = EXPR. Commands: vars, clear, exit");
     while (1) {
@@ -1618,10 +650,7 @@ static void app_calc(const char *arg) {
         const char *expr = skip_ws(line);
         if (!*expr) continue;
         if (ci_eq(expr, "exit") || ci_eq(expr, "quit") || ci_eq(expr, "bye")) break;
-        if (ci_eq(expr, "vars")) {
-            tinyc_show_vars();
-            continue;
-        }
+        if (ci_eq(expr, "vars")) { tinyc_show_vars(); continue; }
         if (ci_eq(expr, "clear")) {
             memset(&g_tinyc_env, 0, sizeof g_tinyc_env);
             print_line("calc: variables cleared");
@@ -1629,424 +658,6 @@ static void app_calc(const char *arg) {
         }
         app_calc(expr);
     }
-}
-
-/* Callback for recursive cp — copies files, creates subdirs (one level deep).
- * Note: only handles one level of recursion to keep stack bounded. */
-typedef struct { char src[APP_TOKEN_MAX]; char dst[APP_TOKEN_MAX]; int count; bool err; } _cp_dir_ctx_t;
-
-static void _cp_dir_cb(const char *name, uint32_t size, bool is_dir, void *ctx) {
-    _cp_dir_ctx_t *c = (_cp_dir_ctx_t *)ctx;
-    char fsrc[APP_TOKEN_MAX + 16], fdst[APP_TOKEN_MAX + 16];
-    snprintf(fsrc, sizeof fsrc, "%s/%s", c->src, name);
-    snprintf(fdst, sizeof fdst, "%s/%s", c->dst, name);
-
-    if (is_dir) {
-        /* Create subdirectory but don't recurse further to avoid deep stack usage */
-        if (fat_mkdir(fdst) == FAT_OK) c->count++;
-        else c->err = true;
-    } else {
-        uint8_t buf[APP_READ_MAX];
-        uint32_t n = 0;
-        fat_file_t f;
-        if (fat_open(fsrc, &f) != FAT_OK) { c->err = true; return; }
-        int32_t rd = fat_read(&f, buf, sizeof buf);
-        if (rd < 0) { c->err = true; return; }
-        n = (uint32_t)rd;
-        if (fat_create(fdst, buf, n) == FAT_OK) c->count++;
-        else c->err = true;
-    }
-}
-
-static void app_cp(const char *arg) {
-    char src[APP_TOKEN_MAX];
-    char dst[APP_TOKEN_MAX];
-    const char *s = next_token(arg, src, sizeof src);
-    next_token(s, dst, sizeof dst);
-
-    if (!*src || !*dst) {
-        print_line("usage: cp SRC DST");
-        return;
-    }
-
-    char abs_src[APP_TOKEN_MAX];
-    char abs_dst[APP_TOKEN_MAX];
-    app_make_abs(src, abs_src, sizeof abs_src);
-    app_make_abs(dst, abs_dst, sizeof abs_dst);
-
-    if (strcmp(abs_src, abs_dst) == 0) {
-        print_line("cp: source and destination are the same");
-        return;
-    }
-    if (fat_is_dir(abs_src) == FAT_OK) {
-        /* Recursive directory copy */
-        if (fat_mkdir(abs_dst) != FAT_OK && fat_is_dir(abs_dst) != FAT_OK) {
-            print_line("cp: cannot create destination directory");
-            return;
-        }
-        static _cp_dir_ctx_t cpctx;
-        copy_cstr(cpctx.src, sizeof cpctx.src, abs_src);
-        copy_cstr(cpctx.dst, sizeof cpctx.dst, abs_dst);
-        cpctx.count = 0;
-        cpctx.err = false;
-        fat_ls(abs_src, _cp_dir_cb, &cpctx);
-        char out[64];
-        snprintf(out, sizeof out, "copied %d entries%s", cpctx.count, cpctx.err ? " (with errors)" : "");
-        print_line(out);
-        return;
-    }
-
-    uint8_t buf[APP_READ_MAX];
-    uint32_t n = 0;
-    if (load_file_bytes(src, buf, sizeof buf, &n, "cp") < 0) return;
-    if (sys_fwrite(dst, buf, n) < 0) {
-        print_line("cp: write failed");
-        return;
-    }
-
-    char out[64];
-    snprintf(out, sizeof out, "copied %lu bytes", (unsigned long)n);
-    print_line(out);
-}
-
-static void app_mv(const char *arg) {
-    char src[APP_TOKEN_MAX];
-    char dst[APP_TOKEN_MAX];
-    const char *s = next_token(arg, src, sizeof src);
-    next_token(s, dst, sizeof dst);
-
-    if (!*src || !*dst) {
-        print_line("usage: mv SRC DST");
-        return;
-    }
-
-    char abs_src[APP_TOKEN_MAX];
-    char abs_dst[APP_TOKEN_MAX];
-    app_make_abs(src, abs_src, sizeof abs_src);
-    app_make_abs(dst, abs_dst, sizeof abs_dst);
-
-    if (strcmp(abs_src, abs_dst) == 0) {
-        print_line("mv: source and destination are the same");
-        return;
-    }
-    if (fat_is_dir(abs_src) == FAT_OK) {
-        print_line("mv: directory move not supported yet");
-        return;
-    }
-
-    uint8_t buf[APP_READ_MAX];
-    uint32_t n = 0;
-    if (load_file_bytes(src, buf, sizeof buf, &n, "mv") < 0) return;
-    if (sys_fwrite(dst, buf, n) < 0) {
-        print_line("mv: write failed");
-        return;
-    }
-    if (sys_unlink(src) < 0) {
-        print_line("mv: destination written but source removal failed");
-        return;
-    }
-
-    char out[64];
-    snprintf(out, sizeof out, "moved %lu bytes", (unsigned long)n);
-    print_line(out);
-}
-
-static void app_stat_dir_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
-    dir_stat_t *st = (dir_stat_t *)opaque;
-    if (!st || !name || !*name) return;
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
-    st->count++;
-    if (!is_dir) st->total_size += size;
-}
-
-static void app_stat(const char *arg) {
-    char path[APP_TOKEN_MAX];
-    next_token(arg, path, sizeof path);
-    if (!*path) {
-        print_line("usage: stat PATH");
-        return;
-    }
-
-    char abs[APP_TOKEN_MAX];
-    app_make_abs(path, abs, sizeof abs);
-
-    if (fat_is_dir(abs) == FAT_OK) {
-        dir_stat_t st = {0};
-        fat_ls(abs, app_stat_dir_cb, &st);
-        char out[160];
-        snprintf(out, sizeof out,
-                 "path: %.96s\ntype: directory\nentries: %d\nfile-bytes: %lu",
-                 abs, st.count, (unsigned long)st.total_size);
-        print_line(out);
-        return;
-    }
-
-    fat_file_t f;
-    fat_result_t r = fat_open(abs, &f);
-    if (r != FAT_OK) {
-        print_line("stat: not found");
-        return;
-    }
-
-    char out[160];
-    snprintf(out, sizeof out,
-             "path: %.96s\ntype: file\nsize: %lu bytes\ncluster: %lu",
-             abs, (unsigned long)f.size, (unsigned long)f.first_cluster);
-    print_line(out);
-}
-
-static void app_tree_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
-    tree_walk_t *ctx = (tree_walk_t *)opaque;
-    if (!ctx || !name || !*name) return;
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
-
-    char line[192];
-    int pos = 0;
-    int indent = ctx->depth * 2;
-    if (indent > 48) indent = 48;
-    while (pos < indent && pos + 1 < (int)sizeof line) line[pos++] = ' ';
-    pos += snprintf(line + pos, sizeof line - (size_t)pos, "%s%s",
-                    is_dir ? "|- " : "- ", name);
-    if (is_dir) pos += snprintf(line + pos, sizeof line - (size_t)pos, "/");
-    else pos += snprintf(line + pos, sizeof line - (size_t)pos, " (%lu)", (unsigned long)size);
-    if (pos < 0) return;
-    line[sizeof line - 1] = '\0';
-    print_line(line);
-
-    if (is_dir) {
-        if (ctx->dir_count) (*ctx->dir_count)++;
-        if (ctx->depth >= ctx->max_depth) return;
-
-        char child[APP_TOKEN_MAX];
-        app_join_path(ctx->path, name, child, sizeof child);
-
-        tree_walk_t next = *ctx;
-        copy_cstr(next.path, sizeof next.path, child);
-        next.depth = ctx->depth + 1;
-        (void)fat_ls(child, app_tree_cb, &next);
-    } else if (ctx->file_count) {
-        (*ctx->file_count)++;
-    }
-}
-
-static void app_tree(const char *arg) {
-    char tok1[APP_TOKEN_MAX] = {0};
-    char tok2[APP_TOKEN_MAX] = {0};
-    char path[APP_TOKEN_MAX] = {0};
-    int max_depth = 8;
-    const char *s = next_token(arg, tok1, sizeof tok1);
-
-    if (*tok1) {
-        if (strcmp(tok1, "-L") == 0) {
-            char *endptr = NULL;
-            s = next_token(s, tok2, sizeof tok2);
-            long depth = strtol(tok2, &endptr, 10);
-            if (!*tok2 || endptr == tok2 || depth < 1) {
-                print_line("usage: tree [-L DEPTH] [PATH]");
-                return;
-            }
-            max_depth = (int)depth;
-            next_token(s, path, sizeof path);
-        } else {
-            copy_cstr(path, sizeof path, tok1);
-        }
-    }
-
-    if (!*path) copy_cstr(path, sizeof path, _sys_cwd);
-
-    char abs[APP_TOKEN_MAX];
-    app_make_abs(path, abs, sizeof abs);
-
-    if (fat_is_dir(abs) == FAT_OK) {
-        int files = 0;
-        int dirs = 1;
-        print_line(abs);
-
-        tree_walk_t ctx = {
-            .depth = 1,
-            .max_depth = max_depth,
-            .file_count = &files,
-            .dir_count = &dirs,
-        };
-        copy_cstr(ctx.path, sizeof ctx.path, abs);
-
-        if (fat_ls(abs, app_tree_cb, &ctx) != FAT_OK) {
-            print_line("tree: unable to list directory");
-            return;
-        }
-
-        char out[96];
-        snprintf(out, sizeof out, "%d directories, %d files", dirs, files);
-        print_line(out);
-        return;
-    }
-
-    fat_file_t f;
-    if (fat_open(abs, &f) != FAT_OK) {
-        print_line("tree: path not found");
-        return;
-    }
-
-    char out[160];
-    snprintf(out, sizeof out, "%.120s (%lu bytes)", abs, (unsigned long)f.size);
-    print_line(out);
-}
-
-static void app_du_accum_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
-    du_walk_ctx_t *ctx = (du_walk_ctx_t *)opaque;
-    if (!ctx || !name || !*name) return;
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
-
-    if (is_dir) {
-        char child[APP_TOKEN_MAX];
-        du_stat_t nested = {0};
-        app_join_path(ctx->path, name, child, sizeof child);
-        (void)app_du_path(child, &nested);
-        ctx->stat.total_bytes += nested.total_bytes;
-        ctx->stat.files += nested.files;
-        ctx->stat.dirs += nested.dirs + 1;
-    } else {
-        ctx->stat.total_bytes += size;
-        ctx->stat.files++;
-    }
-}
-
-static uint32_t app_du_path(const char *path, du_stat_t *out) {
-    du_stat_t zero = {0};
-    if (!out) out = &zero;
-    memset(out, 0, sizeof *out);
-
-    if (fat_is_dir(path) != FAT_OK) {
-        fat_file_t f;
-        if (fat_open(path, &f) != FAT_OK) return 0;
-        out->total_bytes = f.size;
-        out->files = 1;
-        return f.size;
-    }
-
-    du_walk_ctx_t ctx = {0};
-    copy_cstr(ctx.path, sizeof ctx.path, path);
-    if (fat_ls(path, app_du_accum_cb, &ctx) != FAT_OK) return 0;
-    *out = ctx.stat;
-    return ctx.stat.total_bytes;
-}
-
-static void app_du_list_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
-    du_walk_ctx_t *ctx = (du_walk_ctx_t *)opaque;
-    if (!ctx || !name || !*name) return;
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
-
-    uint32_t bytes = size;
-    int files = 0;
-    int dirs = 0;
-
-    if (is_dir) {
-        char child[APP_TOKEN_MAX];
-        du_stat_t nested = {0};
-        app_join_path(ctx->path, name, child, sizeof child);
-        bytes = app_du_path(child, &nested);
-        files = nested.files;
-        dirs = nested.dirs + 1;
-    } else {
-        files = 1;
-    }
-
-    ctx->stat.total_bytes += bytes;
-    ctx->stat.files += files;
-    ctx->stat.dirs += dirs;
-
-    char line[160];
-    snprintf(line, sizeof line, "%8lu  %s%s",
-             (unsigned long)bytes, name, is_dir ? "/" : "");
-    print_line(line);
-}
-
-static void app_du(const char *arg) {
-    char path[APP_TOKEN_MAX];
-    next_token(arg, path, sizeof path);
-    if (!*path) copy_cstr(path, sizeof path, _sys_cwd);
-
-    char abs[APP_TOKEN_MAX];
-    app_make_abs(path, abs, sizeof abs);
-
-    if (fat_is_dir(abs) == FAT_OK) {
-        du_walk_ctx_t ctx = {0};
-        copy_cstr(ctx.path, sizeof ctx.path, abs);
-
-        print_line("bytes     name");
-        if (fat_ls(abs, app_du_list_cb, &ctx) != FAT_OK) {
-            print_line("du: unable to list directory");
-            return;
-        }
-
-        char out[128];
-        snprintf(out, sizeof out, "total: %lu bytes | files: %d | dirs: %d",
-                 (unsigned long)ctx.stat.total_bytes,
-                 ctx.stat.files,
-                 ctx.stat.dirs + 1);
-        print_line(out);
-        return;
-    }
-
-    fat_file_t f;
-    if (fat_open(abs, &f) != FAT_OK) {
-        print_line("du: path not found");
-        return;
-    }
-
-    char out[160];
-    snprintf(out, sizeof out, "%lu bytes  %.120s", (unsigned long)f.size, abs);
-    print_line(out);
-}
-
-static void app_format_size(uint64_t bytes, char *out, size_t out_sz) {
-    if (bytes >= (1024ULL * 1024ULL * 1024ULL)) {
-        unsigned long long whole = bytes / (1024ULL * 1024ULL * 1024ULL);
-        unsigned long long frac = (bytes % (1024ULL * 1024ULL * 1024ULL)) * 10ULL / (1024ULL * 1024ULL * 1024ULL);
-        snprintf(out, out_sz, "%llu.%llu GB", whole, frac);
-    } else if (bytes >= (1024ULL * 1024ULL)) {
-        unsigned long long whole = bytes / (1024ULL * 1024ULL);
-        unsigned long long frac = (bytes % (1024ULL * 1024ULL)) * 10ULL / (1024ULL * 1024ULL);
-        snprintf(out, out_sz, "%llu.%llu MB", whole, frac);
-    } else if (bytes >= 1024ULL) {
-        unsigned long long whole = bytes / 1024ULL;
-        unsigned long long frac = (bytes % 1024ULL) * 10ULL / 1024ULL;
-        snprintf(out, out_sz, "%llu.%llu KB", whole, frac);
-    } else {
-        snprintf(out, out_sz, "%llu B", (unsigned long long)bytes);
-    }
-}
-
-static void app_df(const char *arg) {
-    (void)arg;
-    fat_usage_t usage;
-    fat_result_t r = fat_get_usage(&usage);
-    if (r != FAT_OK) {
-        print_line("df: filesystem not mounted");
-        return;
-    }
-
-    char total[32], used[32], free_sp[32], out[160];
-    app_format_size(usage.total_bytes, total, sizeof total);
-    app_format_size(usage.used_bytes, used, sizeof used);
-    app_format_size(usage.free_bytes, free_sp, sizeof free_sp);
-
-    uint32_t used_pct = usage.total_bytes ? (uint32_t)((usage.used_bytes * 100ULL) / usage.total_bytes) : 0;
-    snprintf(out, sizeof out, "filesystem: FAT%s", usage.fat32 ? "32" : "16");
-    print_line(out);
-    snprintf(out, sizeof out, "cluster size: %lu bytes", (unsigned long)(usage.bytes_per_sector * usage.sectors_per_cluster));
-    print_line(out);
-    snprintf(out, sizeof out, "total: %s", total);
-    print_line(out);
-    snprintf(out, sizeof out, "used:  %s (%lu%%)", used, (unsigned long)used_pct);
-    print_line(out);
-    snprintf(out, sizeof out, "free:  %s", free_sp);
-    print_line(out);
-    snprintf(out, sizeof out, "clusters: %lu total, %lu used, %lu free",
-             (unsigned long)usage.cluster_count,
-             (unsigned long)usage.used_clusters,
-             (unsigned long)usage.free_clusters);
-    print_line(out);
 }
 
 static void editor_clear(editor_state_t *ed, const char *path) {
@@ -2177,7 +788,7 @@ static void editor_append_mode(editor_state_t *ed) {
     }
 }
 
-static void app_edit(const char *arg) {
+void app_edit(const char *arg) {
     char path[APP_TOKEN_MAX];
     next_token(arg, path, sizeof path);
     if (!*path) {
@@ -2281,242 +892,6 @@ static void app_edit(const char *arg) {
             print_line("edit: unknown command (type help)");
         }
     }
-}
-
-static void browser_parent_dir(const char *cwd, char *out, size_t out_sz) {
-    strncpy(out, cwd, out_sz - 1);
-    out[out_sz - 1] = '\0';
-    size_t len = strlen(out);
-    while (len > 1 && out[len - 1] == '/') out[--len] = '\0';
-    while (len > 1 && out[len - 1] != '/') out[--len] = '\0';
-    if (len == 0) strcpy(out, "/");
-    else if (len > 1 && out[len - 1] == '/') out[len - 1] = '\0';
-    if (out[0] == '\0') strcpy(out, "/");
-}
-
-static void browser_collect_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
-    browser_state_t *br = (browser_state_t *)opaque;
-    if (!br || !name || !*name) return;
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
-    if (br->count >= BROWSE_ITEMS_MAX) return;
-
-    copy_cstr(br->items[br->count].name, sizeof br->items[br->count].name, name);
-    br->items[br->count].is_dir = is_dir;
-    br->items[br->count].size = size;
-    br->count++;
-}
-
-static int browser_entry_cmp(const browser_entry_t *a, const browser_entry_t *b) {
-    if (a->is_dir != b->is_dir) return a->is_dir ? -1 : 1;
-    return str_casecmp_local(a->name, b->name);
-}
-
-static void browser_sort(browser_state_t *br) {
-    for (int i = 1; i < br->count; i++) {
-        browser_entry_t key = br->items[i];
-        int j = i - 1;
-        while (j >= 0 && browser_entry_cmp(&key, &br->items[j]) < 0) {
-            br->items[j + 1] = br->items[j];
-            j--;
-        }
-        br->items[j + 1] = key;
-    }
-}
-
-static void browser_refresh(browser_state_t *br) {
-    br->count = 0;
-    if (fat_ls(br->cwd, browser_collect_cb, br) == FAT_OK) browser_sort(br);
-}
-
-static void browser_render(browser_state_t *br, int sel) {
-    sys_clear();
-    sys_print("Mellivora browser\n");
-    sys_print(br->cwd);
-    sys_print("\n\n");
-    sys_print("j/k move, Enter open, e edit, x hex, n new file, m mkdir, d delete, u up, r refresh, q quit\n\n");
-
-    if (strcmp(br->cwd, "/") != 0) {
-        sys_print(sel == 0 ? "> [DIR] ..\n" : "  [DIR] ..\n");
-    }
-
-    int base = (strcmp(br->cwd, "/") != 0) ? 1 : 0;
-    int page_start = 0;
-    int visible = 12;
-    if (sel >= visible) page_start = sel - visible + 1;
-
-    for (int disp = 0; disp < visible; disp++) {
-        int row = page_start + disp;
-        if (row == 0 && base == 1) continue;
-        int idx = row - base;
-        if (idx < 0 || idx >= br->count) continue;
-
-        char line[80];
-        snprintf(line, sizeof line, "%c %s %-20s %6lu\n",
-                 (row == sel) ? '>' : ' ',
-                 br->items[idx].is_dir ? "[DIR]" : "[FIL]",
-                 br->items[idx].name,
-                 (unsigned long)br->items[idx].size);
-        sys_print(line);
-    }
-
-    if (br->count == 0) sys_print("(empty directory)\n");
-}
-
-static void app_browse(const char *arg) {
-    browser_state_t br;
-    char path[APP_TOKEN_MAX];
-    next_token(arg, path, sizeof path);
-    if (*path) app_make_abs(path, br.cwd, sizeof br.cwd);
-    else copy_cstr(br.cwd, sizeof br.cwd, _sys_cwd);
-
-    if (fat_is_dir(br.cwd) != FAT_OK) {
-        print_line("browse: path is not a directory");
-        return;
-    }
-
-    copy_cstr(_sys_cwd, sizeof _sys_cwd, br.cwd);
-    browser_refresh(&br);
-
-    int sel = 0;
-    while (1) {
-        int base = (strcmp(br.cwd, "/") != 0) ? 1 : 0;
-        int total = br.count + base;
-        if (sel < 0) sel = 0;
-        if (sel >= total && total > 0) sel = total - 1;
-        browser_render(&br, sel);
-
-        int ch = sys_getchar();
-        if (ch == 'q' || ch == 'Q' || ch == 0x03) break;
-        if (ch == 'j' || ch == 's' || ch == 0x0E) {
-            if (sel + 1 < total) sel++;
-            continue;
-        }
-        if (ch == 'k' || ch == 'w' || ch == 0x10) {
-            if (sel > 0) sel--;
-            continue;
-        }
-        if (ch == 'r' || ch == 'R') {
-            browser_refresh(&br);
-            continue;
-        }
-        if (ch == 'n' || ch == 'N') {
-            char name[APP_TOKEN_MAX];
-            sys_print("New file: ");
-            if (app_read_line("", name, sizeof name) >= 0) {
-                rtrim_in_place(name);
-                if (*name) {
-                    strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
-                    _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-                    if (sys_fwrite(name, "", 0) < 0) print_line("browse: create failed");
-                    else {
-                        browser_refresh(&br);
-                        sel = total > 0 ? total - 1 : 0;
-                    }
-                }
-            }
-            continue;
-        }
-        if (ch == 'm' || ch == 'M') {
-            char name[APP_TOKEN_MAX];
-            sys_print("New directory: ");
-            if (app_read_line("", name, sizeof name) >= 0) {
-                rtrim_in_place(name);
-                if (*name) {
-                    strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
-                    _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-                    if (sys_mkdir(name) < 0) print_line("browse: mkdir failed");
-                    else browser_refresh(&br);
-                }
-            }
-            continue;
-        }
-        if (ch == 'd' || ch == 'D') {
-            if (sel >= base && total > 0) {
-                browser_entry_t *ent = &br.items[sel - base];
-                char prompt[96];
-                snprintf(prompt, sizeof prompt, "Delete %s? [y/N] ", ent->name);
-                sys_print(prompt);
-                int ok = sys_getchar();
-                sys_putchar('\n');
-                if (ok == 'y' || ok == 'Y') {
-                    strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
-                    _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-                    if (sys_delete(ent->name) < 0) print_line("browse: delete failed");
-                    else {
-                        browser_refresh(&br);
-                        if (sel > 0 && sel >= br.count + base) sel--;
-                    }
-                }
-            }
-            continue;
-        }
-        if (ch == 'u' || ch == 'h' || ch == 0x08 || ch == 0x7F) {
-            if (strcmp(br.cwd, "/") != 0) {
-                char parent[APP_TOKEN_MAX];
-                browser_parent_dir(br.cwd, parent, sizeof parent);
-                strncpy(br.cwd, parent, sizeof br.cwd - 1);
-                br.cwd[sizeof br.cwd - 1] = '\0';
-                strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
-                _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-                browser_refresh(&br);
-                sel = 0;
-            }
-            continue;
-        }
-
-        if (total == 0) continue;
-
-        if (ch == 'e' || ch == 'E' || ch == 'x' || ch == 'X') {
-            if (sel >= base) {
-                browser_entry_t *ent = &br.items[sel - base];
-                if (!ent->is_dir) {
-                    char abs[APP_TOKEN_MAX];
-                    strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
-                    _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-                    app_make_abs(ent->name, abs, sizeof abs);
-                    if (ch == 'x' || ch == 'X') app_hexedit(abs);
-                    else app_edit(abs);
-                }
-            }
-            continue;
-        }
-
-        if (ch == '\r' || ch == '\n') {
-            if (strcmp(br.cwd, "/") != 0 && sel == 0) {
-                char parent[APP_TOKEN_MAX];
-                browser_parent_dir(br.cwd, parent, sizeof parent);
-                strncpy(br.cwd, parent, sizeof br.cwd - 1);
-                br.cwd[sizeof br.cwd - 1] = '\0';
-                strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
-                _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-                browser_refresh(&br);
-                sel = 0;
-                continue;
-            }
-
-            if (sel < base) continue;
-            browser_entry_t *ent = &br.items[sel - base];
-            strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
-            _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-
-            if (ent->is_dir) {
-                if (sys_chdir(ent->name) == 0) {
-                    strncpy(br.cwd, _sys_cwd, sizeof br.cwd - 1);
-                    br.cwd[sizeof br.cwd - 1] = '\0';
-                    browser_refresh(&br);
-                    sel = 0;
-                }
-            } else {
-                char abs[APP_TOKEN_MAX];
-                app_make_abs(ent->name, abs, sizeof abs);
-                app_pager(abs);
-            }
-        }
-    }
-
-    strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
-    _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-    sys_clear();
 }
 
 static int todo_load(todo_item_t *items, int max_items) {
@@ -4388,13 +2763,13 @@ static int expr_eval(const char *expr, expr_lookup_fn lookup, void *ctx, bool *o
     return st.error ? 0 : v;
 }
 
-static void rtrim_in_place(char *s) {
+void rtrim_in_place(char *s) {
     if (!s) return;
     size_t len = strlen(s);
     while (len > 0 && isspace((unsigned char)s[len - 1])) s[--len] = '\0';
 }
 
-static int app_read_line(const char *prompt, char *buf, size_t size) {
+int app_read_line(const char *prompt, char *buf, size_t size) {
     size_t idx = 0;
     if (prompt) sys_print(prompt);
     while (1) {
@@ -4422,7 +2797,7 @@ static int app_read_line(const char *prompt, char *buf, size_t size) {
     return (int)idx;
 }
 
-static bool ci_eq(const char *a, const char *b) {
+bool ci_eq(const char *a, const char *b) {
     return str_casecmp_local(a, b) == 0;
 }
 

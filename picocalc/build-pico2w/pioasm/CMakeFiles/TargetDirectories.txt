@@ -1,7 +1,0 @@
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm/CMakeFiles/pioasm.dir
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm/CMakeFiles/edit_cache.dir
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm/CMakeFiles/rebuild_cache.dir
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm/CMakeFiles/list_install_components.dir
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm/CMakeFiles/install.dir
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm/CMakeFiles/install/local.dir
-/home/james/Mellivora_OS_PicoCalc/picocalc/build-pico2w/pioasm/CMakeFiles/install/strip.dir
