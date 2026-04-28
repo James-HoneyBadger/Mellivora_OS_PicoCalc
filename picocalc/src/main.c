@@ -58,12 +58,18 @@
 #define ALIAS_VALUE_SZ  LINE_BUF
 #define ALIAS_FILE      "/ALIASES.CFG"
 
-/* Global interrupt flag — checked by long-running loops */
-static volatile bool _interrupted = false;
+/* Global interrupt flag — checked by long-running loops.
+ * Aliased to _sys_interrupted (declared in syscall.h) so apps in apps.c /
+ * apps in subdirs can also check it via sys_interrupted(). */
+#define _interrupted _sys_interrupted
 
 /* Status bar flag — declared early so cmd_sysinfo/cmd_status can see it */
 static volatile bool _statusbar_enabled = false;
 static void _draw_status_bar(void);
+
+/* Confirmation helpers (defined later, near read_input) */
+static bool confirm(const char *msg);
+static bool parse_force_flag(const char **arg);
 
 #define BANNER \
     "Mellivora OS\n" \
@@ -128,6 +134,9 @@ static alias_entry_t _aliases[ALIAS_MAX];
  * Result is stored in out (size CWD_MAX).
  * Handles ".." components.
  */
+/* Maximum length of any single path component (FAT 8.3 needs 12, leave headroom). */
+#define PATH_COMP_MAX   64
+
 static void resolve_abs(const char *input, char *out) {
     char tmp[CWD_MAX * 2];
 
@@ -149,49 +158,46 @@ static void resolve_abs(const char *input, char *out) {
             snprintf(tmp, sizeof tmp, "%s/%s", _cwd, input);
     }
 
-    /* Canonicalise: process each component */
+    /* Canonicalise: process each component. tmp is guaranteed to start with '/'
+       above, so the loop only ever encounters the slash branch. */
     char canon[CWD_MAX];
     char *p = tmp;
-    char *dst = canon;
-    *dst = '\0';
+    canon[0] = '\0';
 
-    while (*p) {
-        if (*p == '/') {
-            /* Collapse multiple slashes */
-            while (*p == '/') p++;
-            if (*p == '\0') break;
+    while (*p == '/') {
+        /* Collapse multiple slashes */
+        while (*p == '/') p++;
+        if (*p == '\0') break;
 
-            /* Extract component safely */
-            char comp[CWD_MAX];
-            int ci = 0;
-            while (*p && *p != '/') {
-                if (ci + 1 < CWD_MAX) comp[ci++] = *p;
-                p++;
-            }
-            comp[ci] = '\0';
-
-            if (strcmp(comp, ".") == 0) {
-                /* skip */
-            } else if (strcmp(comp, "..") == 0) {
-                /* Go up: remove last component */
-                char *last = strrchr(canon, '/');
-                if (last && last > canon) *last = '\0';
-                else canon[0] = '\0';
-            } else {
-                size_t clen = strlen(canon);
-                if (clen + 1 < CWD_MAX) {
-                    canon[clen++] = '/';
-                    const char *src = comp;
-                    while (*src && clen + 1 < CWD_MAX) canon[clen++] = *src++;
-                    canon[clen] = '\0';
-                }
-            }
-        } else {
+        /* Extract component into a small bounded buffer */
+        char comp[PATH_COMP_MAX];
+        int ci = 0;
+        while (*p && *p != '/') {
+            if (ci + 1 < (int)sizeof comp) comp[ci++] = *p;
             p++;
+        }
+        comp[ci] = '\0';
+
+        if (strcmp(comp, ".") == 0) {
+            /* skip */
+        } else if (strcmp(comp, "..") == 0) {
+            /* Go up: remove last component. Stops at root — '..' from '/' is '/'. */
+            char *last = strrchr(canon, '/');
+            if (last) *last = '\0';
+        } else {
+            size_t clen = strlen(canon);
+            if (clen + 1 + strlen(comp) < CWD_MAX) {
+                canon[clen++] = '/';
+                const char *src = comp;
+                while (*src) canon[clen++] = *src++;
+                canon[clen] = '\0';
+            }
+            /* If component would overflow, silently drop it — safer than truncating
+               part of a name and producing a different path. */
         }
     }
 
-    if (canon[0] == '\0') strcpy(canon, "/");
+    if (canon[0] == '\0') { canon[0] = '/'; canon[1] = '\0'; }
 
     strncpy(out, canon, CWD_MAX - 1);
     out[CWD_MAX - 1] = '\0';
@@ -206,6 +212,37 @@ static void out_prompt(void) {
     lcd_set_fg(LCD_YELLOW);
     out_fmt("PicoLair:%s> ", _cwd);
     lcd_set_fg(saved);
+}
+
+/* ------------------------------------------------------------------ */
+/* Persistent CWD — saved on every successful 'cd', restored at boot   */
+/* ------------------------------------------------------------------ */
+#define LASTCWD_FILE "/LASTCWD.TXT"
+
+static void cwd_persist(void) {
+    if (!_fat_mounted) return;
+    /* Best-effort write; do not surface errors (cwd persistence is a nicety). */
+    fat_unlink(LASTCWD_FILE);
+    fat_create(LASTCWD_FILE, (const uint8_t *)_cwd, (uint32_t)strlen(_cwd));
+}
+
+static void cwd_restore(void) {
+    if (!_fat_mounted) return;
+    fat_file_t f;
+    if (fat_open(LASTCWD_FILE, &f) != FAT_OK) return;
+    char buf[CWD_MAX];
+    int32_t n = fat_read(&f, (uint8_t *)buf, sizeof buf - 1);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    /* Strip trailing whitespace */
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r' ||
+                     buf[n - 1] == ' '  || buf[n - 1] == '\t')) buf[--n] = '\0';
+    if (buf[0] != '/') return;
+    if (fat_is_dir(buf) != FAT_OK) return; /* dir vanished — keep current cwd */
+    strncpy(_cwd, buf, CWD_MAX - 1);
+    _cwd[CWD_MAX - 1] = '\0';
+    strncpy(_sys_cwd, _cwd, sizeof _sys_cwd - 1);
+    _sys_cwd[sizeof _sys_cwd - 1] = '\0';
 }
 
 static void copy_str(char *dst, size_t dst_sz, const char *src) {
@@ -720,6 +757,111 @@ static void cmd_uptime(void) {
     out_fmt("%lld ms\n", us / 1000LL);
 }
 
+/* ------------------------------------------------------------------ */
+/* date — software RTC (settable, persisted to /CLOCK.CFG)            */
+/* ------------------------------------------------------------------ */
+#define CLOCK_FILE "/CLOCK.CFG"
+
+/* Days-from-civil based on Howard Hinnant's algorithm. */
+static int64_t ymd_to_epoch_ms(int y, int m, int d, int hh, int mm, int ss) {
+    y -= (m <= 2);
+    int era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153U * (unsigned)(m + (m > 2 ? -3 : 9)) + 2U) / 5U + (unsigned)(d - 1);
+    unsigned doe = yoe * 365U + yoe / 4U - yoe / 100U + doy;
+    int64_t days = (int64_t)era * 146097LL + (int64_t)doe - 719468LL;
+    return (days * 86400LL + (int64_t)hh * 3600LL + (int64_t)mm * 60LL + (int64_t)ss) * 1000LL;
+}
+
+static void epoch_ms_to_ymd(int64_t ms, int *y, int *mo, int *d, int *hh, int *mm, int *ss) {
+    int64_t s   = ms / 1000;
+    int64_t day = s / 86400; if (s < 0 && (s % 86400)) day--;
+    int64_t tod = s - day * 86400;
+    *hh = (int)(tod / 3600); *mm = (int)((tod / 60) % 60); *ss = (int)(tod % 60);
+    int64_t z = day + 719468;
+    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned doe = (unsigned)(z - era * 146097);
+    unsigned yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;
+    int yr = (int)yoe + (int)era * 400;
+    unsigned doy = doe - (365*yoe + yoe/4 - yoe/100);
+    unsigned mp  = (5*doy + 2)/153;
+    unsigned dd  = doy - (153*mp + 2)/5 + 1;
+    unsigned mn  = mp + (mp < 10 ? 3 : -9);
+    yr += (mn <= 2);
+    *y = yr; *mo = (int)mn; *d = (int)dd;
+}
+
+static void clock_persist(void) {
+    if (!_fat_mounted) return;
+    char buf[40];
+    int n = snprintf(buf, sizeof buf, "%lld\n", (long long)sys_now_epoch_ms());
+    if (n <= 0) return;
+    fat_unlink(CLOCK_FILE);
+    fat_create(CLOCK_FILE, (const uint8_t *)buf, (uint32_t)n);
+}
+
+static void clock_restore(void) {
+    if (!_fat_mounted) return;
+    fat_file_t f;
+    if (fat_open(CLOCK_FILE, &f) != FAT_OK) return;
+    char buf[40];
+    int32_t n = fat_read(&f, (uint8_t *)buf, sizeof buf - 1);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    long long ms = atoll(buf);
+    if (ms > 0) sys_set_epoch_ms((int64_t)ms);
+}
+
+static void cmd_date(const char *arg) {
+    while (arg && (*arg == ' ' || *arg == '\t')) arg++;
+    if (arg && *arg) {
+        int y, mo, d, hh = 0, mm = 0, ss = 0;
+        int got = sscanf(arg, "%d-%d-%d %d:%d:%d", &y, &mo, &d, &hh, &mm, &ss);
+        if (got < 3 || y < 1970 || mo < 1 || mo > 12 || d < 1 || d > 31) {
+            out_str("usage: date YYYY-MM-DD [HH:MM[:SS]]\n");
+            return;
+        }
+        sys_set_epoch_ms(ymd_to_epoch_ms(y, mo, d, hh, mm, ss));
+        clock_persist();
+    }
+    int y, mo, d, hh, mm, ss;
+    epoch_ms_to_ymd(sys_now_epoch_ms(), &y, &mo, &d, &hh, &mm, &ss);
+    out_fmt("%04d-%02d-%02d %02d:%02d:%02d%s\n",
+            y, mo, d, hh, mm, ss, sys_rtc_is_set() ? "" : " (unset; uptime only)");
+}
+
+/* ------------------------------------------------------------------ */
+/* dmesg — kernel-style ring buffer of boot/runtime messages          */
+/* ------------------------------------------------------------------ */
+#define DMESG_LINES 32
+#define DMESG_LINE_SZ 96
+static char     _dmesg[DMESG_LINES][DMESG_LINE_SZ];
+static uint32_t _dmesg_ts[DMESG_LINES];
+static int      _dmesg_head = 0;
+static int      _dmesg_count = 0;
+
+static void dmesg_log(const char *msg) {
+    if (!msg) return;
+    int slot = _dmesg_head;
+    _dmesg_ts[slot] = sys_time_ms();
+    strncpy(_dmesg[slot], msg, DMESG_LINE_SZ - 1);
+    _dmesg[slot][DMESG_LINE_SZ - 1] = '\0';
+    _dmesg_head = (_dmesg_head + 1) % DMESG_LINES;
+    if (_dmesg_count < DMESG_LINES) _dmesg_count++;
+}
+
+static void cmd_dmesg(const char *arg) {
+    (void)arg;
+    int start = (_dmesg_head - _dmesg_count + DMESG_LINES) % DMESG_LINES;
+    for (int i = 0; i < _dmesg_count; i++) {
+        int idx = (start + i) % DMESG_LINES;
+        out_fmt("[%8lu.%03lu] %s\n",
+                (unsigned long)(_dmesg_ts[idx] / 1000),
+                (unsigned long)(_dmesg_ts[idx] % 1000),
+                _dmesg[idx]);
+    }
+}
+
 static void cmd_sysinfo(void) {
     out_fmt("Mellivora OS for PicoCalc\n");
 #ifdef PICO_RP2350A
@@ -837,6 +979,7 @@ static void cmd_cd(const char *arg) {
     _cwd[CWD_MAX - 1] = '\0';
     strncpy(_sys_cwd, _cwd, sizeof _sys_cwd - 1);
     _sys_cwd[sizeof _sys_cwd - 1] = '\0';
+    cwd_persist();
 }
 
 static void cmd_pwd(void) {
@@ -850,7 +993,7 @@ static void cmd_cat(const char *arg) {
     resolve_abs(arg, abs);
     fat_file_t f;
     fat_result_t r = fat_open(abs, &f);
-    if (r != FAT_OK) { out_fmt("cat: %s\n", fat_result_str(r)); return; }
+    if (r != FAT_OK) { out_fmt("cat: %s: %s\n", abs, fat_result_str(r)); return; }
     uint8_t buf[64];
     int32_t n;
     while ((n = fat_read(&f, buf, sizeof buf)) > 0) {
@@ -858,7 +1001,7 @@ static void cmd_cat(const char *arg) {
     }
     /* Ensure file handle is not leaked */
     if (n != FAT_ERR_EOF && n < 0)
-        out_fmt("\nread error: %s\n", fat_result_str((fat_result_t)n));
+        out_fmt("\ncat: %s: %s\n", abs, fat_result_str((fat_result_t)n));
     else
         out_char('\n');
 }
@@ -880,7 +1023,8 @@ static void cmd_touch(const char *arg) {
 
 static void cmd_write(const char *arg) {
     if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
-    if (!arg || !*arg) { out_str("usage: write <path> <text>\n"); return; }
+    bool force = parse_force_flag(&arg);
+    if (!arg || !*arg) { out_str("usage: write [-f] <path> <text>\n"); return; }
 
     char tmp[LINE_BUF];
     strncpy(tmp, arg, sizeof tmp - 1);
@@ -888,12 +1032,21 @@ static void cmd_write(const char *arg) {
 
     char *text = tmp;
     while (*text && *text != ' ') text++;
-    if (*text == '\0') { out_str("usage: write <path> <text>\n"); return; }
+    if (*text == '\0') { out_str("usage: write [-f] <path> <text>\n"); return; }
     *text++ = '\0';
     while (*text == ' ') text++;
 
     char abs[CWD_MAX];
     resolve_abs(tmp, abs);
+    if (!force) {
+        /* Only prompt if the file exists — touching new files needs no warning. */
+        fat_file_t probe;
+        if (fat_open(abs, &probe) == FAT_OK) {
+            char prompt[CWD_MAX + 24];
+            snprintf(prompt, sizeof prompt, "write: overwrite %s?", abs);
+            if (!confirm(prompt)) { out_str("write: cancelled\n"); return; }
+        }
+    }
     fat_unlink(abs);
     fat_result_t r = fat_create(abs, (const uint8_t *)text, (uint32_t)strlen(text));
     if (r != FAT_OK) out_fmt("write: %s: %s\n", abs, fat_result_str(r));
@@ -910,9 +1063,15 @@ static void cmd_mkdir(const char *arg) {
 
 static void cmd_rm(const char *arg) {
     if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
-    if (!arg || !*arg) { out_str("usage: rm <path>\n"); return; }
+    bool force = parse_force_flag(&arg);
+    if (!arg || !*arg) { out_str("usage: rm [-f] <path>\n"); return; }
     char abs[CWD_MAX];
     resolve_abs(arg, abs);
+    if (!force) {
+        char prompt[CWD_MAX + 16];
+        snprintf(prompt, sizeof prompt, "rm: delete %s?", abs);
+        if (!confirm(prompt)) { out_str("rm: cancelled\n"); return; }
+    }
     fat_result_t r = fat_unlink(abs);
     if (r != FAT_OK) out_fmt("rm: %s: %s\n", abs, fat_result_str(r));
 }
@@ -1033,6 +1192,7 @@ static const char *_shell_cmds[] = {
     "help", "man", "history", "alias", "unalias", "uname", "uptime", "clear",
     "battery", "backlight", "mount", "ls", "dir", "cd", "pwd", "cat", "echo",
     "touch", "write", "mkdir", "rm", "rename", "sdinfo", "sdread", "reboot",
+    "date", "dmesg",
     "hello", "basename", "dirname", "seq", "head", "tail", "wc", "cut", "grep",
     "find", "tree", "du", "df", "disk", "space", "pager", "more", "rev", "sort",
     "hexdump", "od", "hexedit", "hex", "calc", "cp", "mv", "stat", "edit",
@@ -1307,6 +1467,8 @@ static void dispatch_single(char *line) {
     else if (!strcmp(line, "unalias"))   cmd_unalias(arg);
     else if (!strcmp(line, "uname"))     cmd_uname();
     else if (!strcmp(line, "uptime"))    cmd_uptime();
+    else if (!strcmp(line, "date"))      cmd_date(arg);
+    else if (!strcmp(line, "dmesg"))     cmd_dmesg(arg);
     else if (!strcmp(line, "sysinfo"))   cmd_sysinfo();
     else if (!strcmp(line, "status"))    cmd_status(arg);
     else if (!strcmp(line, "clear"))     cmd_clear();
@@ -1391,11 +1553,66 @@ static int read_input(void) {
     return kbd_get_repeat();
 }
 
+/*
+ * Block on the next printable keystroke from any input source. Used by
+ * destructive-command confirmation prompts. Returns the character (lower
+ * case for letters); returns 0 on Ctrl-C / Esc.
+ */
+static int read_input_blocking(void) {
+    for (;;) {
+        int ch = read_input();
+        if (ch < 0) { sleep_ms(20); continue; }
+        if (ch == 0x03 || ch == 0x1B) return 0; /* Ctrl-C / Esc */
+        if (ch >= 'A' && ch <= 'Z') ch = ch - 'A' + 'a';
+        return ch;
+    }
+}
+
+/* Prompt "msg [y/N] " and return true iff the user typed 'y'. Newline is
+ * always echoed after the answer for tidy output. */
+static bool confirm(const char *msg) {
+    out_str(msg);
+    out_str(" [y/N] ");
+    int ch = read_input_blocking();
+    if (ch >= ' ' && ch < 0x7F) out_char((char)ch);
+    out_char('\n');
+    return ch == 'y';
+}
+
+/* Helper used by rm/write: parse a leading "-f" flag. *arg is advanced
+ * past the flag and any following whitespace. Returns true if -f present. */
+static bool parse_force_flag(const char **arg) {
+    if (!*arg) return false;
+    const char *p = *arg;
+    while (*p == ' ') p++;
+    if (p[0] == '-' && p[1] == 'f' && (p[2] == ' ' || p[2] == '\0')) {
+        p += 2;
+        while (*p == ' ') p++;
+        *arg = p;
+        return true;
+    }
+    return false;
+}
+
 /* ------------------------------------------------------------------ */
 /* Status bar — last LCD row shows battery, cwd, uptime                 */
 /* ------------------------------------------------------------------ */
 static void _draw_status_bar(void) {
     if (!_lcd_ready || !_statusbar_enabled) return;
+
+    /* Throttle redraws — the bar shows uptime in seconds, so refreshing more
+       than once per second is wasted work and visible flicker. The two real
+       call sites (per-prompt on RP2040, 2 s tick on RP2350-core1) both stay
+       responsive enough at 1 Hz. */
+    static uint32_t _last_draw_ms = 0;
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    if (_last_draw_ms != 0 && (now - _last_draw_ms) < 1000) return;
+    _last_draw_ms = now;
+
+    /* Acquire the LCD lock so the entire bar redraw is atomic versus core0
+       output (recursive mutex — safe even though the lcd_* helpers below
+       also acquire it). */
+    lcd_lock();
 
     /* Save current fg/bg */
     uint32_t save_fg = lcd_get_fg();
@@ -1453,6 +1670,8 @@ static void _draw_status_bar(void) {
     lcd_set_fg(save_fg);
     lcd_set_bg(save_bg);
     lcd_set_cursor(save_col, save_row);
+
+    lcd_unlock();
 }
 
 #ifdef PICO_RP2350A
@@ -1505,17 +1724,32 @@ int main(void) {
 
     sd_result_t sd_r = sd_init();
     if (sd_r == SD_OK) {
+        dmesg_log("SD: card initialized");
         if (fat_mount() == FAT_OK) {
             _fat_mounted = true;
+            dmesg_log("FAT: mounted");
             alias_load();
+            /* Load persistent settings (backlight, home, autorun, startup) and
+               then restore the last-known cwd if it still exists. */
+            app_init();
+            /* Sync any chdir done by settings_apply_live back into _cwd. */
+            strncpy(_cwd, _sys_cwd, CWD_MAX - 1);
+            _cwd[CWD_MAX - 1] = '\0';
+            cwd_restore();
+            clock_restore();
         } else {
             out_str("SD: FAT mount failed\n");
+            dmesg_log("FAT: mount failed");
         }
     } else {
         out_str("SD: card not detected\n");
+        dmesg_log("SD: card not detected");
     }
 
     out_str(BANNER);
+
+    /* Run autorun script + startup app from settings, if any. */
+    if (_fat_mounted) app_boot();
 
     /* Enable status bar on last LCD row */
     _statusbar_enabled = true;
@@ -1543,6 +1777,7 @@ int main(void) {
         if (ch == '\r' || ch == '\n') {
             out_char('\n');
             line[idx] = '\0';
+            _interrupted = false;  /* clear stale Ctrl-C from previous cmd */
             if (idx > 0) dispatch(line);
             idx = 0;
             cursor = 0;
@@ -1630,6 +1865,89 @@ int main(void) {
             while (cursor < idx) { out_char(line[cursor]); cursor++; }
             idx = tab_complete(line, idx);
             cursor = idx;
+            continue;
+        }
+
+        /* ---- Ctrl+R — reverse incremental history search ---- */
+        if (ch == 0x12) {
+            if (_hist_count == 0) continue;
+            char query[64];
+            int qlen = 0;
+            query[0] = '\0';
+            int match_idx = -1;     /* history offset of current match */
+            const char *match_str = NULL;
+
+            /* Erase current line on screen */
+            while (cursor > 0) { out_str("\b"); cursor--; }
+            for (int i = 0; i < idx; i++) out_char(' ');
+            for (int i = 0; i < idx; i++) out_str("\b");
+            /* Erase prompt itself */
+            const char *p_old = "PicoLair:";
+            int promptlen = (int)strlen(p_old) + (int)strlen(_cwd) + 2;
+            for (int i = 0; i < promptlen; i++) out_str("\b \b");
+
+            bool done = false, accept = false, cancel = false;
+            while (!done) {
+                out_char('\r');
+                out_fmt("(reverse-i-search)`%s': %s",
+                        query, match_str ? match_str : "");
+                /* Pad to clear any leftover characters */
+                out_str("                ");
+                for (int i = 0; i < 16; i++) out_str("\b");
+
+                int rch = -1;
+                while (rch < 0) {
+                    rch = read_input();
+                    if (rch < 0) sleep_ms(20);
+                }
+
+                if (rch == '\r' || rch == '\n') { accept = true; done = true; }
+                else if (rch == 0x07 || rch == 0x1B || rch == 0x03) { cancel = true; done = true; }
+                else if (rch == 0x08 || rch == 0x7F) {
+                    if (qlen > 0) { query[--qlen] = '\0'; }
+                } else if (rch == 0x12) {
+                    /* Find next older match */
+                    int start = (match_idx > 0) ? match_idx - 1 : _hist_count - 1;
+                    int found = -1;
+                    for (int i = start; i >= 0; i--) {
+                        const char *h = hist_get(i);
+                        if (h && (!*query || strstr(h, query))) { found = i; break; }
+                    }
+                    if (found >= 0) { match_idx = found; match_str = hist_get(found); }
+                } else if (isprint((unsigned char)rch) && qlen < (int)sizeof query - 1) {
+                    query[qlen++] = (char)rch;
+                    query[qlen] = '\0';
+                }
+
+                if (!done) {
+                    /* Re-search from newest */
+                    int found = -1;
+                    for (int i = _hist_count - 1; i >= 0; i--) {
+                        const char *h = hist_get(i);
+                        if (h && strstr(h, query)) { found = i; break; }
+                    }
+                    match_idx = found;
+                    match_str = (found >= 0) ? hist_get(found) : NULL;
+                }
+            }
+
+            /* Clear search line */
+            out_char('\r');
+            for (int i = 0; i < (int)sizeof query + 64; i++) out_char(' ');
+            out_char('\r');
+            out_prompt();
+
+            if (accept && match_str) {
+                strncpy(line, match_str, LINE_BUF - 1);
+                line[LINE_BUF - 1] = '\0';
+                idx = (int)strlen(line);
+                cursor = idx;
+                hist_browse = -1;
+                out_str(line);
+            } else {
+                (void)cancel;
+                idx = 0; cursor = 0; line[0] = '\0';
+            }
             continue;
         }
 

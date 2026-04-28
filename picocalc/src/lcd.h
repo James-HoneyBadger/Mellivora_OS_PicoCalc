@@ -70,3 +70,9 @@ int  lcd_get_row(void);
 
 /* Draw a character at cell position with specific colors (no cursor advance) */
 void lcd_draw_cell(int col, int row, char c, uint32_t fg, uint32_t bg);
+
+/* Cross-core serialisation. Recursive: nested calls from the same core are
+   safe. Use to make multi-call drawing sequences atomic versus the core1
+   status-bar refresh on RP2350. */
+void lcd_lock(void);
+void lcd_unlock(void);

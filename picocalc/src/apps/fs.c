@@ -90,6 +90,7 @@ static void app_find_cb(const char *name, uint32_t size, bool is_dir, void *opaq
     (void)size;
     find_ctx_t *ctx = (find_ctx_t *)opaque;
     if (!ctx || !name || !*name) return;
+    if (sys_interrupted()) return;
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
     if (ctx->pattern && !glob_match_star(ctx->pattern, name)) return;
     if (ctx->type_filter == 1 && is_dir) return;
@@ -172,24 +173,55 @@ typedef struct {
     bool err;
 } _cp_dir_ctx_t;
 
-static void _cp_dir_cb(const char *name, uint32_t size, bool is_dir, void *ctx) {
-    (void)size;
-    _cp_dir_ctx_t *c = (_cp_dir_ctx_t *)ctx;
-    char fsrc[APP_TOKEN_MAX + 16], fdst[APP_TOKEN_MAX + 16];
-    snprintf(fsrc, sizeof fsrc, "%s/%s", c->src, name);
-    snprintf(fdst, sizeof fdst, "%s/%s", c->dst, name);
+/* Buffer entries during a single fat_ls so we can recurse safely
+ * (fat_ls re-enters _sector_buf, so we cannot recurse from the cb). */
+#define CP_BATCH_MAX 32
+typedef struct {
+    char name[CP_BATCH_MAX][13];
+    bool is_dir[CP_BATCH_MAX];
+    int  n;
+    bool overflow;
+} _cp_batch_t;
 
-    if (is_dir) {
-        if (fat_mkdir(fdst) == FAT_OK) c->count++;
-        else c->err = true;
-    } else {
-        uint8_t buf[APP_READ_MAX];
-        fat_file_t f;
-        if (fat_open(fsrc, &f) != FAT_OK) { c->err = true; return; }
-        int32_t rd = fat_read(&f, buf, sizeof buf);
-        if (rd < 0) { c->err = true; return; }
-        if (fat_create(fdst, buf, (uint32_t)rd) == FAT_OK) c->count++;
-        else c->err = true;
+static void _cp_collect_cb(const char *name, uint32_t size, bool is_dir, void *ctx) {
+    (void)size;
+    _cp_batch_t *b = (_cp_batch_t *)ctx;
+    if (sys_interrupted()) return;
+    if (!name || !*name || !strcmp(name, ".") || !strcmp(name, "..")) return;
+    if (b->n >= CP_BATCH_MAX) { b->overflow = true; return; }
+    strncpy(b->name[b->n], name, 12); b->name[b->n][12] = '\0';
+    b->is_dir[b->n] = is_dir;
+    b->n++;
+}
+
+static void cp_recurse(const char *src_dir, const char *dst_dir, _cp_dir_ctx_t *cpctx) {
+    if (sys_interrupted()) { cpctx->err = true; return; }
+    _cp_batch_t batch = { .n = 0, .overflow = false };
+    if (fat_ls(src_dir, _cp_collect_cb, &batch) != FAT_OK) { cpctx->err = true; return; }
+    if (batch.overflow) cpctx->err = true;
+
+    for (int i = 0; i < batch.n; i++) {
+        if (sys_interrupted()) { cpctx->err = true; return; }
+        char fsrc[APP_TOKEN_MAX], fdst[APP_TOKEN_MAX];
+        snprintf(fsrc, sizeof fsrc, "%s/%s", src_dir, batch.name[i]);
+        snprintf(fdst, sizeof fdst, "%s/%s", dst_dir, batch.name[i]);
+
+        if (batch.is_dir[i]) {
+            if (fat_mkdir(fdst) == FAT_OK || fat_is_dir(fdst) == FAT_OK) {
+                cpctx->count++;
+                cp_recurse(fsrc, fdst, cpctx);
+            } else {
+                cpctx->err = true;
+            }
+        } else {
+            uint8_t buf[APP_READ_MAX];
+            fat_file_t f;
+            if (fat_open(fsrc, &f) != FAT_OK) { cpctx->err = true; continue; }
+            int32_t rd = fat_read(&f, buf, sizeof buf);
+            if (rd < 0) { cpctx->err = true; continue; }
+            if (fat_create(fdst, buf, (uint32_t)rd) == FAT_OK) cpctx->count++;
+            else cpctx->err = true;
+        }
     }
 }
 
@@ -214,7 +246,7 @@ void app_cp(const char *arg) {
         copy_cstr(cpctx.src, sizeof cpctx.src, abs_src);
         copy_cstr(cpctx.dst, sizeof cpctx.dst, abs_dst);
         cpctx.count = 0; cpctx.err = false;
-        fat_ls(abs_src, _cp_dir_cb, &cpctx);
+        cp_recurse(abs_src, abs_dst, &cpctx);
         char out[64];
         snprintf(out, sizeof out, "copied %d entries%s",
                  cpctx.count, cpctx.err ? " (with errors)" : "");
@@ -305,6 +337,7 @@ void app_stat(const char *arg) {
 static void app_tree_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
     tree_walk_t *ctx = (tree_walk_t *)opaque;
     if (!ctx || !name || !*name) return;
+    if (sys_interrupted()) return;
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
 
     char line[192];
@@ -437,6 +470,7 @@ static uint32_t app_du_path(const char *path, du_stat_t *out) {
 static void app_du_list_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
     du_walk_ctx_t *ctx = (du_walk_ctx_t *)opaque;
     if (!ctx || !name || !*name) return;
+    if (sys_interrupted()) return;
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
 
     uint32_t bytes = size;

@@ -11,6 +11,7 @@
 #include "picocalc_hw.h"
 
 #include "pico/stdlib.h"
+#include "pico/mutex.h"
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
 #include "hardware/dma.h"
@@ -18,6 +19,27 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+
+/* ============================================================
+ * Cross-core serialisation
+ *
+ * On RP2350 the status bar refresh runs on core1 while shell output runs
+ * on core0; both touch the same SPI peripheral. A recursive mutex lets
+ * nested public lcd_* calls (e.g. lcd_putc -> lcd_draw_char) share the
+ * same critical section.
+ * ============================================================ */
+static recursive_mutex_t _lcd_mtx;
+static bool _lcd_mtx_inited = false;
+
+static inline void _lcd_lock(void) {
+    if (_lcd_mtx_inited) recursive_mutex_enter_blocking(&_lcd_mtx);
+}
+static inline void _lcd_unlock(void) {
+    if (_lcd_mtx_inited) recursive_mutex_exit(&_lcd_mtx);
+}
+
+void lcd_lock(void)   { _lcd_lock(); }
+void lcd_unlock(void) { _lcd_unlock(); }
 
 /* ============================================================
  * DMA acceleration (available on both RP2040 and RP2350)
@@ -186,6 +208,10 @@ static void _reset_controller(void) {
  * ============================================================ */
 
 void lcd_init(void) {
+    if (!_lcd_mtx_inited) {
+        recursive_mutex_init(&_lcd_mtx);
+        _lcd_mtx_inited = true;
+    }
     gpio_init(LCD_PIN_SCK);
     gpio_init(LCD_PIN_MOSI);
     gpio_init(LCD_PIN_MISO);
@@ -259,6 +285,7 @@ void lcd_init(void) {
  * ============================================================ */
 
 void lcd_fill(uint32_t color) {
+    _lcd_lock();
     uint8_t r = (uint8_t)((color >> 16) & 0xFC);
     uint8_t g = (uint8_t)((color >>  8) & 0xFC);
     uint8_t b = (uint8_t)(color & 0xFC);
@@ -275,12 +302,15 @@ void lcd_fill(uint32_t color) {
         _spi_write_fast(linebuf, sizeof linebuf);
     }
     _end_window_write();
+    _lcd_unlock();
 }
 
 void lcd_draw_pixel(uint16_t x, uint16_t y, uint32_t color) {
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
+    _lcd_lock();
     _set_window(x, y, x, y);
     _spi_write_data24(color);
+    _lcd_unlock();
 }
 
 /* ============================================================
@@ -486,6 +516,7 @@ static const uint8_t _font8x16[95][16] = {
 void lcd_draw_char(uint16_t x, uint16_t y, char c, uint32_t fg, uint32_t bg) {
     if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) c = '?';
     const uint8_t *glyph = _font8x16[(uint8_t)c - 0x20];
+    _lcd_lock();
 
     uint8_t fr = (uint8_t)((fg >> 16) & 0xFC);
     uint8_t fgc = (uint8_t)((fg >> 8) & 0xFC);
@@ -509,14 +540,17 @@ void lcd_draw_char(uint16_t x, uint16_t y, char c, uint32_t fg, uint32_t bg) {
     _set_window(x, y, (uint16_t)(x + LCD_CHAR_W - 1), (uint16_t)(y + LCD_CHAR_H - 1));
     _spi_write_fast(cell, sizeof cell);
     _end_window_write();
+    _lcd_unlock();
 }
 
 void lcd_draw_str(uint16_t x, uint16_t y, const char *s, uint32_t fg, uint32_t bg) {
+    _lcd_lock();
     while (*s) {
         lcd_draw_char(x, y, *s++, fg, bg);
         x += LCD_CHAR_W;
         if (x + LCD_CHAR_W > LCD_WIDTH) break;
     }
+    _lcd_unlock();
 }
 
 /* ============================================================
@@ -579,22 +613,27 @@ static void _scroll_up(void) {
 }
 
 void lcd_cls(uint32_t bg) {
+    _lcd_lock();
     _bg = bg;
     _clear_text_buf();
     lcd_fill(bg);
     _cur_col = 0;
     _cur_row = 0;
+    _lcd_unlock();
 }
 
 void lcd_putc(char c) {
+    _lcd_lock();
     if (c == '\n') {
         _cur_col = 0;
         _cur_row++;
         if (_cur_row >= LCD_ROWS) _scroll_up();
+        _lcd_unlock();
         return;
     }
     if (c == '\r') {
         _cur_col = 0;
+        _lcd_unlock();
         return;
     }
     uint16_t py = (uint16_t)(_cur_row * LCD_CHAR_H);
@@ -605,6 +644,7 @@ void lcd_putc(char c) {
             _text_buf[_cur_row][_cur_col] = ' ';
             lcd_draw_char((uint16_t)(_cur_col * LCD_CHAR_W), py, ' ', _fg, _bg);
         }
+        _lcd_unlock();
         return;
     }
     if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) c = '?';
@@ -616,10 +656,13 @@ void lcd_putc(char c) {
         _cur_row++;
         if (_cur_row >= LCD_ROWS) _scroll_up();
     }
+    _lcd_unlock();
 }
 
 void lcd_puts(const char *s) {
+    _lcd_lock();
     while (*s) lcd_putc(*s++);
+    _lcd_unlock();
 }
 
 /* ============================================================
@@ -630,6 +673,7 @@ void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t colo
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT || w == 0 || h == 0) return;
     if (x + w > LCD_WIDTH)  w = LCD_WIDTH - x;
     if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
+    _lcd_lock();
 
     uint8_t r = (uint8_t)((color >> 16) & 0xFC);
     uint8_t g = (uint8_t)((color >> 8) & 0xFC);
@@ -648,6 +692,7 @@ void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t colo
         _spi_write_fast(linebuf, row_bytes);
     }
     _end_window_write();
+    _lcd_unlock();
 }
 
 void lcd_draw_hline(uint16_t x, uint16_t y, uint16_t w, uint32_t color) {
@@ -685,6 +730,8 @@ int lcd_get_row(void) { return _cur_row; }
 void lcd_draw_cell(int col, int row, char c, uint32_t fg, uint32_t bg) {
     if (col < 0 || col >= LCD_COLS || row < 0 || row >= LCD_ROWS) return;
     if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) c = ' ';
+    _lcd_lock();
     _text_buf[row][col] = c;
     lcd_draw_char((uint16_t)(col * LCD_CHAR_W), (uint16_t)(row * LCD_CHAR_H), c, fg, bg);
+    _lcd_unlock();
 }

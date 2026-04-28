@@ -154,7 +154,9 @@ void net_app_wifi(const char *arg) {
         if (net_init() < 0) { sys_print("WiFi init failed\n"); return; }
         if (net_wifi_connect(ssid, pass[0] ? pass : NULL, 15000) == 0) {
             strncpy(_wifi_ssid, ssid, sizeof _wifi_ssid - 1);
+            _wifi_ssid[sizeof _wifi_ssid - 1] = '\0';
             strncpy(_wifi_pass, pass, sizeof _wifi_pass - 1);
+            _wifi_pass[sizeof _wifi_pass - 1] = '\0';
             net_ifinfo_t info;
             net_get_ifinfo(&info);
             char ip[16];
@@ -438,8 +440,10 @@ void net_app_wget(const char *arg) {
         strncpy(path, slash, 255);
         path[255] = '\0';
     } else {
-        strncpy(host, p, 127);
-        host[127] = '\0';
+        size_t hlen = strlen(p);
+        if (hlen > sizeof host - 1) hlen = sizeof host - 1;
+        memcpy(host, p, hlen);
+        host[hlen] = '\0';
     }
 
     char *colon = strchr(host, ':');
@@ -489,6 +493,7 @@ void net_app_weather(const char *arg) {
         snprintf(path, sizeof path, "/%s?format=3", arg);
     } else {
         strncpy(path, "/?format=3", sizeof path - 1);
+        path[sizeof path - 1] = '\0';
     }
 
     sys_print("Fetching weather...\n");
@@ -549,8 +554,9 @@ void net_app_irc(const char *arg) {
         return;
     }
 
-    /* Send NICK and USER */
-    char cmd[128];
+    /* Send NICK and USER. cmd is sized to safely hold a full incoming
+       512-byte IRC line plus formatting prefix. */
+    char cmd[640];
     snprintf(cmd, sizeof cmd, "NICK %s\r\n", nick);
     net_tcp_send(conn, cmd, strlen(cmd));
     snprintf(cmd, sizeof cmd, "USER %s 0 * :Mellivora IRC\r\n", nick);
@@ -576,9 +582,9 @@ void net_app_irc(const char *arg) {
         if (n > 0) {
             rxbuf[n] = '\0';
 
-            /* Handle PING */
+            /* Handle PING. Sized to safely echo a full 512-byte IRC line. */
             if (!strncmp(rxbuf, "PING ", 5)) {
-                char pong[128];
+                char pong[520];
                 snprintf(pong, sizeof pong, "PONG %s", rxbuf + 5);
                 net_tcp_send(conn, pong, strlen(pong));
             }
@@ -606,7 +612,8 @@ void net_app_irc(const char *arg) {
             if (!strncmp(line, "/join ", 6)) {
                 snprintf(cmd, sizeof cmd, "JOIN %s\r\n", line + 6);
                 net_tcp_send(conn, cmd, strlen(cmd));
-                strncpy(channel, line + 6, 31);
+                strncpy(channel, line + 6, sizeof channel - 1);
+                channel[sizeof channel - 1] = '\0';
             } else if (!strncmp(line, "/msg ", 5)) {
                 snprintf(cmd, sizeof cmd, "PRIVMSG %s\r\n", line + 5);
                 net_tcp_send(conn, cmd, strlen(cmd));
@@ -646,7 +653,8 @@ void net_app_netstat(const char *arg) {
         net_get_ifinfo(&info);
         char ip[16];
         net_ip_to_str(info.ip, ip, sizeof ip);
-        char line[64];
+        /* sized to fit IP (15) + max SSID (32) + decoration */
+        char line[96];
         snprintf(line, sizeof line, "  wlan0: UP  %s  SSID: %s", ip, _wifi_ssid);
         sys_print(line);
         sys_putchar('\n');

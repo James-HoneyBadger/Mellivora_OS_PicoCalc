@@ -11,6 +11,8 @@
 
 bool _sys_more_enabled = false;
 bool _sys_more_abort = false;
+volatile bool _sys_interrupted = false;
+int64_t _sys_epoch_offset_ms = 0;
 
 static bool _sys_lcd_in_ansi = false;
 static int _sys_more_lines = 0;

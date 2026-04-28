@@ -109,6 +109,10 @@ SYSCALL_EXTERN _sys_fd_t _sys_fds[SYSCALL_MAX_FD];
 SYSCALL_EXTERN char      _sys_cwd[256];
 SYSCALL_EXTERN bool      _sys_more_enabled;
 SYSCALL_EXTERN bool      _sys_more_abort;
+SYSCALL_EXTERN volatile bool _sys_interrupted;
+
+static inline bool sys_interrupted(void) { return _sys_interrupted; }
+static inline void sys_clear_interrupt(void) { _sys_interrupted = false; }
 
 void sys_more_set(bool enabled);
 void sys_more_reset(void);
@@ -213,6 +217,19 @@ static inline int sys_getscreenw(void) { return LCD_COLS; }
 static inline int sys_getscreenh(void) { return LCD_ROWS; }
 static inline void sys_sleep(uint32_t ms) { sleep_ms(ms); }
 static inline uint32_t sys_time_ms(void) { return (uint32_t)to_ms_since_boot(get_absolute_time()); }
+
+/* Software RTC: epoch milliseconds, settable via `date` command.
+ * The offset is added to the boot uptime to derive wall-clock time.
+ * Survives across `date` calls; persisted to /CLOCK.CFG by the shell. */
+SYSCALL_EXTERN int64_t _sys_epoch_offset_ms;
+
+static inline int64_t sys_now_epoch_ms(void) {
+    return (int64_t)to_ms_since_boot(get_absolute_time()) + _sys_epoch_offset_ms;
+}
+static inline void sys_set_epoch_ms(int64_t ms) {
+    _sys_epoch_offset_ms = ms - (int64_t)to_ms_since_boot(get_absolute_time());
+}
+static inline bool sys_rtc_is_set(void) { return _sys_epoch_offset_ms != 0; }
 
 /* Open a file. Returns fd >= 0 or -1 on error. */
 static inline int sys_open(const char *path, int flags) {

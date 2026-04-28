@@ -1163,9 +1163,16 @@ fat_result_t fat_append(const char *path, const uint8_t *data, uint32_t len) {
         if (last_cluster == 0) return FAT_ERR_NOSPC;
         start_cluster = last_cluster;
     } else {
+        /* Walk chain to last cluster. Cache fat_entry() result and bound the
+           iteration to prevent infinite loops on a corrupted (cyclic) FAT. */
         uint32_t cur = start_cluster;
-        while (!is_eoc(fat_entry(cur)) && fat_entry(cur) >= 2) {
-            cur = fat_entry(cur);
+        uint32_t guard = 0;
+        const uint32_t guard_max = 0x10000000u; /* >256 M clusters: practical cap */
+        for (;;) {
+            uint32_t next = fat_entry(cur);
+            if (is_eoc(next) || next < 2) break;
+            cur = next;
+            if (++guard > guard_max) return FAT_ERR_IO;
         }
         last_cluster = cur;
     }
