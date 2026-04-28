@@ -43,7 +43,11 @@ jobs:
       - name: Locate UF2
         id: locate
         run: |
-          UF2=$(find picocalc -name "*.uf2" -newer Makefile | head -1)
+          case "${{ matrix.target }}" in
+            picocalc) UF2=picocalc/build/mellivora_picocalc.uf2 ;;
+            pico2)    UF2=picocalc/build-pico2/mellivora_picocalc_pico2.uf2 ;;
+            pico2w)   UF2=picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2 ;;
+          esac
           echo "uf2=$UF2" >> $GITHUB_OUTPUT
           echo "Built: $UF2"
           ls -la "$UF2"

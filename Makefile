@@ -13,9 +13,13 @@ PICO_ELF = $(PICO_BUILD_DIR)/mellivora_picocalc.elf
 PICO_UF2 = $(PICO_BUILD_DIR)/mellivora_picocalc.uf2
 PICOTOOL = $(PICO_BUILD_DIR)/_deps/picotool/picotool
 
-.PHONY: all picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean clean
+.PHONY: all all-targets picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean clean
 
 all: picocalc
+
+# Build every supported firmware variant (used by CI release).
+all-targets: picocalc pico2 pico2w
+	@echo "=== All firmware targets built ==="
 
 picocalc: picocalc-sdk picocalc-config picocalc-build picocalc-uf2
 	@echo "=== PicoCalc UF2 ready ==="

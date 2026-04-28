@@ -25,7 +25,7 @@ jobs:
               python3 git
 
       - name: Build all targets
-        run: make all
+        run: make all-targets
 
       - name: Stage release assets
         run: |

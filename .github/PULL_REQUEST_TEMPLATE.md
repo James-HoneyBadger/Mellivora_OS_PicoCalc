@@ -12,7 +12,7 @@ Briefly describe what this PR changes and why.
 
 ## Checklist
 
-- [ ] All three targets build cleanly (`make all`)
+- [ ] All three targets build cleanly (`make all-targets`)
 - [ ] No new warnings from files in `picocalc/src/`
 - [ ] New commands documented in [`docs/COMMANDS.md`](../docs/COMMANDS.md)
 - [ ] User-visible changes added to [`docs/CHANGELOG.md`](../docs/CHANGELOG.md)
