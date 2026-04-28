@@ -70,9 +70,10 @@ static void _draw_status_bar(void);
 /* Confirmation helpers (defined later, near read_input) */
 static bool confirm(const char *msg);
 static bool parse_force_flag(const char **arg);
+static void rm_recurse(const char *path);
 
 #define BANNER \
-    "Mellivora OS\n" \
+    "Mellivora OS v" MELLIVORA_VERSION "\n" \
     "PicoCalc ready\n\n"
 
 /* ANSI escape sequences forwarded to the serial console */
@@ -305,6 +306,66 @@ static void hist_clear(void) {
     memset(_hist, 0, sizeof _hist);
     _hist_count = 0;
     _hist_head = 0;
+}
+
+/* ----- Persistent history (/HISTORY.LOG) -------------------------- */
+#define HISTORY_FILE "/HISTORY.LOG"
+
+static void hist_save(void) {
+    if (!_fat_mounted) return;
+    /* Build a single buffer of recent entries (newest last) */
+    char buf[HIST_ENTRY_SZ * 8 + 8];  /* keep last 8 lines max for write */
+    size_t pos = 0;
+    int start = (_hist_count > 8) ? _hist_count - 8 : 0;
+    for (int i = start; i < _hist_count; i++) {
+        const char *h = hist_get(i);
+        if (!h) continue;
+        size_t l = strlen(h);
+        if (pos + l + 2 >= sizeof buf) break;
+        memcpy(buf + pos, h, l); pos += l;
+        buf[pos++] = '\n';
+    }
+    if (pos == 0) return;
+    /* Append-on-write: read existing + append + truncate to ~32 lines */
+    char existing[HIST_ENTRY_SZ * 32 + 16];
+    fat_file_t f;
+    int32_t old_n = 0;
+    if (fat_open(HISTORY_FILE, &f) == FAT_OK) {
+        old_n = fat_read(&f, (uint8_t *)existing, sizeof existing - 1);
+        if (old_n < 0) old_n = 0;
+    }
+    if (old_n + (int)pos > (int)sizeof existing - 1) {
+        /* Drop oldest half */
+        int keep = (int)sizeof existing / 2;
+        int drop = old_n - keep;
+        if (drop < 0) drop = 0;
+        memmove(existing, existing + drop, old_n - drop);
+        old_n -= drop;
+    }
+    if (old_n + pos < sizeof existing) {
+        memcpy(existing + old_n, buf, pos);
+        fat_unlink(HISTORY_FILE);
+        fat_create(HISTORY_FILE, (const uint8_t *)existing, (uint32_t)(old_n + pos));
+    }
+}
+
+static void hist_load(void) {
+    if (!_fat_mounted) return;
+    fat_file_t f;
+    if (fat_open(HISTORY_FILE, &f) != FAT_OK) return;
+    char buf[HIST_ENTRY_SZ * 32 + 16];
+    int32_t n = fat_read(&f, (uint8_t *)buf, sizeof buf - 1);
+    if (n <= 0) return;
+    buf[n] = '\0';
+    char *line_p = buf;
+    for (char *p = buf; *p; p++) {
+        if (*p == '\n' || *p == '\r') {
+            *p = '\0';
+            if (*line_p) hist_push(line_p);
+            line_p = p + 1;
+        }
+    }
+    if (*line_p) hist_push(line_p);
 }
 
 static int alias_find_slot(const char *name) {
@@ -735,14 +796,16 @@ static void cmd_help(const char *arg) {
     out_str("Unknown help topic. Try: help, help fs, help apps, help lang\n");
 }
 
-static void cmd_uname(void) {
+static void cmd_uname(const char *arg) {
+    bool all = (arg && (*arg == 'a' || strstr(arg, "-a")));
 #ifdef PICO_CYW43_SUPPORTED
-    out_str("Mellivora OS - PicoCalc target (RP2350 + CYW43 WiFi)\n");
+    out_str("Mellivora OS v" MELLIVORA_VERSION " - PicoCalc target (RP2350 + CYW43 WiFi)\n");
 #elif defined(PICO_RP2350A)
-    out_str("Mellivora OS - PicoCalc target (RP2350)\n");
+    out_str("Mellivora OS v" MELLIVORA_VERSION " - PicoCalc target (RP2350)\n");
 #else
-    out_str("Mellivora OS - PicoCalc target (RP2040)\n");
+    out_str("Mellivora OS v" MELLIVORA_VERSION " - PicoCalc target (RP2040)\n");
 #endif
+    if (!all) return;
     out_fmt("  LCD:  ILI9488 %dx%d via SPI1\n", LCD_WIDTH, LCD_HEIGHT);
     out_str("  KBD:  STM32 co-proc via I2C1\n");
     out_str("  SD:   SPI0 block device\n");
@@ -750,6 +813,13 @@ static void cmd_uname(void) {
 #ifdef PICO_CYW43_SUPPORTED
     out_str("  WLAN: CYW43439 802.11n\n");
 #endif
+    out_str("  Built: " __DATE__ " " __TIME__ "\n");
+}
+
+static void cmd_version(void) {
+    out_str("Mellivora OS v" MELLIVORA_VERSION "\n");
+    out_str("Built: " __DATE__ " " __TIME__ "\n");
+    out_str("https://github.com/James-HoneyBadger/Mellivora_OS_PicoCalc\n");
 }
 
 static void cmd_uptime(void) {
@@ -1061,17 +1131,82 @@ static void cmd_mkdir(const char *arg) {
     if (r != FAT_OK) out_fmt("mkdir: %s: %s\n", abs, fat_result_str(r));
 }
 
+/* Recursive directory removal — uses a 32-entry batch buffer to avoid
+ * re-entering _sector_buf during fat_ls callbacks. */
+#define RM_BATCH_MAX 32
+typedef struct {
+    char name[RM_BATCH_MAX][13];
+    bool is_dir[RM_BATCH_MAX];
+    int n;
+    bool overflow;
+} _rm_batch_t;
+
+static void _rm_collect_cb(const char *name, uint32_t size, bool is_dir, void *ctx) {
+    (void)size;
+    _rm_batch_t *b = (_rm_batch_t *)ctx;
+    if (_interrupted) return;
+    if (!name || !*name || !strcmp(name, ".") || !strcmp(name, "..")) return;
+    if (b->n >= RM_BATCH_MAX) { b->overflow = true; return; }
+    strncpy(b->name[b->n], name, 12); b->name[b->n][12] = '\0';
+    b->is_dir[b->n] = is_dir;
+    b->n++;
+}
+
+static void rm_recurse(const char *path) {
+    if (_interrupted) return;
+    /* Loop in case directory has more than RM_BATCH_MAX entries */
+    for (;;) {
+        _rm_batch_t b = { .n = 0, .overflow = false };
+        if (fat_ls(path, _rm_collect_cb, &b) != FAT_OK) {
+            out_fmt("rm: %s: list failed\n", path);
+            return;
+        }
+        if (b.n == 0) break;
+        for (int i = 0; i < b.n; i++) {
+            if (_interrupted) return;
+            char child[CWD_MAX];
+            snprintf(child, sizeof child, "%s/%s", path, b.name[i]);
+            if (b.is_dir[i]) {
+                rm_recurse(child);
+            } else {
+                fat_result_t r = fat_unlink(child);
+                if (r != FAT_OK) out_fmt("rm: %s: %s\n", child, fat_result_str(r));
+            }
+        }
+        if (!b.overflow) break;
+    }
+    /* Now remove the (now empty) directory itself */
+    fat_result_t r = fat_unlink(path);
+    if (r != FAT_OK) out_fmt("rmdir: %s: %s\n", path, fat_result_str(r));
+}
+
 static void cmd_rm(const char *arg) {
     if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
     bool force = parse_force_flag(&arg);
-    if (!arg || !*arg) { out_str("usage: rm [-f] <path>\n"); return; }
+    /* Parse optional -r / -R for recursive */
+    bool recursive = false;
+    while (arg && *arg == ' ') arg++;
+    if (arg && (!strncmp(arg, "-r", 2) || !strncmp(arg, "-R", 2)) &&
+        (arg[2] == ' ' || arg[2] == '\0')) {
+        recursive = true;
+        arg += 2;
+        while (*arg == ' ') arg++;
+    }
+    if (!arg || !*arg) { out_str("usage: rm [-rRf] <path>\n"); return; }
     char abs[CWD_MAX];
     resolve_abs(arg, abs);
     if (!force) {
-        char prompt[CWD_MAX + 16];
-        snprintf(prompt, sizeof prompt, "rm: delete %s?", abs);
+        char prompt[CWD_MAX + 32];
+        snprintf(prompt, sizeof prompt, "rm: delete %s%s?",
+                 abs, recursive ? " (recursive)" : "");
         if (!confirm(prompt)) { out_str("rm: cancelled\n"); return; }
     }
+
+    if (recursive && fat_is_dir(abs) == FAT_OK) {
+        rm_recurse(abs);
+        return;
+    }
+
     fat_result_t r = fat_unlink(abs);
     if (r != FAT_OK) out_fmt("rm: %s: %s\n", abs, fat_result_str(r));
 }
@@ -1132,6 +1267,43 @@ static void cmd_reboot(void) {
     out_str("Rebooting...\n");
     sleep_ms(100);
     watchdog_reboot(0, 0, 100);
+}
+
+/* Flush all persistent state, blank the display, then halt
+ * (deepest sleep we can manage without the BIOS coming back). */
+static void cmd_shutdown(void) {
+    out_str("Shutting down...\n");
+    if (_fat_mounted) {
+        hist_save();
+        alias_save();
+        cwd_persist();
+        clock_persist();
+    }
+    sleep_ms(150);
+    lcd_cls(LCD_BLACK);
+    kbd_set_backlight(0);
+    /* Stop tickling the watchdog and __wfe forever. The watchdog will
+     * eventually fire and reboot us, but the user has been warned. */
+    out_str("Halted. Press the reset button to power on.\n");
+    sleep_ms(50);
+    for (;;) __wfi();
+}
+
+/* Sleep: dim/blank LCD until any key. Watchdog stays alive (we tickle it). */
+static void cmd_sleep(void) {
+    out_str("Sleeping (press any key)...\n");
+    sleep_ms(100);
+    uint8_t saved = 255;
+    kbd_set_backlight(0);
+    lcd_cls(LCD_BLACK);
+    for (;;) {
+        watchdog_update();
+        int c = kbd_getc();
+        if (c >= 0) break;
+        sleep_ms(50);
+    }
+    kbd_set_backlight(saved);
+    out_str("\x1b[2J\x1b[H");
 }
 
 /* ------------------------------------------------------------------ */
@@ -1203,6 +1375,7 @@ static const char *_shell_cmds[] = {
     "settings", "set", "todo", "tasks", "planner", "agenda", "plan", "samples",
     "demos", "clock", "cal", "calendar", "basic", "tcc", "tinyc", "script",
     "paint", "sleep", "id", "true", "false",
+    "shutdown", "halt", "poweroff", "version",
     "watch", "diff", "env", "lock", "xxd", "strings", "yes", "tee",
     "life", "tetris", "mandelbrot", "fractal", "piano", "forth",
     "xmodem", "theme",
@@ -1391,6 +1564,7 @@ static void dispatch(char *line) {
 
     /* Save to history */
     hist_push(line);
+    hist_save();
 
     /* Split on ';' for command chaining (outside quotes) */
     char *segments[16];
@@ -1465,7 +1639,8 @@ static void dispatch_single(char *line) {
     else if (!strcmp(line, "history"))   cmd_history(arg);
     else if (!strcmp(line, "alias"))     cmd_alias(arg);
     else if (!strcmp(line, "unalias"))   cmd_unalias(arg);
-    else if (!strcmp(line, "uname"))     cmd_uname();
+    else if (!strcmp(line, "uname"))     cmd_uname(arg);
+    else if (!strcmp(line, "version"))   cmd_version();
     else if (!strcmp(line, "uptime"))    cmd_uptime();
     else if (!strcmp(line, "date"))      cmd_date(arg);
     else if (!strcmp(line, "dmesg"))     cmd_dmesg(arg);
@@ -1490,6 +1665,10 @@ static void dispatch_single(char *line) {
     else if (!strcmp(line, "sdinfo"))    cmd_sdinfo();
     else if (!strcmp(line, "sdread"))    cmd_sdread(arg);
     else if (!strcmp(line, "reboot"))    cmd_reboot();
+    else if (!strcmp(line, "shutdown") ||
+             !strcmp(line, "halt") ||
+             !strcmp(line, "poweroff")) cmd_shutdown();
+    else if (!strcmp(line, "sleep") && (!arg || !*arg)) cmd_sleep();
 #ifdef PICO_CYW43_SUPPORTED
     else if (!strcmp(line, "wifi"))       net_app_wifi(arg);
     else if (!strcmp(line, "ping"))       net_app_ping(arg);
@@ -1630,9 +1809,16 @@ static void _draw_status_bar(void) {
 
     int bat = kbd_battery_percent();
     bool charging = kbd_is_charging();
-    char lft[20];
+
+    /* Visual warning for very low battery */
+    uint32_t bar_bg = LCD_GREY;
+    if (bat >= 0 && bat < 15 && !charging) bar_bg = LCD_RED;
+    lcd_set_bg(bar_bg);
+    char lft[24];
     if (charging)
         snprintf(lft, sizeof lft, " [%d%%+]", bat);
+    else if (bat >= 0 && bat < 15)
+        snprintf(lft, sizeof lft, " [BAT %d%%!]", bat);
     else
         snprintf(lft, sizeof lft, " [%d%%]", bat);
     memcpy(bar, lft, strlen(lft));
@@ -1664,7 +1850,7 @@ static void _draw_status_bar(void) {
     /* Render into last text row (row 19) */
     lcd_set_cursor(0, 19);
     for (int i = 0; i < 40; i++)
-        lcd_draw_cell(i, 19, (char)bar[i], LCD_BLACK, LCD_GREY);
+        lcd_draw_cell(i, 19, (char)bar[i], LCD_BLACK, bar_bg);
 
     /* Restore state */
     lcd_set_fg(save_fg);
@@ -1737,6 +1923,7 @@ int main(void) {
             _cwd[CWD_MAX - 1] = '\0';
             cwd_restore();
             clock_restore();
+            hist_load();
         } else {
             out_str("SD: FAT mount failed\n");
             dmesg_log("FAT: mount failed");
@@ -1766,12 +1953,33 @@ int main(void) {
     int hist_browse = -1;  /* -1 = not browsing history */
     int cursor = 0;        /* cursor position within line */
 
+    /* Enable hardware watchdog: ~3 seconds, pause-on-debug */
+    watchdog_enable(3000, true);
+
+    /* Idle backlight dim — saves the LCD/CYW43 a little power */
+    uint32_t last_activity_ms = sys_time_ms();
+    bool dimmed = false;
+    const uint32_t IDLE_DIM_MS = 60000U;   /* 60s idle -> dim */
+    uint8_t saved_backlight = 255;
+
     for (;;) {
+        watchdog_update();
         int ch = read_input();
         if (ch < 0) {
+            uint32_t now = sys_time_ms();
+            if (!dimmed && (now - last_activity_ms) > IDLE_DIM_MS) {
+                /* Save a sane "current" brightness; default to 255 */
+                kbd_set_backlight(48);
+                dimmed = true;
+            }
             sleep_ms(20);
             continue;
         }
+        if (dimmed) {
+            kbd_set_backlight(saved_backlight);
+            dimmed = false;
+        }
+        last_activity_ms = sys_time_ms();
 
         /* ---- Enter: execute ---- */
         if (ch == '\r' || ch == '\n') {

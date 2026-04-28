@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              cmake gcc-arm-none-eabi build-essential \
+              libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib \
+              python3 git
+
+      - name: Build all targets
+        run: make all
+
+      - name: Stage release assets
+        run: |
+          mkdir -p release
+          VER="${GITHUB_REF_NAME}"
+          cp picocalc/build/mellivora_picocalc.uf2          release/mellivora_${VER}_pico.uf2
+          cp picocalc/build-pico2/mellivora_picocalc_pico2.uf2  release/mellivora_${VER}_pico2.uf2
+          cp picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2 release/mellivora_${VER}_pico2w.uf2
+          (cd release && sha256sum *.uf2 > SHA256SUMS)
+          ls -la release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Mellivora OS ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release/*.uf2
+            release/SHA256SUMS

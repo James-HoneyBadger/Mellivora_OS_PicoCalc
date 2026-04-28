@@ -275,6 +275,17 @@ void net_app_ntp(const char *arg) {
                  yr, mo, dy, h, m, s);
         sys_print(line);
         sys_putchar('\n');
+
+        /* Convert to epoch ms (UTC) using days-from-civil algorithm */
+        int y = yr - (mo <= 2);
+        int era = (y >= 0 ? y : y - 399) / 400;
+        unsigned yoe = (unsigned)(y - era * 400);
+        unsigned doy = (153u * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + dy - 1;
+        unsigned doe = yoe * 365u + yoe/4 - yoe/100 + doy;
+        int64_t days = (int64_t)era * 146097 + (int64_t)doe - 719468;
+        int64_t secs = days * 86400 + (int64_t)h * 3600 + (int64_t)m * 60 + s;
+        sys_set_epoch_ms(secs * 1000);
+        sys_print("RTC set from NTP.\n");
     } else {
         sys_print("NTP sync failed\n");
     }

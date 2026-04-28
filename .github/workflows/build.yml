@@ -1,0 +1,57 @@
+name: Build firmware
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'picocalc/src/**'
+      - 'picocalc/CMakeLists.txt'
+      - 'Makefile'
+      - '.github/workflows/build.yml'
+  pull_request:
+    paths:
+      - 'picocalc/src/**'
+      - 'picocalc/CMakeLists.txt'
+      - 'Makefile'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [picocalc, pico2, pico2w]
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ARM toolchain & build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+              cmake gcc-arm-none-eabi build-essential \
+              libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib \
+              python3 git
+
+      - name: Build (${{ matrix.target }})
+        run: make ${{ matrix.target }}
+
+      - name: Locate UF2
+        id: locate
+        run: |
+          UF2=$(find picocalc -name "*.uf2" -newer Makefile | head -1)
+          echo "uf2=$UF2" >> $GITHUB_OUTPUT
+          echo "Built: $UF2"
+          ls -la "$UF2"
+
+      - name: Upload UF2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mellivora-${{ matrix.target }}
+          path: ${{ steps.locate.outputs.uf2 }}
+          if-no-files-found: error
+          retention-days: 30
