@@ -18,7 +18,13 @@ PICOTOOL = $(PICO_BUILD_DIR)/_deps/picotool/picotool
 all: picocalc
 
 # Build every supported firmware variant (used by CI release).
-all-targets: picocalc pico2 pico2w
+# Use recursive sub-makes because the intermediate targets
+# (picocalc-config, picocalc-build, picocalc-uf2) are phony and would
+# otherwise be considered "already built" after the first variant.
+all-targets:
+	@$(MAKE) --no-print-directory picocalc
+	@$(MAKE) --no-print-directory pico2
+	@$(MAKE) --no-print-directory pico2w
 	@echo "=== All firmware targets built ==="
 
 picocalc: picocalc-sdk picocalc-config picocalc-build picocalc-uf2
