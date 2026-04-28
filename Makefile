@@ -56,6 +56,10 @@ picocalc-sdk:
 		echo "=== Fetching Pico SDK ==="; \
 		git clone --depth 1 https://github.com/raspberrypi/pico-sdk "$(PICO_DIR)/pico-sdk"; \
 	fi
+	@if [ -z "$(PICO_SDK_PATH)" ] && [ ! -f "$(PICO_DIR)/pico-sdk/lib/cyw43-driver/src/cyw43.h" ]; then \
+		echo "=== Fetching Pico SDK submodules (cyw43-driver, lwip, tinyusb, ...) ==="; \
+		git -C "$(PICO_DIR)/pico-sdk" submodule update --init --recursive --depth 1; \
+	fi
 
 picocalc-config:
 	@echo "=== Configuring PicoCalc target (board: $(PICO_BOARD), platform: $(PICO_PLATFORM)) ==="
