@@ -6,7 +6,7 @@ and a shell on top.
 
 ## Boot Flow
 
-```
+```text
 power-on / reset
    |
    v
@@ -65,7 +65,7 @@ core 1's status-bar updates can never tear into core 0's text output.
 
 ### LCD pipeline
 
-```
+```text
 out_char/out_str -> ANSI parser -> framebuffer cell write
                                       |
                                       v
@@ -77,7 +77,7 @@ out_char/out_str -> ANSI parser -> framebuffer cell write
 
 ### Keyboard pipeline
 
-```
+```text
 STM32 MCU -> I2C1 reg 0x09 -> kbd_getc()
                                 |
                                 v
@@ -92,7 +92,7 @@ STM32 MCU -> I2C1 reg 0x09 -> kbd_getc()
 
 ### SD / FAT pipeline
 
-```
+```text
 fat_*  -> resolve_path -> read_sector / write_sector
               |                |
               v                v
@@ -108,7 +108,7 @@ and `rm -r` snapshot the directory listing first, then iterate.
 
 ### Network pipeline (Pico 2W)
 
-```
+```text
 netapps  -> net.c high-level (sync wrappers)
                 |
                 v

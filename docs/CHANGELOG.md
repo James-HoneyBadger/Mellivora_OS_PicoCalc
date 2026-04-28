@@ -6,7 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.2.1] - 2025-04-27
 
-### Added
+### Added (2.2.1)
+
 - **Multi-AP WiFi credential store** — saves up to 4 networks to
   `/WIFI.CFG`, automatically reconnects to any reachable saved network at
   boot. New subcommands: `wifi saved`, `wifi forget <SSID>`. LRU ordering:
@@ -25,17 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pomodoro app** (`pomodoro [work] [break]`) — 25/5 min default, custom
   durations, backlight-flash chime between phases.
 
-### Changed
+### Changed (2.2.1)
+
 - Tab completion now includes `stopwatch`, `timer`, `pomodoro`,
   `screenshot`, `set`, `unset`.
 
-### Fixed
+### Fixed (2.2.1)
+
 - `wifi connect` success path now persists credentials so they survive
   reboot and are eligible for auto-connect.
 
 ## [2.2.0] - 2025-04-27
 
-### Added
+### Added (2.2.0)
+
 - Versioned `MELLIVORA_VERSION` macro baked into builds
 - `version` command — prints firmware version, build date, and project URL
 - `uname -a` — extended system info (LCD, KBD, SD, UART, WLAN, build date)
@@ -49,11 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Status bar shows red `[BAT n%!]` warning when battery < 15 %
 - Tab-completion knows about new commands (`shutdown`, `version`, etc.)
 
-### Changed
+### Changed (2.2.0)
+
 - `cmd_uname` now accepts an optional `-a` argument for verbose output
 - Banner now reports the active firmware version
 
-### Fixed
+### Fixed (2.2.0)
+
 - (none — no regressions identified)
 
 ## [2.1.0] - 2025-04 (prior to changelog)

@@ -15,14 +15,14 @@ Clockwork PicoCalc.
 
 ### LCD — ILI9488, 320x320, SPI1
 
-| Pin   | Signal | GPIO |
-|-------|--------|------|
-| SCK   | clock  | 10   |
-| MOSI  | data   | 11   |
-| MISO  | (unused) | 12 |
-| CS    | chip select | 13 |
-| DC    | data/cmd  | 14   |
-| RST   | reset     | 15   |
+| Pin  | Signal      | GPIO |
+|------|-------------|------|
+| SCK  | clock       |   10 |
+| MOSI | data        |   11 |
+| MISO | (unused)    |   12 |
+| CS   | chip select |   13 |
+| DC   | data/cmd    |   14 |
+| RST  | reset       |   15 |
 
 SPI1 runs at **25 MHz** on RP2040, **40 MHz** on RP2350.
 
@@ -62,9 +62,9 @@ SPI0 runs at **4 MHz** for compatibility across SD card classes.
 
 ### Power
 
-| Pin       | Function          |
-|-----------|-------------------|
-| GP23      | `PICO_PIN_PS` — must be driven HIGH for stable operation |
+| Pin  | Function                                                |
+|------|---------------------------------------------------------|
+| GP23 | `PICO_PIN_PS` — must be driven HIGH for stable operation |
 
 ## Power Consumption (rough, full-bright)
 

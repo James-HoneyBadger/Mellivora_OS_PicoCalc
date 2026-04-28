@@ -22,7 +22,7 @@ A clear description of the bug.
 
 Output of `version`:
 
-```
+```text
 (paste here)
 ```
 
