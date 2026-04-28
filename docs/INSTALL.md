@@ -99,7 +99,7 @@ After flashing, confirm the following on the device:
 
 ## 7. Preparing the SD Card
 
-The on-device apps and file tools depend on a FAT-formatted card.
+The apps and file tools depend on a FAT-formatted card.
 
 Recommended practice:
 

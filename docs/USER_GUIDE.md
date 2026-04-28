@@ -1,6 +1,6 @@
 # Mellivora PicoCalc User Guide
 
-This guide explains everyday use of Mellivora PicoCalc on real hardware. It is aimed at users who want to work directly from the built-in shell and apps.
+This guide explains everyday use of Mellivora PicoCalc. It is aimed at users who want to work directly from the built-in shell and apps.
 
 ## 1. What Mellivora PicoCalc Is
 
@@ -219,7 +219,7 @@ Provides a more detailed status readout.
 paint
 ```
 
-A simple on-device drawing mode.
+A simple drawing mode.
 
 ### Sprite editor
 

@@ -1,6 +1,9 @@
 # Mellivora PicoCalc
 
-Mellivora PicoCalc is a keyboard-first micro operating environment for Clockwork PicoCalc style hardware based on Raspberry Pi Pico and Pico 2 boards. It combines a shell, filesystem tools, persistent personal utilities, simple development environments, and lightweight games into a compact firmware image that runs directly on the device.
+Mellivora PicoCalc is a compact firmware for the Clockwork PicoCalc, built
+for the Raspberry Pi Pico, Pico 2, and Pico 2W. It bundles a shell,
+filesystem tools, persistent personal utilities, simple development
+environments, and lightweight games into a single image.
 
 ![Mellivora PicoCalc preview](picocalc_mock_preview.svg)
 
@@ -85,16 +88,14 @@ picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
 
 ## Project Status
 
-This repository targets the PicoCalc firmware for real handheld hardware.
 Three first-class build variants are produced from a single source tree:
 
 - **`picocalc`** — Raspberry Pi Pico (RP2040)
 - **`pico2`** — Raspberry Pi Pico 2 (RP2350)
 - **`pico2w`** — Raspberry Pi Pico 2 W (RP2350 + CYW43439 WiFi)
 
-The system is designed around a practical on-device shell workflow rather
-than a desktop runtime. CI builds and signs all three UF2 images on every
-push to `main` and on every release tag.
+CI builds and signs all three UF2 images on every push to `main` and on
+every release tag.
 
 See [docs/CHANGELOG.md](docs/CHANGELOG.md) for release history and
 [picocalc/README.md](picocalc/README.md) for the firmware-local overview.

@@ -4,9 +4,11 @@ This document describes the firmware architecture, subsystem boundaries, runtime
 
 ## 1. Hardware Target
 
-Primary supported platform:
+Supported platforms:
 
-- RP2040-based Clockwork PicoCalc class hardware
+- RP2040 — Raspberry Pi Pico on Clockwork PicoCalc
+- RP2350 — Raspberry Pi Pico 2 on Clockwork PicoCalc
+- RP2350 + CYW43439 — Raspberry Pi Pico 2 W on Clockwork PicoCalc
 
 Main interfaces:
 

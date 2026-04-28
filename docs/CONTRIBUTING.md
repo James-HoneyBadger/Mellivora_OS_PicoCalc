@@ -73,7 +73,7 @@ the `RPI-RP2` (or `RP2350`) drive that appears.
 - [ ] New commands are documented in `docs/COMMANDS.md`
 - [ ] User-visible changes added to `docs/CHANGELOG.md`
 - [ ] PR description explains *why*, not just *what*
-- [ ] Tested on real hardware where possible (or noted otherwise)
+- [ ] Tested on hardware where possible (or noted otherwise)
 
 ## Architecture Overview
 

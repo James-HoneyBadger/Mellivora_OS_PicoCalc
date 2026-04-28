@@ -10,7 +10,7 @@ This directory contains the active firmware implementation for Mellivora on Pico
 - persistent personal apps such as notes, todo, planner, journal, habits, and bookmarks
 - creative tools including paint and sprite editing
 - mini games including snake, dice, coin, and guess
-- on-device calculator, BASIC, and Tiny C environments
+- calculator, BASIC, and Tiny C environments
 - WiFi networking with TCP, DNS, NTP, HTTP, IRC, and telnet (Pico 2W only)
 
 ## Build

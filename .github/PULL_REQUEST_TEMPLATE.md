@@ -16,7 +16,7 @@ Briefly describe what this PR changes and why.
 - [ ] No new warnings from files in `picocalc/src/`
 - [ ] New commands documented in [`docs/COMMANDS.md`](../docs/COMMANDS.md)
 - [ ] User-visible changes added to [`docs/CHANGELOG.md`](../docs/CHANGELOG.md)
-- [ ] Tested on real hardware (specify which: ___________________)
+- [ ] Tested on hardware (specify which: ___________________)
 
 ## Related Issues
 

@@ -10,7 +10,7 @@ Mellivora PicoCalc is an embedded system first. The code is optimized for:
 - bounded buffers
 - direct keyboard-and-screen workflows
 - robust SD-card file handling
-- short feedback loops on real hardware
+- short feedback loops on hardware
 
 Whenever possible, features should feel natural in a handheld shell rather than like a cut-down desktop port.
 
