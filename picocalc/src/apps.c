@@ -2528,6 +2528,101 @@ static void app_id(const char *arg) {
     print_line("uid=0(picocalc) gid=0(picocalc) groups=0(picocalc)");
 }
 
+/* Stopwatch — Space=start/stop, L=lap, R=reset, Q=quit */
+static void app_stopwatch(const char *arg) {
+    (void)arg;
+    bool running = false;
+    uint32_t start_ms = 0;
+    uint32_t accum_ms = 0;
+    int laps = 0;
+    sys_clear();
+    sys_print("Mellivora stopwatch\n");
+    sys_print("Space=start/stop  L=lap  R=reset  Q=quit\n\n");
+    for (;;) {
+        uint32_t now = running ? (sys_time_ms() - start_ms + accum_ms) : accum_ms;
+        uint32_t mm = now / 60000U;
+        uint32_t ss = (now / 1000U) % 60U;
+        uint32_t ms = now % 1000U;
+        char line[40];
+        snprintf(line, sizeof line, "\r%02lu:%02lu.%03lu  %s   ",
+                 (unsigned long)mm, (unsigned long)ss, (unsigned long)ms,
+                 running ? "RUN " : "STOP");
+        sys_print(line);
+        int ch = kbd_getc();
+        if (ch == 'q' || ch == 'Q' || ch == 0x03) break;
+        if (ch == ' ') {
+            if (running) { accum_ms = now; running = false; }
+            else         { start_ms = sys_time_ms(); running = true; }
+        } else if (ch == 'r' || ch == 'R') {
+            running = false; accum_ms = 0; laps = 0;
+            sys_clear();
+            sys_print("Mellivora stopwatch\n");
+            sys_print("Space=start/stop  L=lap  R=reset  Q=quit\n\n");
+        } else if (ch == 'l' || ch == 'L') {
+            laps++;
+            sys_putchar('\n');
+            char ln[48];
+            snprintf(ln, sizeof ln, "  lap %2d  %02lu:%02lu.%03lu\n",
+                     laps,
+                     (unsigned long)mm, (unsigned long)ss, (unsigned long)ms);
+            sys_print(ln);
+        }
+        sleep_ms(50);
+    }
+    sys_putchar('\n');
+}
+
+/* Pomodoro timer — 25 min work / 5 min break, Q quits early. */
+static void app_pomodoro(const char *arg) {
+    int work_min = 25, break_min = 5;
+    if (arg && *arg) {
+        char *end = NULL;
+        long w = strtol(arg, &end, 10);
+        if (w >= 1 && w <= 120) work_min = (int)w;
+        if (end && *end) {
+            long b = strtol(end, &end, 10);
+            if (b >= 1 && b <= 60) break_min = (int)b;
+        }
+    }
+    for (int round = 1;; round++) {
+        for (int phase = 0; phase < 2; phase++) {
+            int total = (phase == 0 ? work_min : break_min) * 60;
+            const char *label = (phase == 0) ? "WORK " : "BREAK";
+            sys_clear();
+            char hdr[64];
+            snprintf(hdr, sizeof hdr,
+                     "Pomodoro #%d  %s  %d min total\nQ=quit\n\n",
+                     round, label, total / 60);
+            sys_print(hdr);
+            uint32_t start = sys_time_ms();
+            for (;;) {
+                uint32_t elapsed = (sys_time_ms() - start) / 1000U;
+                if ((int)elapsed >= total) break;
+                int rem = total - (int)elapsed;
+                char line[40];
+                snprintf(line, sizeof line, "\r%s  %02d:%02d remaining ",
+                         label, rem / 60, rem % 60);
+                sys_print(line);
+                int ch = kbd_getc();
+                if (ch == 'q' || ch == 'Q' || ch == 0x03) {
+                    sys_putchar('\n');
+                    return;
+                }
+                sleep_ms(250);
+            }
+            sys_putchar('\n');
+            /* Beep three times via backlight flash */
+            for (int i = 0; i < 3; i++) {
+                kbd_set_backlight(0);   sleep_ms(120);
+                kbd_set_backlight(255); sleep_ms(120);
+            }
+            sys_print(phase == 0 ? "** Take a break! **\n"
+                                 : "** Back to work! **\n");
+            sleep_ms(1500);
+        }
+    }
+}
+
 static int expr_lookup_basic(void *ctx, const char *name, size_t len) {
     (void)len;
     basic_env_t *env = (basic_env_t *)ctx;
@@ -2633,7 +2728,17 @@ static int expr_parse_primary(expr_state_t *st) {
 
     if (isdigit((unsigned char)*st->s)) {
         char *endptr = NULL;
-        long v = strtol(st->s, &endptr, 10);
+        long v;
+        /* Detect 0x.. (hex), 0b.. (bin), 0o.. (octal) */
+        if (st->s[0] == '0' && (st->s[1] == 'x' || st->s[1] == 'X')) {
+            v = strtol(st->s + 2, &endptr, 16);
+        } else if (st->s[0] == '0' && (st->s[1] == 'b' || st->s[1] == 'B')) {
+            v = strtol(st->s + 2, &endptr, 2);
+        } else if (st->s[0] == '0' && (st->s[1] == 'o' || st->s[1] == 'O')) {
+            v = strtol(st->s + 2, &endptr, 8);
+        } else {
+            v = strtol(st->s, &endptr, 10);
+        }
         st->s = endptr;
         return (int)v;
     }
@@ -4534,6 +4639,8 @@ static bool app_dispatch_named(const char *cmd, const char *arg) {
         {"basic", app_basic}, {"tcc", app_tinyc}, {"tinyc", app_tinyc},
         {"script", app_script}, {"paint", app_paint}, {"sleep", app_sleep_ms},
         {"id", app_id}, {"true", app_noop}, {"false", app_noop},
+        {"stopwatch", app_stopwatch}, {"timer", app_stopwatch},
+        {"pomodoro", app_pomodoro},
         /* New utilities */
         {"watch", app_watch}, {"diff", app_diff}, {"env", app_env},
         {"lock", app_lock}, {"xxd", app_xxd}, {"strings", app_strings},

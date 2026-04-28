@@ -4,6 +4,35 @@ All notable changes to **Mellivora OS for PicoCalc** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2025-04-27
+
+### Added
+- **Multi-AP WiFi credential store** — saves up to 4 networks to
+  `/WIFI.CFG`, automatically reconnects to any reachable saved network at
+  boot. New subcommands: `wifi saved`, `wifi forget <SSID>`. LRU ordering:
+  most recently connected network is tried first.
+- **Boot-time NTP sync** — after WiFi auto-connect succeeds, if the
+  software RTC is unset (epoch < 2020) the system contacts `pool.ntp.org`
+  and persists the result to `/CLOCK.TXT`.
+- **Shell variables** — `set NAME=VALUE`, `unset NAME`, `set` lists all.
+  `$NAME` and `${NAME}` are expanded in command lines (single-quoted
+  strings are preserved literally). 16-slot store.
+- **`screenshot` command** — dumps the LCD text buffer to `/SCREEN.TXT`.
+- **Calculator hex/bin/oct literals** — `0x..`, `0b..`, `0o..` accepted
+  in expressions, including BASIC and TinyC.
+- **Stopwatch app** (`stopwatch` / `timer`) — Space=start/stop, L=lap,
+  R=reset, Q=quit. Millisecond resolution.
+- **Pomodoro app** (`pomodoro [work] [break]`) — 25/5 min default, custom
+  durations, backlight-flash chime between phases.
+
+### Changed
+- Tab completion now includes `stopwatch`, `timer`, `pomodoro`,
+  `screenshot`, `set`, `unset`.
+
+### Fixed
+- `wifi connect` success path now persists credentials so they survive
+  reboot and are eligible for auto-connect.
+
 ## [2.2.0] - 2025-04-27
 
 ### Added

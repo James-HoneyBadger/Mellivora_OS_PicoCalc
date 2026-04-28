@@ -22,6 +22,107 @@
 static char _wifi_ssid[33]  = "";
 static char _wifi_pass[65]  = "";
 
+/* Multi-AP saved-network store. Each entry is "SSID\tPASS\n".
+ * Persisted to /WIFI.CFG. Boot-time auto-connect tries each in order. */
+#define WIFI_AP_MAX 4
+typedef struct {
+    char ssid[33];
+    char pass[65];
+    bool used;
+} _wifi_ap_t;
+static _wifi_ap_t _wifi_aps[WIFI_AP_MAX];
+
+#define WIFI_CFG_FILE "/WIFI.CFG"
+
+/* Forward — defined in fat.h */
+#include "fat.h"
+
+static void _wifi_ap_save(void) {
+    char buf[(33 + 65 + 4) * WIFI_AP_MAX + 4];
+    int pos = 0;
+    for (int i = 0; i < WIFI_AP_MAX; i++) {
+        if (!_wifi_aps[i].used) continue;
+        int n = snprintf(buf + pos, sizeof buf - pos, "%s\t%s\n",
+                         _wifi_aps[i].ssid, _wifi_aps[i].pass);
+        if (n < 0 || n >= (int)(sizeof buf - pos)) break;
+        pos += n;
+    }
+    fat_create(WIFI_CFG_FILE, (const uint8_t *)buf, (uint32_t)pos);
+}
+
+static void _wifi_ap_load(void) {
+    fat_file_t f;
+    if (fat_open(WIFI_CFG_FILE, &f) != FAT_OK) return;
+    char buf[(33 + 65 + 4) * WIFI_AP_MAX + 4];
+    int32_t got = fat_read(&f, buf, sizeof buf - 1);
+    if (got <= 0) return;
+    buf[got] = '\0';
+    int idx = 0;
+    char *line = buf;
+    while (line && *line && idx < WIFI_AP_MAX) {
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = '\0';
+        char *tab = strchr(line, '\t');
+        if (tab) {
+            *tab = '\0';
+            snprintf(_wifi_aps[idx].ssid, sizeof _wifi_aps[idx].ssid, "%.32s", line);
+            snprintf(_wifi_aps[idx].pass, sizeof _wifi_aps[idx].pass, "%.64s", tab + 1);
+            _wifi_aps[idx].used = true;
+            idx++;
+        }
+        line = nl ? nl + 1 : NULL;
+    }
+}
+
+static void _wifi_ap_remember(const char *ssid, const char *pass) {
+    if (!ssid || !*ssid) return;
+    /* If already present, move to front (LRU). */
+    int found = -1;
+    for (int i = 0; i < WIFI_AP_MAX; i++) {
+        if (_wifi_aps[i].used && strcmp(_wifi_aps[i].ssid, ssid) == 0) {
+            found = i; break;
+        }
+    }
+    _wifi_ap_t entry;
+    memset(&entry, 0, sizeof entry);
+    snprintf(entry.ssid, sizeof entry.ssid, "%s", ssid);
+    snprintf(entry.pass, sizeof entry.pass, "%s", pass ? pass : "");
+    entry.used = true;
+
+    if (found > 0) {
+        /* Shift down */
+        for (int i = found; i > 0; i--) _wifi_aps[i] = _wifi_aps[i-1];
+        _wifi_aps[0] = entry;
+    } else if (found < 0) {
+        /* Push to front, drop oldest */
+        for (int i = WIFI_AP_MAX - 1; i > 0; i--) _wifi_aps[i] = _wifi_aps[i-1];
+        _wifi_aps[0] = entry;
+    } else {
+        _wifi_aps[0] = entry;
+    }
+    _wifi_ap_save();
+}
+
+/* Public: try to connect to any saved AP (returns 0 on success). */
+int net_app_wifi_autoconnect(void) {
+    static bool loaded = false;
+    if (!loaded) { _wifi_ap_load(); loaded = true; }
+    if (net_init() < 0) return -1;
+    for (int i = 0; i < WIFI_AP_MAX; i++) {
+        if (!_wifi_aps[i].used) continue;
+        if (net_wifi_connect(_wifi_aps[i].ssid,
+                             _wifi_aps[i].pass[0] ? _wifi_aps[i].pass : NULL,
+                             10000) == 0) {
+            strncpy(_wifi_ssid, _wifi_aps[i].ssid, sizeof _wifi_ssid - 1);
+            _wifi_ssid[sizeof _wifi_ssid - 1] = '\0';
+            strncpy(_wifi_pass, _wifi_aps[i].pass, sizeof _wifi_pass - 1);
+            _wifi_pass[sizeof _wifi_pass - 1] = '\0';
+            return 0;
+        }
+    }
+    return -1;
+}
+
 /* ============================================================
  * Helper: read a line from keyboard (blocking, with echo)
  * ============================================================ */
@@ -91,6 +192,38 @@ void net_app_wifi(const char *arg) {
         return;
     }
 
+    if (!strncmp(arg, "forget", 6)) {
+        const char *rest = arg + 6;
+        while (*rest == ' ') rest++;
+        if (!*rest) {
+            sys_print("Usage: wifi forget <SSID>\n");
+            return;
+        }
+        bool found = false;
+        for (int i = 0; i < WIFI_AP_MAX; i++) {
+            if (_wifi_aps[i].used && strcmp(_wifi_aps[i].ssid, rest) == 0) {
+                _wifi_aps[i].used = false;
+                found = true;
+            }
+        }
+        if (found) { _wifi_ap_save(); sys_print("Forgotten.\n"); }
+        else sys_print("wifi: SSID not in saved list\n");
+        return;
+    }
+
+    if (!strcmp(arg, "saved")) {
+        bool any = false;
+        for (int i = 0; i < WIFI_AP_MAX; i++) {
+            if (!_wifi_aps[i].used) continue;
+            char line[80];
+            snprintf(line, sizeof line, "  %d. %.40s", i + 1, _wifi_aps[i].ssid);
+            sys_print(line); sys_putchar('\n');
+            any = true;
+        }
+        if (!any) sys_print("  (no saved networks)\n");
+        return;
+    }
+
     if (!strcmp(arg, "status")) {
         if (net_is_connected()) {
             net_ifinfo_t info;
@@ -157,6 +290,7 @@ void net_app_wifi(const char *arg) {
             _wifi_ssid[sizeof _wifi_ssid - 1] = '\0';
             strncpy(_wifi_pass, pass, sizeof _wifi_pass - 1);
             _wifi_pass[sizeof _wifi_pass - 1] = '\0';
+            _wifi_ap_remember(ssid, pass);
             net_ifinfo_t info;
             net_get_ifinfo(&info);
             char ip[16];
@@ -171,7 +305,7 @@ void net_app_wifi(const char *arg) {
     }
 
     sys_print("wifi: unknown subcommand\n");
-    sys_print("Usage: wifi connect|disconnect|scan|status\n");
+    sys_print("Usage: wifi connect|disconnect|scan|status|saved|forget\n");
 }
 
 /* ============================================================

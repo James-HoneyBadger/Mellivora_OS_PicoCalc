@@ -71,6 +71,7 @@ static void _draw_status_bar(void);
 static bool confirm(const char *msg);
 static bool parse_force_flag(const char **arg);
 static void rm_recurse(const char *path);
+static void copy_str(char *dst, size_t dst_sz, const char *src);
 
 #define BANNER \
     "Mellivora OS v" MELLIVORA_VERSION "\n" \
@@ -129,6 +130,83 @@ typedef struct {
 } alias_entry_t;
 
 static alias_entry_t _aliases[ALIAS_MAX];
+
+/* Shell variables — set NAME=VALUE; expanded as $NAME or ${NAME} */
+#define VAR_MAX 16
+typedef struct {
+    bool used;
+    char name[ALIAS_NAME_SZ];
+    char value[ALIAS_VALUE_SZ];
+} var_entry_t;
+static var_entry_t _vars[VAR_MAX];
+
+static const char *var_lookup(const char *name) {
+    for (int i = 0; i < VAR_MAX; i++) {
+        if (_vars[i].used && strcmp(_vars[i].name, name) == 0)
+            return _vars[i].value;
+    }
+    return NULL;
+}
+
+static bool var_set(const char *name, const char *value) {
+    if (!name || !*name) return false;
+    int slot = -1, free_slot = -1;
+    for (int i = 0; i < VAR_MAX; i++) {
+        if (_vars[i].used && strcmp(_vars[i].name, name) == 0) { slot = i; break; }
+        if (!_vars[i].used && free_slot < 0) free_slot = i;
+    }
+    if (slot < 0) slot = free_slot;
+    if (slot < 0) return false;
+    _vars[slot].used = true;
+    copy_str(_vars[slot].name, sizeof _vars[slot].name, name);
+    copy_str(_vars[slot].value, sizeof _vars[slot].value, value ? value : "");
+    return true;
+}
+
+static bool var_unset(const char *name) {
+    for (int i = 0; i < VAR_MAX; i++) {
+        if (_vars[i].used && strcmp(_vars[i].name, name) == 0) {
+            _vars[i].used = false;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* In-place expansion of $NAME and ${NAME} in a buffer. */
+static void var_expand(char *line, size_t line_sz) {
+    char out[LINE_BUF];
+    size_t oi = 0;
+    bool in_squote = false;
+    for (size_t i = 0; line[i] && oi + 1 < sizeof out; i++) {
+        char c = line[i];
+        if (c == '\'') { in_squote = !in_squote; out[oi++] = c; continue; }
+        if (in_squote || c != '$') { out[oi++] = c; continue; }
+        /* $NAME or ${NAME} */
+        size_t j = i + 1;
+        bool braced = false;
+        if (line[j] == '{') { braced = true; j++; }
+        char name[ALIAS_NAME_SZ]; size_t ni = 0;
+        while (line[j] && ni + 1 < sizeof name) {
+            char nc = line[j];
+            if (braced ? (nc == '}') : !(isalnum((unsigned char)nc) || nc == '_')) break;
+            name[ni++] = nc; j++;
+        }
+        name[ni] = '\0';
+        if (braced && line[j] == '}') j++;
+        if (ni == 0) { out[oi++] = c; continue; }   /* lone $ */
+        const char *val = var_lookup(name);
+        if (val) {
+            size_t vl = strlen(val);
+            if (oi + vl >= sizeof out) vl = sizeof out - 1 - oi;
+            memcpy(out + oi, val, vl);
+            oi += vl;
+        }
+        i = j - 1;
+    }
+    out[oi] = '\0';
+    copy_str(line, line_sz, out);
+}
 
 /*
  * Build an absolute path from cwd + input.
@@ -630,6 +708,48 @@ static void cmd_unalias(const char *arg) {
     memset(&_aliases[slot], 0, sizeof _aliases[slot]);
     if (_fat_mounted && !alias_save()) out_str("unalias: warning: could not save aliases\n");
     else out_fmt("unalias: removed %s\n", name);
+}
+
+/* set [NAME=VALUE] | set NAME VALUE | set    -> list all */
+static void cmd_setvar(const char *arg) {
+    char tmp[LINE_BUF];
+    copy_str(tmp, sizeof tmp, arg ? arg : "");
+    char *s = skip_spaces(tmp);
+    if (!s || !*s) {
+        bool any = false;
+        for (int i = 0; i < VAR_MAX; i++) {
+            if (_vars[i].used) {
+                out_fmt("%s=%s\n", _vars[i].name, _vars[i].value);
+                any = true;
+            }
+        }
+        if (!any) out_str("(no variables)\n");
+        return;
+    }
+    /* Split NAME=VALUE or NAME VALUE */
+    char *name = s;
+    char *value = NULL;
+    char *eq = strchr(s, '=');
+    char *sp = strchr(s, ' ');
+    if (eq && (!sp || eq < sp)) { *eq = '\0'; value = eq + 1; }
+    else if (sp) { *sp = '\0'; value = skip_spaces(sp + 1); }
+    if (!name || !*name) { out_str("usage: set NAME=VALUE\n"); return; }
+    /* Strip optional surrounding quotes from value */
+    if (value && (*value == '"' || *value == '\'')) {
+        char q = *value++;
+        char *end = strrchr(value, q);
+        if (end) *end = '\0';
+    }
+    if (!var_set(name, value)) out_str("set: too many variables\n");
+}
+
+static void cmd_unsetvar(const char *arg) {
+    char tmp[LINE_BUF];
+    copy_str(tmp, sizeof tmp, arg ? arg : "");
+    char *s = skip_spaces(tmp);
+    trim_right(s);
+    if (!s || !*s) { out_str("usage: unset NAME\n"); return; }
+    if (!var_unset(s)) out_fmt("unset: %s not found\n", s);
 }
 
 static void cmd_man(const char *arg) {
@@ -1306,6 +1426,31 @@ static void cmd_sleep(void) {
     out_str("\x1b[2J\x1b[H");
 }
 
+/* Save the current text-mode display contents to a file (default /SCREEN.TXT). */
+static void cmd_screenshot(const char *arg) {
+    if (!_fat_mounted) { out_str("screenshot: SD not mounted\n"); return; }
+    const char *fname = (arg && *arg) ? arg : "/SCREEN.TXT";
+    char abs[CWD_MAX];
+    resolve_abs(fname, abs);
+    /* 20 rows * (40 cols + 1 newline) + small slack */
+    char buf[20 * 41 + 16];
+    size_t pos = 0;
+    for (int r = 0; r < 20 && pos + 41 < sizeof buf; r++) {
+        for (int c = 0; c < 40; c++) {
+            char ch = lcd_get_cell(c, r);
+            if (ch < 0x20 || ch > 0x7E) ch = ' ';
+            buf[pos++] = ch;
+        }
+        /* trim trailing spaces on the line for compactness */
+        while (pos > 0 && buf[pos - 1] == ' ') pos--;
+        buf[pos++] = '\n';
+    }
+    fat_result_t r = fat_create(abs, (const uint8_t *)buf, (uint32_t)pos);
+    if (r != FAT_OK) out_fmt("screenshot: %s: %s\n", abs, fat_result_str(r));
+    else            out_fmt("screenshot: wrote %s (%u bytes)\n",
+                            abs, (unsigned)pos);
+}
+
 /* ------------------------------------------------------------------ */
 /* Command dispatch                                                     */
 /* ------------------------------------------------------------------ */
@@ -1376,6 +1521,7 @@ static const char *_shell_cmds[] = {
     "demos", "clock", "cal", "calendar", "basic", "tcc", "tinyc", "script",
     "paint", "sleep", "id", "true", "false",
     "shutdown", "halt", "poweroff", "version",
+    "stopwatch", "timer", "pomodoro", "screenshot", "set", "unset",
     "watch", "diff", "env", "lock", "xxd", "strings", "yes", "tee",
     "life", "tetris", "mandelbrot", "fractal", "piano", "forth",
     "xmodem", "theme",
@@ -1561,6 +1707,7 @@ static void dispatch(char *line) {
     }
 
     (void)alias_expand_safe(line, LINE_BUF);
+    var_expand(line, LINE_BUF);
 
     /* Save to history */
     hist_push(line);
@@ -1639,6 +1786,9 @@ static void dispatch_single(char *line) {
     else if (!strcmp(line, "history"))   cmd_history(arg);
     else if (!strcmp(line, "alias"))     cmd_alias(arg);
     else if (!strcmp(line, "unalias"))   cmd_unalias(arg);
+    /* `set NAME=VALUE` -> shell var; bare `set` -> falls through to settings app */
+    else if (!strcmp(line, "set") && arg && strchr(arg, '=')) cmd_setvar(arg);
+    else if (!strcmp(line, "unset"))     cmd_unsetvar(arg);
     else if (!strcmp(line, "uname"))     cmd_uname(arg);
     else if (!strcmp(line, "version"))   cmd_version();
     else if (!strcmp(line, "uptime"))    cmd_uptime();
@@ -1669,6 +1819,7 @@ static void dispatch_single(char *line) {
              !strcmp(line, "halt") ||
              !strcmp(line, "poweroff")) cmd_shutdown();
     else if (!strcmp(line, "sleep") && (!arg || !*arg)) cmd_sleep();
+    else if (!strcmp(line, "screenshot")) cmd_screenshot(arg);
 #ifdef PICO_CYW43_SUPPORTED
     else if (!strcmp(line, "wifi"))       net_app_wifi(arg);
     else if (!strcmp(line, "ping"))       net_app_ping(arg);
@@ -1934,6 +2085,25 @@ int main(void) {
     }
 
     out_str(BANNER);
+
+#ifdef PICO_CYW43_SUPPORTED
+    /* Boot-time WiFi auto-connect + NTP sync (best-effort, fire-and-forget).
+     * Bounded by the connect/sync timeouts inside; total ~12s worst case. */
+    if (_fat_mounted) {
+        out_str("WiFi: auto-connecting to saved network...\n");
+        if (net_app_wifi_autoconnect() == 0) {
+            out_str("WiFi: connected.\n");
+            /* If RTC predates 2020, sync from NTP */
+            if (sys_now_epoch_ms() < 1577836800000LL) {
+                out_str("Time: syncing from NTP...\n");
+                net_app_ntp("pool.ntp.org");
+                clock_persist();
+            }
+        } else {
+            out_str("WiFi: no saved network reachable.\n");
+        }
+    }
+#endif
 
     /* Run autorun script + startup app from settings, if any. */
     if (_fat_mounted) app_boot();

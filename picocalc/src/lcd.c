@@ -735,3 +735,8 @@ void lcd_draw_cell(int col, int row, char c, uint32_t fg, uint32_t bg) {
     lcd_draw_char((uint16_t)(col * LCD_CHAR_W), (uint16_t)(row * LCD_CHAR_H), c, fg, bg);
     _lcd_unlock();
 }
+
+char lcd_get_cell(int col, int row) {
+    if (col < 0 || col >= LCD_COLS || row < 0 || row >= LCD_ROWS) return ' ';
+    return _text_buf[row][col];
+}
