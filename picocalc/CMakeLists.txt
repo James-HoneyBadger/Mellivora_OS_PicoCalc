@@ -38,7 +38,7 @@ endif()
 
 target_compile_definitions(mellivora_picocalc PRIVATE
     PICO_DEFAULT_UART_BAUD_RATE=115200
-    MELLIVORA_VERSION="2.2.0"
+    MELLIVORA_VERSION="2.3.0"
     MELLIVORA_BUILD_DATE="${CMAKE_PROJECT_NAME}-${CMAKE_BUILD_TYPE}"
 )
 
