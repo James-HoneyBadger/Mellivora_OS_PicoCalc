@@ -24,6 +24,7 @@
 #include <string.h>
 
 #include "pico/stdlib.h"
+#include "hardware/watchdog.h"
 
 #include "fat.h"
 #include "lcd.h"
@@ -186,11 +187,13 @@ static inline void sys_putchar(char c) {
 static inline int sys_getchar(void) {
     int c;
     do {
+        watchdog_update();          /* keep watchdog alive while waiting */
         c = getchar_timeout_us(0);
         if (c == PICO_ERROR_TIMEOUT) c = kbd_getc();
         if (c >= 0) { return c; }
         /* No hardware key — check for key repeat */
         c = kbd_get_repeat();
+        if (c < 0) sleep_ms(1);    /* yield CPU between polls */
     } while (c < 0);
     return c;
 }

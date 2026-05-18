@@ -427,6 +427,7 @@ void app_tree(const char *arg) {
  * -------------------------------------------------------------------------- */
 
 static uint32_t app_du_path(const char *path, du_stat_t *out);
+static void app_format_size(uint64_t bytes, char *out, size_t out_sz);
 
 static void app_du_accum_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
     du_walk_ctx_t *ctx = (du_walk_ctx_t *)opaque;
@@ -492,8 +493,9 @@ static void app_du_list_cb(const char *name, uint32_t size, bool is_dir, void *o
     ctx->stat.dirs  += dirs;
 
     char line[160];
-    snprintf(line, sizeof line, "%8lu  %s%s",
-             (unsigned long)bytes, name, is_dir ? "/" : "");
+    char sz[16];
+    app_format_size((uint64_t)bytes, sz, sizeof sz);
+    snprintf(line, sizeof line, "%8s  %s%s", sz, name, is_dir ? "/" : "");
     print_line(line);
 }
 
@@ -514,9 +516,10 @@ void app_du(const char *arg) {
             print_line("du: unable to list directory"); return;
         }
         char out[128];
-        snprintf(out, sizeof out, "total: %lu bytes | files: %d | dirs: %d",
-                 (unsigned long)ctx.stat.total_bytes,
-                 ctx.stat.files, ctx.stat.dirs + 1);
+        char sz[16];
+        app_format_size((uint64_t)ctx.stat.total_bytes, sz, sizeof sz);
+        snprintf(out, sizeof out, "total: %s | files: %d | dirs: %d",
+                 sz, ctx.stat.files, ctx.stat.dirs + 1);
         print_line(out);
         return;
     }
@@ -525,7 +528,9 @@ void app_du(const char *arg) {
     if (fat_open(abs, &f) != FAT_OK) { print_line("du: path not found"); return; }
 
     char out[160];
-    snprintf(out, sizeof out, "%lu bytes  %.120s", (unsigned long)f.size, abs);
+    char sz[16];
+    app_format_size((uint64_t)f.size, sz, sizeof sz);
+    snprintf(out, sizeof out, "%s  %.120s", sz, abs);
     print_line(out);
 }
 

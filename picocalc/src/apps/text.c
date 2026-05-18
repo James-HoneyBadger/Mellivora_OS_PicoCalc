@@ -440,3 +440,76 @@ void app_cut(const char *arg) {
         line = next + 1;
     }
 }
+
+void app_uniq(const char *arg) {
+    const char *s = skip_ws(arg);
+    bool count_mode = false;
+    bool dup_only   = false;
+    bool uniq_only  = false;
+
+    while (s && s[0] == '-') {
+        if      (s[1] == 'c') { count_mode = true;  s = skip_ws(s + 2); }
+        else if (s[1] == 'd') { dup_only   = true;  s = skip_ws(s + 2); }
+        else if (s[1] == 'u') { uniq_only  = true;  s = skip_ws(s + 2); }
+        else break;
+    }
+
+    char path[APP_TOKEN_MAX];
+    next_token(s, path, sizeof path);
+    if (!*path) { print_line("usage: uniq [-c] [-d] [-u] FILE"); return; }
+
+    char buf[APP_READ_MAX + 1];
+    int n = read_text_file(path, buf, sizeof buf, "uniq");
+    if (n < 0) return;
+
+    char prev[APP_TOKEN_MAX] = {0};
+    unsigned run = 0;
+    const char *p = buf;
+    while (*p) {
+        const char *start = p;
+        while (*p && *p != '\n') p++;
+        size_t len = (size_t)(p - start);
+        if (len >= sizeof prev) len = sizeof prev - 1;
+
+        char cur[APP_TOKEN_MAX];
+        memcpy(cur, start, len);
+        cur[len] = '\0';
+
+        if (run == 0 || strcmp(cur, prev) != 0) {
+            if (run > 0) {
+                bool emit = (!dup_only && !uniq_only)
+                         || (dup_only  && run > 1)
+                         || (uniq_only && run == 1);
+                if (emit) {
+                    if (count_mode) {
+                        char out[APP_TOKEN_MAX + 8];
+                        snprintf(out, sizeof out, "%4u %s", run, prev);
+                        print_line(out);
+                    } else {
+                        print_line(prev);
+                    }
+                }
+            }
+            memcpy(prev, cur, len + 1);
+            run = 1;
+        } else {
+            run++;
+        }
+        if (*p == '\n') p++;
+    }
+    /* flush last group */
+    if (run > 0) {
+        bool emit = (!dup_only && !uniq_only)
+                 || (dup_only  && run > 1)
+                 || (uniq_only && run == 1);
+        if (emit) {
+            if (count_mode) {
+                char out[APP_TOKEN_MAX + 8];
+                snprintf(out, sizeof out, "%4u %s", run, prev);
+                print_line(out);
+            } else {
+                print_line(prev);
+            }
+        }
+    }
+}

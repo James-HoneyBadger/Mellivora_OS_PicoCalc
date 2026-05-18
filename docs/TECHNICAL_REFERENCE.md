@@ -94,7 +94,7 @@ Several applications store state as normal files on the SD card. Important examp
 - `BOOKMARKS.CFG` — saved bookmarks with CWD context
 - `ALIASES.CFG` — shell command aliases
 - `JOURNAL.TXT` — dated journal entries
-- `HABITS.TXT` — habit tracking with streak data
+- `HABITS.CFG` — habit tracking with streak data
 - `HISCORE.TXT` — snake game high score
 
 This plain-file approach keeps the system transparent and easy to recover manually.

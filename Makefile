@@ -13,7 +13,7 @@ PICO_ELF = $(PICO_BUILD_DIR)/mellivora_picocalc.elf
 PICO_UF2 = $(PICO_BUILD_DIR)/mellivora_picocalc.uf2
 PICOTOOL = $(PICO_BUILD_DIR)/_deps/picotool/picotool
 
-.PHONY: all all-targets picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean clean
+.PHONY: all all-targets picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean baseline-report doc-consistency-check command-registry-report command-registry-check quality-check clean
 
 all: picocalc
 
@@ -97,6 +97,33 @@ picocalc-pico2-clean:
 picocalc-pico2w-clean:
 	@echo "=== Cleaning PicoCalc Pico 2W build directory ==="
 	@rm -rf "$(PICO_DIR)/build-pico2w"
+
+baseline-report:
+	@echo "=== Generating baseline quality report ==="
+	@chmod +x tools/quality/baseline_report.sh
+	@tools/quality/baseline_report.sh reports/baseline-latest.md
+
+size-report:
+	@echo "=== Capturing firmware size baseline ==="
+	@chmod +x tools/quality/size_baseline.sh
+	@tools/quality/size_baseline.sh reports
+
+doc-consistency-check:
+	@echo "=== Checking documentation consistency ==="
+	@chmod +x tools/quality/doc_consistency_check.sh
+	@tools/quality/doc_consistency_check.sh
+
+command-registry-report:
+	@echo "=== Building command registry artifacts ==="
+	@python3 tools/commands/build_registry.py
+
+command-registry-check:
+	@echo "=== Checking command documentation coverage ==="
+	@chmod +x tools/quality/command_registry_check.sh
+	@tools/quality/command_registry_check.sh
+
+quality-check: baseline-report doc-consistency-check command-registry-check size-report
+	@echo "=== Quality checks passed ==="
 
 clean: picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean
 	@find . -maxdepth 1 -name "*.lst" -delete

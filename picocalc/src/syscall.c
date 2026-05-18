@@ -15,13 +15,28 @@ volatile bool _sys_interrupted = false;
 int64_t _sys_epoch_offset_ms = 0;
 
 static bool _sys_lcd_in_ansi = false;
+static bool _sys_lcd_in_csi  = false; /* inside ESC [ ... sequence */
 static int _sys_more_lines = 0;
 
 static void sys_console_write_raw_char(char c) {
     putchar_raw(c);
 
+    if (_sys_lcd_in_csi) {
+        /* Inside CSI (ESC [): suppress until the final byte (0x40–0x7E). */
+        if ((unsigned char)c >= 0x40 && (unsigned char)c <= 0x7E) {
+            _sys_lcd_in_csi  = false;
+            _sys_lcd_in_ansi = false;
+        }
+        return;
+    }
     if (_sys_lcd_in_ansi) {
-        if ((unsigned char)c >= '@' && (unsigned char)c <= '~') _sys_lcd_in_ansi = false;
+        /* After bare ESC: if the next char is '[' this is a CSI sequence;
+         * otherwise it's a single-char escape and we're done. */
+        if (c == '[') {
+            _sys_lcd_in_csi = true;
+        } else {
+            _sys_lcd_in_ansi = false;
+        }
         return;
     }
     if ((unsigned char)c == 0x1B) {

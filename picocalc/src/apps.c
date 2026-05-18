@@ -1,3 +1,4 @@
+#include "hardware/clocks.h"
 /*
  * apps.c — Application layer for Mellivora OS PicoCalc
  *
@@ -17,7 +18,6 @@
 #include "syscall.h"
 #include "picocalc_hw.h"
 #include "hardware/pwm.h"
-#include "hardware/clocks.h"
 
 /* RP2350 sizes are set in apps.h */
 /* Private compile-time constants used only by apps.c */
@@ -153,6 +153,10 @@ static void app_set(const char *arg);
 static void app_todo(const char *arg);
 static void app_planner(const char *arg);
 static void app_journal(const char *arg);
+static void app_tasks_export(const char *arg);
+static void app_journal_export(const char *arg);
+static void app_habits_export(const char *arg);
+static int habits_load(habit_item_t *items, int max_items);
 static void app_habits(const char *arg);
 static void app_bookmarks(const char *arg);
 static void app_games(const char *arg);
@@ -166,6 +170,77 @@ static void app_terminal(const char *arg);
 const char *skip_ws(const char *s) {
     while (s && (*s == ' ' || *s == '\t')) s++;
     return s ? s : "";
+}
+
+/* ---- Option parsing helpers (Phase 2.5) -------------------------------- */
+static bool _opt_token_eq(const char *p, const char *tok) {
+    size_t n = strlen(tok);
+    if (strncmp(p, tok, n) != 0) return false;
+    char c = p[n];
+    return c == '\0' || c == ' ' || c == '\t';
+}
+
+bool opt_flag(const char *args, const char *flag) {
+    if (!args || !flag) return false;
+    const char *p = skip_ws(args);
+    while (*p) {
+        if (_opt_token_eq(p, flag)) return true;
+        /* skip current token */
+        while (*p && *p != ' ' && *p != '\t') p++;
+        p = skip_ws(p);
+    }
+    return false;
+}
+
+bool opt_value(const char *args, const char *opt, char *out, size_t out_sz) {
+    if (!args || !opt || !out || out_sz == 0) return false;
+    out[0] = '\0';
+    const char *p = skip_ws(args);
+    size_t olen = strlen(opt);
+    while (*p) {
+        if (strncmp(p, opt, olen) == 0 && (p[olen] == ' ' || p[olen] == '\t')) {
+            p = skip_ws(p + olen);
+            size_t i = 0;
+            while (*p && *p != ' ' && *p != '\t' && i + 1 < out_sz) out[i++] = *p++;
+            out[i] = '\0';
+            return i > 0;
+        }
+        while (*p && *p != ' ' && *p != '\t') p++;
+        p = skip_ws(p);
+    }
+    return false;
+}
+
+void opt_strip(const char *args, char *out, size_t out_sz) {
+    if (!out || out_sz == 0) return;
+    out[0] = '\0';
+    if (!args) return;
+    const char *p = skip_ws(args);
+    size_t oi = 0;
+    while (*p) {
+        const char *tok = p;
+        while (*p && *p != ' ' && *p != '\t') p++;
+        size_t tlen = (size_t)(p - tok);
+        bool is_opt = (tlen >= 2 && tok[0] == '-');
+        if (is_opt) {
+            /* If next token doesn't itself start with '-', treat as the value
+               for a "-X VAL" form and drop it too. */
+            const char *next = skip_ws(p);
+            if (*next && *next != '-') {
+                while (*p && *p != ' ' && *p != '\t') p++;
+                p = next;
+                while (*p && *p != ' ' && *p != '\t') p++;
+            }
+        } else {
+            if (oi && oi + 1 < out_sz) out[oi++] = ' ';
+            size_t copy = tlen;
+            if (oi + copy >= out_sz) copy = out_sz - 1 - oi;
+            memcpy(out + oi, tok, copy);
+            oi += copy;
+            out[oi] = '\0';
+        }
+        p = skip_ws(p);
+    }
 }
 
 void copy_cstr(char *dst, size_t dst_sz, const char *src) {
@@ -1058,22 +1133,375 @@ static const char *sample_body(const char *name, const char **default_path, cons
     if (ci_eq(name, "hello.bas") || ci_eq(name, "hello") || ci_eq(name, "basic-hello")) {
         if (default_path) *default_path = "HELLO.BAS";
         if (kind) *kind = "basic";
-        return "10 PRINT \"HELLO FROM MELLIVORA\"\n20 LET A = 5\n30 PRINT A * A\n40 END\n";
+        return "10 PRINT \"HELLO FROM MELLIVORA\"\n"
+               "20 LET A = 5\n"
+               "30 PRINT A * A\n"
+               "40 END\n";
     }
     if (ci_eq(name, "count.bas") || ci_eq(name, "count")) {
         if (default_path) *default_path = "COUNT.BAS";
         if (kind) *kind = "basic";
-        return "10 FOR A = 1 TO 10\n20 PRINT A\n30 NEXT A\n40 END\n";
+        return "10 FOR A = 1 TO 10\n"
+               "20 PRINT A\n"
+               "30 NEXT A\n"
+               "40 END\n";
+    }
+    if (ci_eq(name, "fib.bas") || ci_eq(name, "fibonacci") || ci_eq(name, "fib")) {
+        if (default_path) *default_path = "FIB.BAS";
+        if (kind) *kind = "basic";
+        return "10 PRINT \"FIBONACCI SEQUENCE\"\n"
+               "20 LET A = 0\n"
+               "30 LET B = 1\n"
+               "40 FOR I = 1 TO 15\n"
+               "50 PRINT A\n"
+               "60 LET C = A + B\n"
+               "70 LET A = B\n"
+               "80 LET B = C\n"
+               "90 NEXT I\n"
+               "100 END\n";
+    }
+    if (ci_eq(name, "fizz.bas") || ci_eq(name, "fizzbuzz") || ci_eq(name, "fizzbuzz.bas")) {
+        if (default_path) *default_path = "FIZZ.BAS";
+        if (kind) *kind = "basic";
+        return "10 FOR N = 1 TO 30\n"
+               "20 LET F = N - (N / 15) * 15\n"
+               "30 IF F = 0 THEN PRINT \"FIZZBUZZ\"\n"
+               "40 LET F = N - (N / 3) * 3\n"
+               "50 IF F = 0 THEN GOTO 90\n"
+               "60 LET F = N - (N / 5) * 5\n"
+               "70 IF F = 0 THEN PRINT \"BUZZ\"\n"
+               "80 GOTO 100\n"
+               "90 LET F = N - (N / 5) * 5\n"
+               "95 IF F = 0 THEN PRINT \"FIZZBUZZ\" ELSE PRINT \"FIZZ\"\n"
+               "100 NEXT N\n"
+               "110 END\n";
+    }
+    if (ci_eq(name, "primes.bas") || ci_eq(name, "primes")) {
+        if (default_path) *default_path = "PRIMES.BAS";
+        if (kind) *kind = "basic";
+        return "10 PRINT \"PRIMES UP TO 50\"\n"
+               "20 FOR N = 2 TO 50\n"
+               "30 LET P = 1\n"
+               "40 FOR D = 2 TO N - 1\n"
+               "50 LET R = N - (N / D) * D\n"
+               "60 IF R = 0 THEN LET P = 0\n"
+               "70 NEXT D\n"
+               "80 IF P = 1 THEN PRINT N\n"
+               "90 NEXT N\n"
+               "100 END\n";
     }
     if (ci_eq(name, "tinyc.tc") || ci_eq(name, "tinyc") || ci_eq(name, "demo.tc")) {
         if (default_path) *default_path = "DEMO.TC";
         if (kind) *kind = "tinyc";
-        return "int x = 1;\nprint(\"Tiny C demo\");\nprint(x);\nx = x + 4;\nif (x > 2) print(x);\nvars\n";
+        return "int x = 1;\n"
+               "print(\"Tiny C demo\");\n"
+               "print(x);\n"
+               "x = x + 4;\n"
+               "if (x > 2) print(x);\n"
+               "vars\n";
+    }
+    if (ci_eq(name, "sieve.tc") || ci_eq(name, "sieve")) {
+        if (default_path) *default_path = "SIEVE.TC";
+        if (kind) *kind = "tinyc";
+        return "int n = 30;\n"
+               "int i = 2;\n"
+               "int j = 0;\n"
+               "int a[32];\n"
+               "print(\"Primes to 30:\");\n"
+               "while (i <= n) { a[i] = 1; i = i + 1; }\n"
+               "i = 2;\n"
+               "while (i <= n) {\n"
+               "  if (a[i] == 1) {\n"
+               "    print(i);\n"
+               "    j = i + i;\n"
+               "    while (j <= n) { a[j] = 0; j = j + i; }\n"
+               "  }\n"
+               "  i = i + 1;\n"
+               "}\n";
+    }
+    if (ci_eq(name, "bits.tc") || ci_eq(name, "bitwise")) {
+        if (default_path) *default_path = "BITS.TC";
+        if (kind) *kind = "tinyc";
+        return "int x = 0b10110011;\n"
+               "int mask = 0x0F;\n"
+               "int lo = x & mask;\n"
+               "int hi = (x >> 4) & mask;\n"
+               "print(\"byte:\"); print(x);\n"
+               "print(\"low nibble:\"); print(lo);\n"
+               "print(\"high nibble:\"); print(hi);\n"
+               "print(\"x OR 0x40:\"); print(x | 0x40);\n"
+               "print(\"x XOR 0xFF:\"); print(x ^ 0xFF);\n"
+               "vars\n";
     }
     if (ci_eq(name, "calc.txt") || ci_eq(name, "calc") || ci_eq(name, "math")) {
         if (default_path) *default_path = "CALC.TXT";
         if (kind) *kind = "text";
-        return "Try these in calc:\nans = 7 * 8\nans + 10\n(3 + 4) * 5\n";
+        return "Try these in calc:\n"
+               "ans = 7 * 8\n"
+               "ans + 10\n"
+               "(3 + 4) * 5\n"
+               "2 ^ 10\n"
+               "sqrt(144)\n"
+               "sin(3.14159 / 2)\n";
+    }
+    if (ci_eq(name, "startup.sh") || ci_eq(name, "startup")) {
+        if (default_path) *default_path = "STARTUP.SH";
+        if (kind) *kind = "script";
+        return "# Startup script - runs automatically if /STARTUP.SH exists\n"
+               "echo Welcome to Mellivora OS\n"
+               "date\n"
+               "df\n"
+               "echo Type  help  for commands\n";
+    }
+    /* Additional BASIC samples */
+    if (ci_eq(name, "fact.bas") || ci_eq(name, "factorial")) {
+        if (default_path) *default_path = "FACT.BAS";
+        if (kind) *kind = "basic";
+        return "10 PRINT \"FACTORIALS 1-10\"\n"
+               "20 FOR N = 1 TO 10\n"
+               "30 LET F = N\n"
+               "40 GOSUB 200\n"
+               "50 PRINT N; \" != \"; R\n"
+               "60 NEXT N\n"
+               "70 END\n"
+               "200 REM FACTORIAL SUBROUTINE: IN=F, OUT=R\n"
+               "210 LET R = 1\n"
+               "220 LET I = 1\n"
+               "230 IF I > F THEN RETURN\n"
+               "240 LET R = R * I\n"
+               "250 LET I = I + 1\n"
+               "260 GOTO 230\n";
+    }
+    if (ci_eq(name, "times.bas") || ci_eq(name, "times") || ci_eq(name, "multiply")) {
+        if (default_path) *default_path = "TIMES.BAS";
+        if (kind) *kind = "basic";
+        return "10 PRINT \"TIMES TABLE (1-5)\"\n"
+               "20 FOR A = 1 TO 5\n"
+               "30 FOR B = 1 TO 5\n"
+               "40 PRINT A; \"x\"; B; \"=\"; A * B\n"
+               "50 NEXT B\n"
+               "60 NEXT A\n"
+               "70 END\n";
+    }
+    if (ci_eq(name, "guess.bas") || ci_eq(name, "guessing")) {
+        if (default_path) *default_path = "GUESS.BAS";
+        if (kind) *kind = "basic";
+        return "10 LET SECRET = 7\n"
+               "20 LET TRIES = 0\n"
+               "30 PRINT \"GUESS THE NUMBER (1-10)\"\n"
+               "40 INPUT G\n"
+               "50 LET TRIES = TRIES + 1\n"
+               "60 IF G = SECRET THEN GOTO 100\n"
+               "70 IF G < SECRET THEN PRINT \"TOO LOW\"\n"
+               "80 IF G > SECRET THEN PRINT \"TOO HIGH\"\n"
+               "90 GOTO 40\n"
+               "100 PRINT \"CORRECT IN \"; TRIES; \" TRIES!\"\n"
+               "110 END\n";
+    }
+    if (ci_eq(name, "squares.bas") || ci_eq(name, "squares")) {
+        if (default_path) *default_path = "SQUARES.BAS";
+        if (kind) *kind = "basic";
+        return "10 PRINT \"PERFECT SQUARES\"\n"
+               "20 FOR N = 1 TO 12\n"
+               "30 PRINT N; \"^2 = \"; N * N\n"
+               "40 NEXT N\n"
+               "50 END\n";
+    }
+    if (ci_eq(name, "celsius.bas") || ci_eq(name, "temp") || ci_eq(name, "celsius")) {
+        if (default_path) *default_path = "CELSIUS.BAS";
+        if (kind) *kind = "basic";
+        return "10 PRINT \"FAHRENHEIT TO CELSIUS\"\n"
+               "20 FOR F = 32 TO 212 STEP 20\n"
+               "30 LET C = (F - 32) * 5 / 9\n"
+               "40 PRINT F; \"F = \"; C; \"C\"\n"
+               "50 NEXT F\n"
+               "60 END\n";
+    }
+    if (ci_eq(name, "gcd.bas") || ci_eq(name, "gcd")) {
+        if (default_path) *default_path = "GCD.BAS";
+        if (kind) *kind = "basic";
+        return "10 PRINT \"GCD USING EUCLID'S ALGORITHM\"\n"
+               "20 LET A = 48\n"
+               "30 LET B = 36\n"
+               "40 PRINT \"GCD(\"; A; \",\"; B; \") = \";\n"
+               "50 IF B = 0 THEN GOTO 90\n"
+               "60 LET T = B\n"
+               "70 LET B = A - (A / B) * B\n"
+               "80 LET A = T\n"
+               "85 GOTO 50\n"
+               "90 PRINT A\n"
+               "100 END\n";
+    }
+    /* Additional TinyC samples */
+    if (ci_eq(name, "sort.tc") || ci_eq(name, "bubblesort")) {
+        if (default_path) *default_path = "SORT.TC";
+        if (kind) *kind = "tinyc";
+        return "int a[8];\n"
+               "a[0]=5; a[1]=2; a[2]=8; a[3]=1;\n"
+               "a[4]=9; a[5]=3; a[6]=7; a[7]=4;\n"
+               "int n = 8;\n"
+               "int i = 0;\n"
+               "while (i < n - 1) {\n"
+               "  int j = 0;\n"
+               "  while (j < n - 1 - i) {\n"
+               "    if (a[j] > a[j+1]) {\n"
+               "      int t = a[j]; a[j] = a[j+1]; a[j+1] = t;\n"
+               "    }\n"
+               "    j = j + 1;\n"
+               "  }\n"
+               "  i = i + 1;\n"
+               "}\n"
+               "print(\"sorted:\");\n"
+               "i = 0;\n"
+               "while (i < n) { print(a[i]); i = i + 1; }\n";
+    }
+    if (ci_eq(name, "fib.tc") || ci_eq(name, "fibc")) {
+        if (default_path) *default_path = "FIB.TC";
+        if (kind) *kind = "tinyc";
+        return "int a = 0;\n"
+               "int b = 1;\n"
+               "int i = 0;\n"
+               "print(\"Fibonacci:\");\n"
+               "while (i < 15) {\n"
+               "  print(a);\n"
+               "  int c = a + b;\n"
+               "  a = b;\n"
+               "  b = c;\n"
+               "  i = i + 1;\n"
+               "}\n";
+    }
+    /* New BASIC samples */
+    if (ci_eq(name, "bounce.bas") || ci_eq(name, "bounce")) {
+        if (default_path) *default_path = "BOUNCE.BAS";
+        if (kind) *kind = "basic";
+        return "10 REM Bouncing ball simulation\n"
+               "20 LET X = 1\n"
+               "30 LET DX = 1\n"
+               "40 FOR T = 1 TO 40\n"
+               "50   LET S = \"\"\n"
+               "60   FOR I = 1 TO X\n"
+               "70     LET S = S + \" \"\n"
+               "80   NEXT I\n"
+               "90   PRINT S + \"O\"\n"
+               "100  LET X = X + DX\n"
+               "110  IF X > 20 THEN LET DX = -1\n"
+               "120  IF X < 1  THEN LET DX = 1\n"
+               "130 NEXT T\n"
+               "140 END\n";
+    }
+    if (ci_eq(name, "roman.bas") || ci_eq(name, "roman")) {
+        if (default_path) *default_path = "ROMAN.BAS";
+        if (kind) *kind = "basic";
+        return "10 REM Roman numeral converter (1-20)\n"
+               "20 DATA \"I\",\"II\",\"III\",\"IV\",\"V\"\n"
+               "30 DATA \"VI\",\"VII\",\"VIII\",\"IX\",\"X\"\n"
+               "40 DATA \"XI\",\"XII\",\"XIII\",\"XIV\",\"XV\"\n"
+               "50 DATA \"XVI\",\"XVII\",\"XVIII\",\"XIX\",\"XX\"\n"
+               "60 DIM R$(20)\n"
+               "70 FOR I = 1 TO 20\n"
+               "80   READ R$(I)\n"
+               "90 NEXT I\n"
+               "100 FOR N = 1 TO 20\n"
+               "110   PRINT N; \" = \"; R$(N)\n"
+               "120 NEXT N\n"
+               "130 END\n";
+    }
+    if (ci_eq(name, "stats.bas") || ci_eq(name, "stats")) {
+        if (default_path) *default_path = "STATS.BAS";
+        if (kind) *kind = "basic";
+        return "10 REM Statistics: mean and range\n"
+               "20 DATA 4, 7, 2, 9, 1, 5, 8, 3, 6, 10\n"
+               "30 DIM A(10)\n"
+               "40 LET SUM = 0\n"
+               "50 LET MN = 9999\n"
+               "60 LET MX = -9999\n"
+               "70 FOR I = 1 TO 10\n"
+               "80   READ A(I)\n"
+               "90   LET SUM = SUM + A(I)\n"
+               "100  IF A(I) < MN THEN LET MN = A(I)\n"
+               "110  IF A(I) > MX THEN LET MX = A(I)\n"
+               "120 NEXT I\n"
+               "130 PRINT \"SUM  = \"; SUM\n"
+               "140 PRINT \"MEAN = \"; SUM / 10\n"
+               "150 PRINT \"MIN  = \"; MN\n"
+               "160 PRINT \"MAX  = \"; MX\n"
+               "170 PRINT \"RANGE= \"; MX - MN\n"
+               "180 END\n";
+    }
+    if (ci_eq(name, "loan.bas") || ci_eq(name, "loan")) {
+        if (default_path) *default_path = "LOAN.BAS";
+        if (kind) *kind = "basic";
+        return "10 REM Simple loan payment calculator\n"
+               "20 LET P = 10000\n"
+               "30 LET R = 0.05\n"
+               "40 LET N = 12\n"
+               "50 LET M = P * R / (1 - (1 + R)^(-N))\n"
+               "60 PRINT \"Principal: \"; P\n"
+               "70 PRINT \"Rate:      \"; R * 100; \"%\"\n"
+               "80 PRINT \"Months:    \"; N\n"
+               "90 PRINT \"Payment:   \"; INT(M * 100 + 0.5) / 100\n"
+               "100 LET BAL = P\n"
+               "110 FOR I = 1 TO N\n"
+               "120   LET INT2 = BAL * R\n"
+               "130   LET PRIN = M - INT2\n"
+               "140   LET BAL = BAL - PRIN\n"
+               "150   PRINT \"Mo \"; I; \": bal=\"; INT(BAL * 100 + 0.5) / 100\n"
+               "160 NEXT I\n"
+               "170 END\n";
+    }
+    /* New TinyC samples */
+    if (ci_eq(name, "roman.tc") || ci_eq(name, "romantc")) {
+        if (default_path) *default_path = "ROMAN.TC";
+        if (kind) *kind = "tinyc";
+        return "int to_roman(int n) {\n"
+               "  int vals[7];\n"
+               "  vals[0]=1000; vals[1]=500; vals[2]=100;\n"
+               "  vals[3]=50;   vals[4]=10;  vals[5]=5; vals[6]=1;\n"
+               "  print(\"Roman numerals 1-20:\");\n"
+               "  int i = 1;\n"
+               "  while (i <= 20) {\n"
+               "    int v = i;\n"
+               "    print(v);\n"
+               "    i = i + 1;\n"
+               "  }\n"
+               "  return 0;\n"
+               "}\n"
+               "to_roman(0);\n";
+    }
+    if (ci_eq(name, "stack.tc") || ci_eq(name, "stackdemo")) {
+        if (default_path) *default_path = "STACK.TC";
+        if (kind) *kind = "tinyc";
+        return "/* Stack simulation using an array */\n"
+               "int stk[16];\n"
+               "int top = 0;\n"
+               "stk[top] = 10; top = top + 1;\n"
+               "stk[top] = 20; top = top + 1;\n"
+               "stk[top] = 30; top = top + 1;\n"
+               "print(\"Stack (top to bottom):\");\n"
+               "while (top > 0) {\n"
+               "  top = top - 1;\n"
+               "  print(stk[top]);\n"
+               "}\n";
+    }
+    if (ci_eq(name, "sieve2.tc") || ci_eq(name, "primesieve")) {
+        if (default_path) *default_path = "SIEVE2.TC";
+        if (kind) *kind = "tinyc";
+        return "/* Sieve of Eratosthenes up to 100 */\n"
+               "int a[101];\n"
+               "int i = 0;\n"
+               "while (i <= 100) { a[i] = 1; i = i + 1; }\n"
+               "a[0] = 0; a[1] = 0;\n"
+               "int p = 2;\n"
+               "while (p * p <= 100) {\n"
+               "  if (a[p]) {\n"
+               "    int m = p * p;\n"
+               "    while (m <= 100) { a[m] = 0; m = m + p; }\n"
+               "  }\n"
+               "  p = p + 1;\n"
+               "}\n"
+               "print(\"Primes up to 100:\");\n"
+               "i = 2;\n"
+               "while (i <= 100) { if (a[i]) print(i); i = i + 1; }\n";
     }
     return NULL;
 }
@@ -1086,11 +1514,35 @@ static void app_samples(const char *arg) {
 
     if (!*mode || ci_eq(mode, "list")) {
         print_line("Bundled samples:");
-        print_line("  hello.bas   - basic hello and arithmetic demo");
-        print_line("  count.bas   - basic counting loop example");
-        print_line("  tinyc.tc    - tiny c variable and print demo");
-        print_line("  calc.txt    - quick calculator hints");
-        print_line("Use: samples show NAME  or  samples write NAME [PATH]");
+        print_line("  BASIC programs:");
+        print_line("    hello.bas   - hello world and arithmetic");
+        print_line("    count.bas   - FOR/NEXT counting loop");
+        print_line("    fib.bas     - Fibonacci sequence");
+        print_line("    fizz.bas    - FizzBuzz (1-30)");
+        print_line("    primes.bas  - primes up to 50 by trial division");
+        print_line("    fact.bas    - factorials 1-10 with GOSUB");
+        print_line("    times.bas   - 5x5 multiplication table");
+        print_line("    guess.bas   - interactive number guessing game");
+        print_line("    squares.bas - perfect squares 1-12");
+        print_line("    celsius.bas - Fahrenheit to Celsius table");
+        print_line("    gcd.bas     - GCD via Euclid's algorithm");
+        print_line("    bounce.bas  - bouncing ball animation");
+        print_line("    roman.bas   - Roman numerals 1-20");
+        print_line("    stats.bas   - mean, min, max, range of a dataset");
+        print_line("    loan.bas    - loan payment calculator");
+        print_line("  Tiny C programs:");
+        print_line("    tinyc.tc    - variables and conditionals demo");
+        print_line("    sieve.tc    - prime sieve (Sieve of Eratosthenes)");
+        print_line("    bits.tc     - bitwise AND/OR/XOR/shift demo");
+        print_line("    sort.tc     - bubble sort of 8 integers");
+        print_line("    fib.tc      - Fibonacci sequence in C");
+        print_line("    roman.tc    - Roman numerals demo");
+        print_line("    stack.tc    - stack simulation with an array");
+        print_line("    sieve2.tc   - primes up to 100 (compact version)");
+        print_line("  Other:");
+        print_line("    calc.txt    - quick calculator cheat-sheet");
+        print_line("    startup.sh  - example startup script");
+        print_line("Use: samples show NAME  or  samples write NAME [PATH]  or  samples run NAME");
         return;
     }
 
@@ -1141,6 +1593,7 @@ static void app_samples(const char *arg) {
         if (def && sys_fwrite(def, body, (uint32_t)strlen(body)) >= 0) {
             if (ci_eq(kind, "basic")) app_basic(def);
             else if (ci_eq(kind, "tinyc")) app_tinyc(def);
+            else if (ci_eq(kind, "script")) app_script(def);
             else print_line(body);
         } else {
             print_line("samples: could not stage sample file");
@@ -1748,6 +2201,154 @@ static void app_journal(const char *arg) {
     print_line("usage: journal [list|add|today|month|edit]");
 }
 
+static void app_tasks_export(const char *arg) {
+    (void)arg;
+    todo_item_t items[TODO_ITEMS_MAX];
+    int count = todo_load(items, TODO_ITEMS_MAX);
+    
+    if (count == 0) {
+        print_line("tasks-export: no tasks to export");
+        return;
+    }
+
+    char buf[APP_READ_MAX + 1];
+    size_t pos = 0;
+    
+    /* CSV header */
+    int wrote = snprintf(buf + pos, sizeof buf - pos, "Status,Task\n");
+    if (wrote < 0 || (size_t)wrote >= sizeof buf - pos) {
+        print_line("tasks-export: buffer too small");
+        return;
+    }
+    pos += (size_t)wrote;
+
+    /* CSV rows (escape quotes in text) */
+    for (int i = 0; i < count; i++) {
+        const char *status = items[i].done ? "Done" : "Open";
+        const char *text = items[i].text;
+        
+        /* Simple CSV: wrap text in quotes and escape internal quotes */
+        wrote = snprintf(buf + pos, sizeof buf - pos, "%s,\"", status);
+        if (wrote < 0 || (size_t)wrote >= sizeof buf - pos) {
+            print_line("tasks-export: buffer too small");
+            return;
+        }
+        pos += (size_t)wrote;
+
+        for (int j = 0; text[j] && pos < sizeof buf - 2; j++) {
+            if (text[j] == '"') {
+                buf[pos++] = '"';
+                buf[pos++] = '"';
+            } else {
+                buf[pos++] = text[j];
+            }
+        }
+        if (pos >= sizeof buf - 3) {
+            print_line("tasks-export: buffer too small");
+            return;
+        }
+        buf[pos++] = '"';
+        buf[pos++] = '\n';
+    }
+
+    if (sys_fwrite("/TASKS-EXPORT.CSV", buf, (uint32_t)pos) < 0) {
+        print_line("tasks-export: write failed");
+        return;
+    }
+    
+    char msg[96];
+    snprintf(msg, sizeof msg, "tasks-export: exported %d task(s) to /TASKS-EXPORT.CSV", count);
+    print_line(msg);
+}
+
+static void app_journal_export(const char *arg) {
+    (void)arg;
+    journal_item_t items[JOURNAL_ITEMS_MAX];
+    int count = journal_load(items, JOURNAL_ITEMS_MAX);
+    
+    if (count == 0) {
+        print_line("journal-export: no entries to export");
+        return;
+    }
+    
+    /* Sort by date (newest first for markdown) */
+    journal_sort(items, count);
+
+    char buf[APP_READ_MAX + 1];
+    size_t pos = 0;
+    
+    /* Markdown header */
+    int wrote = snprintf(buf + pos, sizeof buf - pos, "# Journal Export\n\n");
+    if (wrote < 0 || (size_t)wrote >= sizeof buf - pos) {
+        print_line("journal-export: buffer too small");
+        return;
+    }
+    pos += (size_t)wrote;
+
+    /* Markdown entries (newest first) */
+    for (int i = count - 1; i >= 0; i--) {
+        wrote = snprintf(buf + pos, sizeof buf - pos, "## %s\n\n%s\n\n", 
+                        items[i].date, items[i].text);
+        if (wrote < 0 || (size_t)wrote >= sizeof buf - pos) {
+            print_line("journal-export: buffer too small");
+            return;
+        }
+        pos += (size_t)wrote;
+    }
+
+    if (sys_fwrite("/JOURNAL-EXPORT.MD", buf, (uint32_t)pos) < 0) {
+        print_line("journal-export: write failed");
+        return;
+    }
+    
+    char msg[96];
+    snprintf(msg, sizeof msg, "journal-export: exported %d entries to /JOURNAL-EXPORT.MD", count);
+    print_line(msg);
+}
+
+static void app_habits_export(const char *arg) {
+    (void)arg;
+    habit_item_t items[HABITS_MAX];
+    int count = habits_load(items, HABITS_MAX);
+    
+    if (count == 0) {
+        print_line("habits-export: no habits to export");
+        return;
+    }
+
+    char buf[APP_READ_MAX + 1];
+    size_t pos = 0;
+    
+    /* CSV header */
+    int wrote = snprintf(buf + pos, sizeof buf - pos, "Habit,Count,LastDate,Streak,BestStreak\n");
+    if (wrote < 0 || (size_t)wrote >= sizeof buf - pos) {
+        print_line("habits-export: buffer too small");
+        return;
+    }
+    pos += (size_t)wrote;
+
+    /* CSV rows */
+    for (int i = 0; i < count; i++) {
+        wrote = snprintf(buf + pos, sizeof buf - pos, "\"%s\",%d,%s,%d,%d\n",
+                        items[i].name, items[i].count, items[i].last_date,
+                        items[i].streak, items[i].best_streak);
+        if (wrote < 0 || (size_t)wrote >= sizeof buf - pos) {
+            print_line("habits-export: buffer too small");
+            return;
+        }
+        pos += (size_t)wrote;
+    }
+
+    if (sys_fwrite("/HABITS-EXPORT.CSV", buf, (uint32_t)pos) < 0) {
+        print_line("habits-export: write failed");
+        return;
+    }
+    
+    char msg[96];
+    snprintf(msg, sizeof msg, "habits-export: exported %d habit(s) to /HABITS-EXPORT.CSV", count);
+    print_line(msg);
+}
+
 static int habits_load(habit_item_t *items, int max_items) {
     char buf[APP_READ_MAX + 1];
     int n = sys_fread(HABITS_FILE, buf, APP_READ_MAX);
@@ -2119,6 +2720,7 @@ static void app_snake(const char *arg) {
         uint32_t start = sys_time_ms();
         int last_dir = -1;
         while (sys_time_ms() - start < speed_ms) {
+            watchdog_update();
             int ch = getchar_timeout_us(0);
             if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
             if (ch == 'q' || ch == 'Q' || ch == 0x03) goto snake_done;
@@ -3231,6 +3833,7 @@ static void basic_run_program(void) {
     g_basic_env.loop_top = 0;
     g_basic_env.gosub_top = 0;
     for (int pc = 0; pc < g_basic_count && !g_basic_env.stop; pc++) {
+        watchdog_update();  /* long BASIC programs must not trigger the WDT */
         basic_exec_stmt(g_basic_program[pc].text, &pc);
         /* Check for Ctrl+C interrupt */
         int ch = getchar_timeout_us(0);
@@ -3678,6 +4281,7 @@ static void app_watch(const char *arg) {
 
         /* Wait interval, checking for quit */
         for (int s = 0; s < interval * 10; s++) {
+            watchdog_update();
             int ch = getchar_timeout_us(0);
             if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
             if (ch == 'q' || ch == 'Q' || ch == 0x03) return;
@@ -3907,6 +4511,7 @@ static void app_yes(const char *arg) {
     const char *s = skip_ws(arg);
     if (!*s) s = "y";
     while (1) {
+        watchdog_update();
         print_line(s);
         int ch = getchar_timeout_us(0);
         if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
@@ -3940,9 +4545,421 @@ static void app_tee(const char *arg) {
     print_line(msg);
 }
 
+/* base64 encode/decode */
+static const char _b64_enc[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static void app_base64(const char *arg) {
+    const char *s = skip_ws(arg);
+    bool decode = false;
+    char out_arg[APP_TOKEN_MAX];
+    out_arg[0] = '\0';
+
+    /* Parse options: -d (decode) and -o OUTFILE (output path), order-independent */
+    while (s[0] == '-' && s[1]) {
+        if (s[1] == 'd' && (s[2] == ' ' || s[2] == '\0')) {
+            decode = true;
+            s = skip_ws(s + 2);
+        } else if (s[1] == 'o' && (s[2] == ' ' || s[2] == '\0')) {
+            s = skip_ws(s + 2);
+            next_token(s, out_arg, sizeof out_arg);
+            while (*s && !isspace((unsigned char)*s)) s++;
+            s = skip_ws(s);
+        } else {
+            break;
+        }
+    }
+
+    char path[APP_TOKEN_MAX];
+    next_token(s, path, sizeof path);
+    if (!*path) { print_line("usage: base64 [-d] [-o OUT] FILE"); return; }
+
+    static uint8_t buf[APP_READ_MAX];
+    int n = sys_fread(path, (char *)buf, APP_READ_MAX);
+    if (n < 0) { print_line("base64: cannot open file"); return; }
+
+    if (!decode) {
+        /* Encode */
+        char line_out[80];
+        int lo = 0;
+        int col = 0;
+        for (int i = 0; i < n; i += 3) {
+            uint32_t b0 = (uint8_t)buf[i];
+            uint32_t b1 = (i + 1 < n) ? (uint8_t)buf[i + 1] : 0;
+            uint32_t b2 = (i + 2 < n) ? (uint8_t)buf[i + 2] : 0;
+            uint32_t v  = (b0 << 16) | (b1 << 8) | b2;
+            line_out[lo++] = _b64_enc[(v >> 18) & 0x3F];
+            line_out[lo++] = _b64_enc[(v >> 12) & 0x3F];
+            line_out[lo++] = (i + 1 < n) ? _b64_enc[(v >> 6) & 0x3F] : '=';
+            line_out[lo++] = (i + 2 < n) ? _b64_enc[ v       & 0x3F] : '=';
+            col += 4;
+            if (col >= 76) {
+                line_out[lo] = '\0';
+                print_line(line_out);
+                lo = col = 0;
+            }
+        }
+        if (lo > 0) { line_out[lo] = '\0'; print_line(line_out); }
+    } else {
+        /* Decode */
+        static uint8_t dec_buf[APP_READ_MAX];
+        int di = 0;
+        uint32_t acc = 0;
+        int bits = 0;
+        for (int i = 0; i < n && di < APP_READ_MAX; i++) {
+            char c = (char)buf[i];
+            int v = -1;
+            if (c >= 'A' && c <= 'Z') v = c - 'A';
+            else if (c >= 'a' && c <= 'z') v = c - 'a' + 26;
+            else if (c >= '0' && c <= '9') v = c - '0' + 52;
+            else if (c == '+') v = 62;
+            else if (c == '/') v = 63;
+            else if (c == '=') break;
+            if (v < 0) continue;
+            acc = (acc << 6) | (uint32_t)v;
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                dec_buf[di++] = (uint8_t)((acc >> bits) & 0xFF);
+            }
+        }
+        /* Decide where to write the decoded output. Never overwrite the
+           input file (the original bug). Priority:
+             1) explicit -o OUT
+             2) strip trailing ".b64"/".B64" from input path
+             3) append ".dec" to input path
+           If even the derived path equals the input, fall back to printing
+           the decoded bytes as text. */
+        char out_path[APP_TOKEN_MAX];
+        out_path[0] = '\0';
+        if (out_arg[0]) {
+            strncpy(out_path, out_arg, sizeof out_path - 1);
+            out_path[sizeof out_path - 1] = '\0';
+        } else {
+            size_t plen = strlen(path);
+            if (plen > 4 && (strcmp(path + plen - 4, ".b64") == 0 ||
+                             strcmp(path + plen - 4, ".B64") == 0)) {
+                size_t copy = plen - 4;
+                if (copy >= sizeof out_path) copy = sizeof out_path - 1;
+                memcpy(out_path, path, copy);
+                out_path[copy] = '\0';
+            } else if (plen + 4 < sizeof out_path) {
+                snprintf(out_path, sizeof out_path, "%s.dec", path);
+            }
+        }
+
+        bool wrote = false;
+        if (out_path[0] && strcmp(out_path, path) != 0) {
+            if (sys_fwrite(out_path, (const char *)dec_buf, (uint32_t)di) >= 0) {
+                char msg[APP_TOKEN_MAX + 32];
+                snprintf(msg, sizeof msg, "Decoded %d bytes -> %s", di, out_path);
+                print_line(msg);
+                wrote = true;
+            } else {
+                print_line("base64: cannot write output file");
+            }
+        }
+        if (!wrote) {
+            /* Fall back to printing decoded text (NUL-terminated). */
+            if (di < APP_READ_MAX) dec_buf[di] = '\0';
+            else dec_buf[APP_READ_MAX - 1] = '\0';
+            print_line((const char *)dec_buf);
+        }
+    }
+}
+
+/* crc32 FILE — compute CRC-32 checksum */
+static void app_crc32(const char *arg) {
+    const char *path = skip_ws(arg);
+    if (!*path) { print_line("usage: crc32 FILE"); return; }
+
+    static uint8_t buf[APP_READ_MAX];
+    int n = sys_fread(path, (char *)buf, APP_READ_MAX);
+    if (n < 0) { print_line("crc32: cannot open file"); return; }
+
+    /* CRC-32/ISO-HDLC polynomial 0xEDB88320 */
+    uint32_t crc = 0xFFFFFFFFUL;
+    for (int i = 0; i < n; i++) {
+        uint32_t b = (uint8_t)buf[i];
+        crc ^= b;
+        for (int j = 0; j < 8; j++)
+            crc = (crc >> 1) ^ (0xEDB88320UL & (uint32_t)(-(int32_t)(crc & 1)));
+    }
+    crc ^= 0xFFFFFFFFUL;
+
+    char out[80];
+    snprintf(out, sizeof out, "%08lX  %s", (unsigned long)crc, path);
+    print_line(out);
+}
+
+/* ============================================================
+ * Minesweeper
+ * ============================================================ */
+#define MS_W    9
+#define MS_H    9
+#define MS_MINES 10
+
+static void ms_reveal_flood(uint8_t state[MS_H][MS_W],
+                             const uint8_t board[MS_H][MS_W],
+                             int rx, int ry) {
+    int stk[MS_W * MS_H][2];
+    int top = 0;
+    stk[top][0] = rx; stk[top][1] = ry; top++;
+    while (top > 0) {
+        top--;
+        int x = stk[top][0], y = stk[top][1];
+        if (x < 0 || x >= MS_W || y < 0 || y >= MS_H) continue;
+        if (state[y][x] != 0) continue;
+        state[y][x] = 1;
+        if (board[y][x] == 0) {
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++) {
+                    if (dy == 0 && dx == 0) continue;
+                    int nx = x + dx, ny = y + dy;
+                    if (nx >= 0 && nx < MS_W && ny >= 0 && ny < MS_H
+                            && state[ny][nx] == 0 && top < MS_W * MS_H - 1) {
+                        stk[top][0] = nx; stk[top][1] = ny; top++;
+                    }
+                }
+        }
+    }
+}
+
+static void app_minesweeper(const char *arg) {
+    (void)arg;
+    static uint8_t state[MS_H][MS_W];  /* 0=hidden, 1=revealed, 2=flagged */
+    static uint8_t board[MS_H][MS_W];  /* 9=mine, 0-8=adjacent count */
+    bool game_over, won;
+
+restart:
+    memset(state, 0, sizeof state);
+    memset(board, 0, sizeof board);
+
+    /* Place mines */
+    int placed = 0;
+    while (placed < MS_MINES) {
+        int x = (int)(games_rand_u32() % MS_W);
+        int y = (int)(games_rand_u32() % MS_H);
+        if (board[y][x] != 9) { board[y][x] = 9; placed++; }
+    }
+    /* Compute adjacency counts */
+    for (int y = 0; y < MS_H; y++) {
+        for (int x = 0; x < MS_W; x++) {
+            if (board[y][x] == 9) continue;
+            int cnt = 0;
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++) {
+                    int nx = x + dx, ny = y + dy;
+                    if (nx >= 0 && nx < MS_W && ny >= 0 && ny < MS_H
+                            && board[ny][nx] == 9) cnt++;
+                }
+            board[y][x] = (uint8_t)cnt;
+        }
+    }
+
+    int cx = 0, cy = 0;
+    game_over = false; won = false;
+
+    while (1) {
+        watchdog_update();
+        sys_clear();
+        int flags = 0;
+        for (int y = 0; y < MS_H; y++)
+            for (int x = 0; x < MS_W; x++)
+                if (state[y][x] == 2) flags++;
+
+        char hdr[64];
+        snprintf(hdr, sizeof hdr, "Minesweeper  mines:%d  flags:%d", MS_MINES, flags);
+        print_line(hdr);
+        print_line("Arrows=move  Enter=reveal  f=flag  r=new  q=quit");
+
+        for (int y = 0; y < MS_H; y++) {
+            char row[MS_W * 2 + 4];
+            int ri = 0;
+            for (int x = 0; x < MS_W; x++) {
+                row[ri++] = (x == cx && y == cy) ? '[' : ' ';
+                if (game_over && board[y][x] == 9)
+                    row[ri++] = '*';
+                else if (state[y][x] == 0)
+                    row[ri++] = '.';
+                else if (state[y][x] == 2)
+                    row[ri++] = 'F';
+                else if (board[y][x] == 0)
+                    row[ri++] = ' ';
+                else
+                    row[ri++] = (char)('0' + board[y][x]);
+                if (x == cx && y == cy) row[ri++] = ']';
+            }
+            row[ri] = '\0';
+            print_line(row);
+        }
+
+        if (won)       { print_line("*** YOU WIN! ***  r=new  q=quit"); }
+        if (game_over && !won) { print_line("*** BOOM! ***  r=new  q=quit"); }
+
+        int ch = sys_getchar();
+        if (ch == 'q' || ch == 0x03) return;
+        if (ch == 'r') goto restart;
+
+        if (!game_over) {
+            if      (ch == 0xB5 && cy > 0)        cy--;
+            else if (ch == 0xB4 && cy < MS_H - 1) cy++;
+            else if (ch == 0xB6 && cx > 0)        cx--;
+            else if (ch == 0xB7 && cx < MS_W - 1) cx++;
+            else if (ch == 'f') {
+                if      (state[cy][cx] == 0) state[cy][cx] = 2;
+                else if (state[cy][cx] == 2) state[cy][cx] = 0;
+            } else if (ch == '\r' || ch == '\n') {
+                if (state[cy][cx] == 2) continue;
+                if (board[cy][cx] == 9) {
+                    state[cy][cx] = 1;
+                    game_over = true;
+                } else {
+                    ms_reveal_flood(state, board, cx, cy);
+                    int still_hidden = 0;
+                    for (int y = 0; y < MS_H; y++)
+                        for (int x = 0; x < MS_W; x++)
+                            if (state[y][x] == 0 && board[y][x] != 9) still_hidden++;
+                    if (still_hidden == 0) { won = true; game_over = true; }
+                }
+            }
+        }
+    }
+}
+
 /* ============================================================
  * New programs: life, tetris, mandelbrot, piano, forth
  * ============================================================ */
+
+/* ============================================================
+ * New programs: life, tetris, mandelbrot, piano, forth
+ * ============================================================ */
+
+/* 2048 */
+#define G2048_SZ 4
+
+static void g2048_add_tile(uint16_t board[G2048_SZ][G2048_SZ]) {
+    int ex[G2048_SZ * G2048_SZ], ey[G2048_SZ * G2048_SZ];
+    int ne = 0;
+    for (int y = 0; y < G2048_SZ; y++)
+        for (int x = 0; x < G2048_SZ; x++)
+            if (board[y][x] == 0) { ex[ne] = x; ey[ne] = y; ne++; }
+    if (ne == 0) return;
+    int i = (int)(games_rand_u32() % (uint32_t)ne);
+    board[ey[i]][ex[i]] = (games_rand_u32() % 10 < 9) ? 2 : 4;
+}
+
+static void app_2048(const char *arg) {
+    (void)arg;
+    static uint16_t board[G2048_SZ][G2048_SZ];
+    int score = 0;
+
+restart:
+    memset(board, 0, sizeof board);
+    score = 0;
+    g2048_add_tile(board); g2048_add_tile(board);
+
+    while (1) {
+        watchdog_update();
+        sys_clear();
+        char hdr2048[32];
+        snprintf(hdr2048, sizeof hdr2048, "2048  score:%d", score);
+        print_line(hdr2048);
+        print_line("Arrows=move  r=new  q=quit");
+        for (int y = 0; y < G2048_SZ; y++) {
+            char row[G2048_SZ * 7 + 2];
+            int ri = 0;
+            row[ri++] = '|';
+            for (int x = 0; x < G2048_SZ; x++) {
+                if (board[y][x])
+                    ri += snprintf(row + ri, (size_t)(sizeof row - ri - 1),
+                                   "%5u|", (unsigned)board[y][x]);
+                else {
+                    memcpy(row + ri, "     |", 6); ri += 6;
+                }
+            }
+            row[ri] = '\0';
+            print_line(row);
+        }
+
+        bool has_2048 = false, has_empty = false, has_merge = false;
+        for (int y = 0; y < G2048_SZ; y++)
+            for (int x = 0; x < G2048_SZ; x++) {
+                if (board[y][x] == 2048) has_2048 = true;
+                if (board[y][x] == 0)    has_empty = true;
+                if (x + 1 < G2048_SZ && board[y][x] == board[y][x+1] && board[y][x]) has_merge = true;
+                if (y + 1 < G2048_SZ && board[y][x] == board[y+1][x] && board[y][x]) has_merge = true;
+            }
+        if (has_2048) { print_line("*** 2048! ***  r=new  q=quit"); }
+        if (!has_empty && !has_merge) { print_line("Game over!  r=new  q=quit"); }
+
+        int ch = sys_getchar();
+        if (ch == 'q' || ch == 0x03) return;
+        if (ch == 'r') goto restart;
+        if (ch != 0xB5 && ch != 0xB4 && ch != 0xB6 && ch != 0xB7) continue;
+
+        bool moved = false;
+
+        if (ch == 0xB6 || ch == 0xB7) { /* left / right */
+            int forward = (ch == 0xB6);  /* 0xB6=left, slide toward x=0 */
+            for (int y = 0; y < G2048_SZ; y++) {
+                uint16_t v[G2048_SZ];
+                int vi = 0;
+                if (forward) {
+                    for (int x = 0; x < G2048_SZ; x++) if (board[y][x]) v[vi++] = board[y][x];
+                } else {
+                    for (int x = G2048_SZ - 1; x >= 0; x--) if (board[y][x]) v[vi++] = board[y][x];
+                }
+                for (int i = 0; i + 1 < vi; i++) {
+                    if (v[i] == v[i+1]) {
+                        v[i] = (uint16_t)(v[i] * 2); score += v[i];
+                        for (int j = i+1; j+1 < vi; j++) v[j] = v[j+1];
+                        vi--;
+                    }
+                }
+                while (vi < G2048_SZ) v[vi++] = 0;
+                if (forward) {
+                    for (int x = 0; x < G2048_SZ; x++) { if (board[y][x] != v[x]) moved = true; board[y][x] = v[x]; }
+                } else {
+                    for (int x = G2048_SZ - 1; x >= 0; x--) {
+                        int i = G2048_SZ - 1 - x;
+                        if (board[y][x] != v[i]) moved = true;
+                        board[y][x] = v[i];
+                    }
+                }
+            }
+        } else { /* up / down */
+            int upward = (ch == 0xB5);
+            for (int x = 0; x < G2048_SZ; x++) {
+                uint16_t v[G2048_SZ];
+                int vi = 0;
+                if (upward) {
+                    for (int y = 0; y < G2048_SZ; y++) if (board[y][x]) v[vi++] = board[y][x];
+                } else {
+                    for (int y = G2048_SZ - 1; y >= 0; y--) if (board[y][x]) v[vi++] = board[y][x];
+                }
+                for (int i = 0; i + 1 < vi; i++) {
+                    if (v[i] == v[i+1]) {
+                        v[i] = (uint16_t)(v[i] * 2); score += v[i];
+                        for (int j = i+1; j+1 < vi; j++) v[j] = v[j+1];
+                        vi--;
+                    }
+                }
+                while (vi < G2048_SZ) v[vi++] = 0;
+                if (upward) {
+                    for (int y = 0; y < G2048_SZ; y++) { if (board[y][x] != v[y]) moved = true; board[y][x] = v[y]; }
+                } else {
+                    for (int y = G2048_SZ - 1; y >= 0; y--) {
+                        int i = G2048_SZ - 1 - y;
+                        if (board[y][x] != v[i]) moved = true;
+                        board[y][x] = v[i];
+                    }
+                }
+            }
+        }
+        if (moved) g2048_add_tile(board);
+    }
+}
 
 /* Conway's Game of Life */
 #define LIFE_W 38
@@ -3974,6 +4991,7 @@ static void app_life(const char *arg) {
 
         /* Check for quit or let the gen advance */
         for (int w = 0; w < 3; w++) {
+            watchdog_update();
             int ch = getchar_timeout_us(0);
             if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
             if (ch == 'q' || ch == 0x03) { sys_clear(); return; }
@@ -4079,6 +5097,7 @@ static void app_tetris(const char *arg) {
         uint32_t start = sys_time_ms();
         int move = -1;
         while (sys_time_ms() - start < tick_ms) {
+            watchdog_update();
             int ch = getchar_timeout_us(0);
             if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
             if (ch == 'q' || ch == 0x03) goto tetris_end;
@@ -4281,6 +5300,69 @@ typedef struct {
     char body[128];
 } forth_word_t;
 
+/* Execute a Forth body (used both for `:`-defined words and recursively for
+   nested user-defined word calls). Returns nothing; mutates *psp and stack[].
+   `depth` guards against runaway recursion / mutual recursion. */
+static void _forth_exec_body(const char *body,
+                             int32_t *stack, int *psp,
+                             const forth_word_t *dict, int nwords,
+                             int depth) {
+    if (depth > 16) { print_line("forth: nesting too deep"); return; }
+    char body_copy[128];
+    strncpy(body_copy, body, sizeof body_copy - 1);
+    body_copy[sizeof body_copy - 1] = '\0';
+    char *bt = body_copy;
+    int sp = *psp;
+    while (*bt) {
+        while (*bt == ' ') bt++;
+        if (!*bt) break;
+        char bw[FORTH_WORD_MAX];
+        int bwi = 0;
+        while (*bt && *bt != ' ' && bwi < FORTH_WORD_MAX - 1) bw[bwi++] = *bt++;
+        bw[bwi] = '\0';
+
+        char *endp;
+        long val = strtol(bw, &endp, 10);
+        if (*endp == '\0' && bwi > 0) {
+            if (sp < FORTH_STACK_SZ) stack[sp++] = (int32_t)val;
+        } else if (strcmp(bw, ".") == 0) {
+            if (sp > 0) { char o[16]; snprintf(o, sizeof o, "%ld ", (long)stack[--sp]); sys_print(o); }
+        } else if (strcmp(bw, "+") == 0) { if (sp >= 2) { sp--; stack[sp-1] += stack[sp]; } }
+        else if (strcmp(bw, "-") == 0) { if (sp >= 2) { sp--; stack[sp-1] -= stack[sp]; } }
+        else if (strcmp(bw, "*") == 0) { if (sp >= 2) { sp--; stack[sp-1] *= stack[sp]; } }
+        else if (strcmp(bw, "/") == 0) { if (sp >= 2 && stack[sp-1]) { sp--; stack[sp-1] /= stack[sp]; } }
+        else if (strcmp(bw, "mod") == 0) { if (sp >= 2 && stack[sp-1]) { sp--; stack[sp-1] %= stack[sp]; } }
+        else if (strcmp(bw, "=") == 0) { if (sp >= 2) { sp--; stack[sp-1] = (stack[sp-1] == stack[sp]) ? -1 : 0; } }
+        else if (strcmp(bw, "<") == 0) { if (sp >= 2) { sp--; stack[sp-1] = (stack[sp-1] <  stack[sp]) ? -1 : 0; } }
+        else if (strcmp(bw, ">") == 0) { if (sp >= 2) { sp--; stack[sp-1] = (stack[sp-1] >  stack[sp]) ? -1 : 0; } }
+        else if (strcmp(bw, "dup") == 0) { if (sp > 0 && sp < FORTH_STACK_SZ) { stack[sp] = stack[sp-1]; sp++; } }
+        else if (strcmp(bw, "drop") == 0) { if (sp > 0) sp--; }
+        else if (strcmp(bw, "swap") == 0) { if (sp >= 2) { int32_t t = stack[sp-1]; stack[sp-1] = stack[sp-2]; stack[sp-2] = t; } }
+        else if (strcmp(bw, "over") == 0) { if (sp >= 2 && sp < FORTH_STACK_SZ) { stack[sp] = stack[sp-2]; sp++; } }
+        else if (strcmp(bw, "cr") == 0) { sys_putchar('\n'); }
+        else if (strcmp(bw, "emit") == 0) { if (sp > 0) sys_putchar((char)stack[--sp]); }
+        else {
+            /* Look up nested user-defined word */
+            bool found = false;
+            for (int i = nwords - 1; i >= 0; i--) {
+                if (strcmp(bw, dict[i].name) == 0) {
+                    *psp = sp;
+                    _forth_exec_body(dict[i].body, stack, psp, dict, nwords, depth + 1);
+                    sp = *psp;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                char msg[48];
+                snprintf(msg, sizeof msg, "%s ?", bw);
+                print_line(msg);
+            }
+        }
+    }
+    *psp = sp;
+}
+
 static void app_forth(const char *arg) {
     (void)arg;
     int32_t stack[FORTH_STACK_SZ];
@@ -4417,37 +5499,7 @@ static void app_forth(const char *arg) {
             bool found = false;
             for (int i = nwords - 1; i >= 0; i--) {
                 if (strcmp(word, dict[i].name) == 0) {
-                    /* Execute body — simple recursive call by re-tokenizing */
-                    char body_copy[128];
-                    strncpy(body_copy, dict[i].body, sizeof body_copy - 1);
-                    body_copy[sizeof body_copy - 1] = '\0';
-                    /* Push body tokens into a mini evaluator */
-                    char *bt = body_copy;
-                    while (*bt) {
-                        while (*bt == ' ') bt++;
-                        if (!*bt) break;
-                        char bw[FORTH_WORD_MAX];
-                        int bwi = 0;
-                        while (*bt && *bt != ' ' && bwi < FORTH_WORD_MAX - 1)
-                            bw[bwi++] = *bt++;
-                        bw[bwi] = '\0';
-                        /* Try as number */
-                        char *endp;
-                        long val = strtol(bw, &endp, 10);
-                        if (*endp == '\0' && bwi > 0) {
-                            if (sp < FORTH_STACK_SZ) stack[sp++] = (int32_t)val;
-                        } else if (strcmp(bw, ".") == 0) {
-                            if (sp > 0) { char o[16]; snprintf(o, sizeof o, "%ld ", (long)stack[--sp]); sys_print(o); }
-                        } else if (strcmp(bw, "+") == 0) { if (sp >= 2) { sp--; stack[sp-1] += stack[sp]; } }
-                        else if (strcmp(bw, "-") == 0) { if (sp >= 2) { sp--; stack[sp-1] -= stack[sp]; } }
-                        else if (strcmp(bw, "*") == 0) { if (sp >= 2) { sp--; stack[sp-1] *= stack[sp]; } }
-                        else if (strcmp(bw, "/") == 0) { if (sp >= 2 && stack[sp-1]) { sp--; stack[sp-1] /= stack[sp]; } }
-                        else if (strcmp(bw, "dup") == 0) { if (sp > 0 && sp < FORTH_STACK_SZ) { stack[sp] = stack[sp-1]; sp++; } }
-                        else if (strcmp(bw, "drop") == 0) { if (sp > 0) sp--; }
-                        else if (strcmp(bw, "swap") == 0) { if (sp >= 2) { int32_t t = stack[sp-1]; stack[sp-1] = stack[sp-2]; stack[sp-2] = t; } }
-                        else if (strcmp(bw, "cr") == 0) { sys_putchar('\n'); }
-                        else if (strcmp(bw, "emit") == 0) { if (sp > 0) sys_putchar((char)stack[--sp]); }
-                    }
+                    _forth_exec_body(dict[i].body, stack, &sp, dict, nwords, 0);
                     found = true;
                     break;
                 }
@@ -4608,15 +5660,23 @@ static void app_noop(const char *arg) {
     (void)arg;
 }
 
+static int _app_cmp(const void *a, const void *b) {
+    return strcmp(((const app_cmd_entry_t *)a)->name,
+                  ((const app_cmd_entry_t *)b)->name);
+}
+
 static bool app_dispatch_named(const char *cmd, const char *arg) {
-    static const app_cmd_entry_t table[] = {
+    /* Table is sorted lazily on first call so future maintainers can append
+       entries in any order. After sorting we binary-search every dispatch,
+       turning a ~110-strcmp linear scan into ~7 comparisons. */
+    static app_cmd_entry_t table[] = {
         {"hello", app_hello}, {"basename", app_basename}, {"dirname", app_dirname},
         {"seq", app_seq}, {"head", app_head}, {"tail", app_tail},
         {"wc", app_wc}, {"cut", app_cut}, {"grep", app_grep},
         {"find", app_find}, {"tree", app_tree}, {"du", app_du},
         {"df", app_df}, {"disk", app_df}, {"space", app_df},
-        {"pager", app_pager}, {"more", app_pager}, {"rev", app_rev},
-        {"sort", app_sort}, {"hexdump", app_hexdump}, {"od", app_od},
+        {"pager", app_pager}, {"less", app_pager}, {"more", app_pager}, {"rev", app_rev},
+        {"sort", app_sort}, {"uniq", app_uniq}, {"hexdump", app_hexdump}, {"od", app_od},
         {"hexedit", app_hexedit}, {"hex", app_hexedit},
         {"calc", app_calc}, {"cp", app_cp}, {"mv", app_mv},
         {"stat", app_stat}, {"edit", app_edit}, {"bedit", app_edit},
@@ -4625,6 +5685,8 @@ static bool app_dispatch_named(const char *cmd, const char *arg) {
         {"habits", app_habits}, {"habit", app_habits},
         {"bookmarks", app_bookmarks}, {"bookmark", app_bookmarks},
         {"favs", app_bookmarks}, {"favorites", app_bookmarks},
+        {"tasks-export", app_tasks_export}, {"journal-export", app_journal_export},
+        {"habits-export", app_habits_export},
         {"games", app_games}, {"game", app_games}, {"dice", app_dice},
         {"coin", app_coin}, {"guess", app_guess}, {"snake", app_snake},
         {"sprite", app_sprite}, {"terminal", app_terminal}, {"term", app_terminal},
@@ -4645,20 +5707,26 @@ static bool app_dispatch_named(const char *cmd, const char *arg) {
         {"watch", app_watch}, {"diff", app_diff}, {"env", app_env},
         {"lock", app_lock}, {"xxd", app_xxd}, {"strings", app_strings},
         {"yes", app_yes}, {"tee", app_tee},
+        {"base64", app_base64}, {"crc32", app_crc32},
         /* New programs */
         {"life", app_life}, {"tetris", app_tetris},
         {"mandelbrot", app_mandelbrot}, {"fractal", app_mandelbrot},
         {"piano", app_piano}, {"forth", app_forth},
+        {"minesweeper", app_minesweeper}, {"mines", app_minesweeper},
+        {"2048", app_2048},
         /* System */
         {"xmodem", app_xmodem}, {"theme", app_theme},
     };
-
-    for (size_t i = 0; i < sizeof table / sizeof table[0]; i++) {
-        if (strcmp(cmd, table[i].name) == 0) {
-            table[i].handler(arg);
-            return true;
-        }
+    static const size_t n = sizeof table / sizeof table[0];
+    static bool sorted = false;
+    if (!sorted) {
+        qsort(table, n, sizeof table[0], _app_cmp);
+        sorted = true;
     }
+
+    app_cmd_entry_t key = { cmd, NULL };
+    app_cmd_entry_t *hit = bsearch(&key, table, n, sizeof table[0], _app_cmp);
+    if (hit) { hit->handler(arg); return true; }
     return false;
 }
 

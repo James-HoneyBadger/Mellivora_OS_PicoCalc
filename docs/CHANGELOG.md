@@ -4,6 +4,45 @@ All notable changes to **Mellivora OS for PicoCalc** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2.4.0 development
+
+### Added (2.4.0-dev)
+
+- **`uniq` command** — filter adjacent duplicate lines from a file.
+  Supports `-c` (count), `-d` (only duplicates), `-u` (only unique).
+- **`less` command** — alias for `pager`; brings the name up to Unix
+  convention (tab-completion and `help` both show it).
+- **`umount` / `unmount` commands** — safely mark the SD card unmounted
+  so it can be hot-removed without filesystem corruption.
+- **Dot-source (`. FILE`)** — execute a script file in the current
+  shell session; full alias for `script`.
+- **`time COMMAND`** — measure elapsed wall-clock time for any command
+  and print `real  N.NNN s` afterwards.
+- **`repeat N COMMAND`** — run a command N times (max 1000); honours
+  Ctrl-C interruption.
+- **`printf FORMAT [ARGS...]`** — formatted output supporting `%d`, `%u`,
+  `%x`, `%X`, `%s`, `%%`; recognises `\n` and `\t` in the format string.
+- **`$?` last-exit variable** — expands to 0 after a successful command
+  or 127 after an unknown command; usable anywhere `$NAME` is accepted.
+- **`base64` command** — encode a file to standard Base64 output; `-d`
+  flag decodes back.
+- **`crc32` command** — compute CRC-32/ISO-HDLC checksum of a file,
+  printed as 8 hex digits.
+- **Minesweeper game** (`minesweeper` / `mines`) — 9×9 grid, 10 mines.
+  Arrow keys to move cursor; Enter to reveal; `f` to toggle flag; `r` to
+  restart; `q` to quit.
+- **2048 game** (`2048`) — 4×4 sliding-tile puzzle.  Arrow keys slide
+  tiles; tiles merge when equal; aim for 2048.
+- **New BASIC samples**: `bounce.bas` (bouncing ball), `roman.bas`
+  (Roman numerals 1–20), `stats.bas` (mean/min/max/range), `loan.bas`
+  (loan amortisation table).
+- **New TinyC samples**: `roman.tc`, `stack.tc` (stack via array),
+  `sieve2.tc` (primes up to 100).
+- **Ctrl-W** word-delete — deletes the word to the left of the cursor in
+  the shell input line (complements existing Ctrl-A/E/K/U/L/R bindings).
+
+---
+
 ## [2.3.0] - 2026-04-27
 
 First tagged release of the 2.x feature wave covering reliability,

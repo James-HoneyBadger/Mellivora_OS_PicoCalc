@@ -130,8 +130,9 @@ static int _net_readline(const char *prompt, char *buf, int cap, bool hide) {
     sys_print(prompt);
     int idx = 0;
     while (idx < cap - 1) {
+        watchdog_update();
         int ch = kbd_getc();
-        if (ch < 0) { sleep_ms(20); continue; }
+        if (ch < 0) { sleep_ms(5); continue; }
         if (ch == '\r' || ch == '\n') break;
         if (ch == 8 || ch == 127) {
             if (idx > 0) { idx--; sys_putchar(8); sys_putchar(' '); sys_putchar(8); }
@@ -175,7 +176,8 @@ void net_app_wifi(const char *arg) {
         } else {
             sys_print("WiFi: not connected\n");
         }
-        sys_print("Usage: wifi connect|disconnect|scan|status\n");
+        sys_print("Usage: wifi connect|disconnect|scan|status|saved|forget\n");
+        sys_print("  Credentials auto-saved to /WIFI.CFG on successful connect.\n");
         return;
     }
 
@@ -298,6 +300,7 @@ void net_app_wifi(const char *arg) {
             sys_print("Connected! IP: ");
             sys_print(ip);
             sys_putchar('\n');
+            sys_print("Credentials saved to /WIFI.CFG\n");
         } else {
             sys_print("Connection failed\n");
         }

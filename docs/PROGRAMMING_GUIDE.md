@@ -93,7 +93,7 @@ Examples include:
 - todo items (`TODO.TXT`)
 - planner entries (`PLANNER.TXT`)
 - journal data (`JOURNAL.TXT`)
-- habits tracking (`HABITS.TXT`) — uses pipe-delimited format with streak fields
+- habits tracking (`HABITS.CFG`) — uses pipe-delimited format with streak fields
 - bookmarks (`BOOKMARKS.CFG`) — stores label, target, and CWD context
 - aliases (`ALIASES.CFG`)
 - high scores (`HISCORE.TXT`)

@@ -561,32 +561,33 @@ static uint32_t _fg = LCD_GREEN;
 static uint32_t _bg = LCD_BLACK;
 static int _cur_col = 0;
 static int _cur_row = 0;
-static char _text_buf[LCD_ROWS][LCD_COLS];
+static char     _text_buf[LCD_ROWS][LCD_COLS];
+static uint32_t _color_buf[LCD_ROWS][LCD_COLS]; /* per-character foreground color */
 
 static void _clear_text_buf(void) {
     for (int r = 0; r < LCD_ROWS; r++) {
         for (int c = 0; c < LCD_COLS; c++) {
-            _text_buf[r][c] = ' ';
+            _text_buf[r][c]  = ' ';
+            _color_buf[r][c] = _fg;
         }
     }
 }
 
 /* Scroll entire screen up by one text row */
 static void _scroll_up(void) {
-    memmove(_text_buf[0], _text_buf[1], (LCD_ROWS - 1) * LCD_COLS * sizeof(char));
+    memmove(_text_buf[0],  _text_buf[1],  (LCD_ROWS - 1) * LCD_COLS * sizeof(char));
+    memmove(_color_buf[0], _color_buf[1], (LCD_ROWS - 1) * LCD_COLS * sizeof(uint32_t));
     for (int c = 0; c < LCD_COLS; c++) {
-        _text_buf[LCD_ROWS - 1][c] = ' ';
+        _text_buf[LCD_ROWS - 1][c]  = ' ';
+        _color_buf[LCD_ROWS - 1][c] = _fg;
     }
     _cur_col = 0;
     _cur_row = LCD_ROWS - 1;
 
-    /* Rebuild the entire screen in one large window write to minimize SPI overhead */
-    uint8_t fr = (uint8_t)((_fg >> 16) & 0xFC);
-    uint8_t fgc = (uint8_t)((_fg >> 8) & 0xFC);
-    uint8_t fb = (uint8_t)(_fg & 0xFC);
-    uint8_t br = (uint8_t)((_bg >> 16) & 0xFC);
-    uint8_t bgc = (uint8_t)((_bg >> 8) & 0xFC);
-    uint8_t bb = (uint8_t)(_bg & 0xFC);
+    /* Rebuild the entire screen using per-character stored colors */
+    uint8_t br  = (uint8_t)((_bg >> 16) & 0xFC);
+    uint8_t bgc = (uint8_t)((_bg >> 8)  & 0xFC);
+    uint8_t bb  = (uint8_t)(_bg & 0xFC);
 
     /* Write one row at a time but keep the same SPI window open */
     _set_window(0, 0, LCD_WIDTH - 1, (uint16_t)(LCD_ROWS * LCD_CHAR_H - 1));
@@ -595,6 +596,10 @@ static void _scroll_up(void) {
         size_t idx = 0;
         for (int glyph_row = 0; glyph_row < LCD_CHAR_H; glyph_row++) {
             for (int col = 0; col < LCD_COLS; col++) {
+                uint32_t cfg = _color_buf[row][col];
+                uint8_t fr  = (uint8_t)((cfg >> 16) & 0xFC);
+                uint8_t fgc = (uint8_t)((cfg >> 8)  & 0xFC);
+                uint8_t fb  = (uint8_t)(cfg & 0xFC);
                 char ch = _text_buf[row][col];
                 if ((uint8_t)ch < 0x20 || (uint8_t)ch > 0x7E) ch = ' ';
                 const uint8_t *glyph = _font8x16[(uint8_t)ch - 0x20];
@@ -641,14 +646,16 @@ void lcd_putc(char c) {
     if (c == '\b') {
         if (_cur_col > 0) {
             _cur_col--;
-            _text_buf[_cur_row][_cur_col] = ' ';
+            _text_buf[_cur_row][_cur_col]  = ' ';
+            _color_buf[_cur_row][_cur_col] = _fg;
             lcd_draw_char((uint16_t)(_cur_col * LCD_CHAR_W), py, ' ', _fg, _bg);
         }
         _lcd_unlock();
         return;
     }
     if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) c = '?';
-    _text_buf[_cur_row][_cur_col] = c;
+    _text_buf[_cur_row][_cur_col]  = c;
+    _color_buf[_cur_row][_cur_col] = _fg;
     lcd_draw_char((uint16_t)(_cur_col * LCD_CHAR_W), py, c, _fg, _bg);
     _cur_col++;
     if (_cur_col >= LCD_COLS) {

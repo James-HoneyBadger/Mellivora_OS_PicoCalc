@@ -1276,3 +1276,29 @@ fat_result_t fat_append(const char *path, const uint8_t *data, uint32_t len) {
     }
     return FAT_ERR_NOTFOUND;
 }
+
+/* ------------------------------------------------------------------ */
+/* Atomic replace:  write to "/_ATOMIC.TMP" -> unlink target ->        */
+/*                  rename tmp over target. Single-threaded firmware   */
+/*                  only (one shared tmp slot).                        */
+/* ------------------------------------------------------------------ */
+fat_result_t fat_write_atomic(const char *path, const uint8_t *data, uint32_t len) {
+    if (!_mounted) return FAT_ERR_NOTMOUNTED;
+    if (!path || !*path) return FAT_ERR_NOTFOUND;
+
+    static const char *TMP = "/_ATOMIC.TMP";
+    (void)fat_unlink(TMP);  /* clean any stale tmp from a prior interrupted call */
+
+    fat_result_t r = fat_create(TMP, data, len);
+    if (r != FAT_OK) return r;
+
+    fat_result_t ur = fat_unlink(path);
+    if (ur != FAT_OK && ur != FAT_ERR_NOTFOUND) {
+        (void)fat_unlink(TMP);
+        return ur;
+    }
+
+    r = fat_rename(TMP, path);
+    if (r != FAT_OK) (void)fat_unlink(TMP);
+    return r;
+}

@@ -80,4 +80,10 @@ fat_result_t fat_create(const char *path, const uint8_t *data, uint32_t len);
 fat_result_t fat_rename(const char *old_path, const char *new_path);
 fat_result_t fat_append(const char *path, const uint8_t *data, uint32_t len);
 
+/* Atomic replace: writes to a temp file then renames over `path`.
+   Reduces the window where a power-loss or reset leaves a half-written
+   settings/journal/history file. Single-threaded firmware only (uses one
+   shared tmp slot at "/_ATOMIC.TMP"). */
+fat_result_t fat_write_atomic(const char *path, const uint8_t *data, uint32_t len);
+
 const char  *fat_result_str(fat_result_t r);

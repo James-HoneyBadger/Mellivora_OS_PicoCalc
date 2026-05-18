@@ -1,0 +1,634 @@
+[
+  {
+    "name": "2048",
+    "source": "shell completion"
+  },
+  {
+    "name": "agenda",
+    "source": "shell completion"
+  },
+  {
+    "name": "alias",
+    "source": "shell completion"
+  },
+  {
+    "name": "backlight",
+    "source": "shell completion"
+  },
+  {
+    "name": "base64",
+    "source": "shell completion"
+  },
+  {
+    "name": "basename",
+    "source": "shell completion"
+  },
+  {
+    "name": "basic",
+    "source": "shell completion"
+  },
+  {
+    "name": "battery",
+    "source": "shell completion"
+  },
+  {
+    "name": "bedit",
+    "source": "shell completion"
+  },
+  {
+    "name": "bookmark",
+    "source": "shell completion"
+  },
+  {
+    "name": "bookmarks",
+    "source": "shell completion"
+  },
+  {
+    "name": "browse",
+    "source": "shell completion"
+  },
+  {
+    "name": "cal",
+    "source": "shell completion"
+  },
+  {
+    "name": "calc",
+    "source": "shell completion"
+  },
+  {
+    "name": "calendar",
+    "source": "shell completion"
+  },
+  {
+    "name": "cat",
+    "source": "shell completion"
+  },
+  {
+    "name": "cd",
+    "source": "shell completion"
+  },
+  {
+    "name": "clear",
+    "source": "shell completion"
+  },
+  {
+    "name": "clock",
+    "source": "shell completion"
+  },
+  {
+    "name": "coin",
+    "source": "shell completion"
+  },
+  {
+    "name": "cp",
+    "source": "shell completion"
+  },
+  {
+    "name": "crc32",
+    "source": "shell completion"
+  },
+  {
+    "name": "cut",
+    "source": "shell completion"
+  },
+  {
+    "name": "dashboard",
+    "source": "shell completion"
+  },
+  {
+    "name": "date",
+    "source": "shell completion"
+  },
+  {
+    "name": "demos",
+    "source": "shell completion"
+  },
+  {
+    "name": "df",
+    "source": "shell completion"
+  },
+  {
+    "name": "diary",
+    "source": "shell completion"
+  },
+  {
+    "name": "dice",
+    "source": "shell completion"
+  },
+  {
+    "name": "diff",
+    "source": "shell completion"
+  },
+  {
+    "name": "dir",
+    "source": "shell completion"
+  },
+  {
+    "name": "dirname",
+    "source": "shell completion"
+  },
+  {
+    "name": "disk",
+    "source": "shell completion"
+  },
+  {
+    "name": "dmesg",
+    "source": "shell completion"
+  },
+  {
+    "name": "dns",
+    "source": "shell completion"
+  },
+  {
+    "name": "du",
+    "source": "shell completion"
+  },
+  {
+    "name": "echo",
+    "source": "shell completion"
+  },
+  {
+    "name": "edit",
+    "source": "shell completion"
+  },
+  {
+    "name": "env",
+    "source": "shell completion"
+  },
+  {
+    "name": "false",
+    "source": "shell completion"
+  },
+  {
+    "name": "favorites",
+    "source": "shell completion"
+  },
+  {
+    "name": "favs",
+    "source": "shell completion"
+  },
+  {
+    "name": "fetch",
+    "source": "shell completion"
+  },
+  {
+    "name": "files",
+    "source": "shell completion"
+  },
+  {
+    "name": "find",
+    "source": "shell completion"
+  },
+  {
+    "name": "forth",
+    "source": "shell completion"
+  },
+  {
+    "name": "fractal",
+    "source": "shell completion"
+  },
+  {
+    "name": "game",
+    "source": "shell completion"
+  },
+  {
+    "name": "games",
+    "source": "shell completion"
+  },
+  {
+    "name": "grep",
+    "source": "shell completion"
+  },
+  {
+    "name": "guess",
+    "source": "shell completion"
+  },
+  {
+    "name": "habit",
+    "source": "shell completion"
+  },
+  {
+    "name": "habits",
+    "source": "shell completion"
+  },
+  {
+    "name": "habits-export",
+    "source": "shell completion"
+  },
+  {
+    "name": "halt",
+    "source": "shell completion"
+  },
+  {
+    "name": "head",
+    "source": "shell completion"
+  },
+  {
+    "name": "hello",
+    "source": "shell completion"
+  },
+  {
+    "name": "help",
+    "source": "shell completion"
+  },
+  {
+    "name": "hex",
+    "source": "shell completion"
+  },
+  {
+    "name": "hexdump",
+    "source": "shell completion"
+  },
+  {
+    "name": "hexedit",
+    "source": "shell completion"
+  },
+  {
+    "name": "history",
+    "source": "shell completion"
+  },
+  {
+    "name": "home",
+    "source": "shell completion"
+  },
+  {
+    "name": "id",
+    "source": "shell completion"
+  },
+  {
+    "name": "ifconfig",
+    "source": "shell completion"
+  },
+  {
+    "name": "irc",
+    "source": "shell completion"
+  },
+  {
+    "name": "journal",
+    "source": "shell completion"
+  },
+  {
+    "name": "journal-export",
+    "source": "shell completion"
+  },
+  {
+    "name": "launcher",
+    "source": "shell completion"
+  },
+  {
+    "name": "less",
+    "source": "shell completion"
+  },
+  {
+    "name": "life",
+    "source": "shell completion"
+  },
+  {
+    "name": "lock",
+    "source": "shell completion"
+  },
+  {
+    "name": "ls",
+    "source": "shell completion"
+  },
+  {
+    "name": "man",
+    "source": "shell completion"
+  },
+  {
+    "name": "mandelbrot",
+    "source": "shell completion"
+  },
+  {
+    "name": "memo",
+    "source": "shell completion"
+  },
+  {
+    "name": "mines",
+    "source": "shell completion"
+  },
+  {
+    "name": "minesweeper",
+    "source": "shell completion"
+  },
+  {
+    "name": "mkdir",
+    "source": "shell completion"
+  },
+  {
+    "name": "monitor",
+    "source": "shell completion"
+  },
+  {
+    "name": "more",
+    "source": "shell completion"
+  },
+  {
+    "name": "mount",
+    "source": "shell completion"
+  },
+  {
+    "name": "mv",
+    "source": "shell completion"
+  },
+  {
+    "name": "netstat",
+    "source": "shell completion"
+  },
+  {
+    "name": "notes",
+    "source": "shell completion"
+  },
+  {
+    "name": "ntp",
+    "source": "shell completion"
+  },
+  {
+    "name": "od",
+    "source": "shell completion"
+  },
+  {
+    "name": "pager",
+    "source": "shell completion"
+  },
+  {
+    "name": "paint",
+    "source": "shell completion"
+  },
+  {
+    "name": "piano",
+    "source": "shell completion"
+  },
+  {
+    "name": "ping",
+    "source": "shell completion"
+  },
+  {
+    "name": "plan",
+    "source": "shell completion"
+  },
+  {
+    "name": "planner",
+    "source": "shell completion"
+  },
+  {
+    "name": "pomodoro",
+    "source": "shell completion"
+  },
+  {
+    "name": "poweroff",
+    "source": "shell completion"
+  },
+  {
+    "name": "printf",
+    "source": "shell completion"
+  },
+  {
+    "name": "pwd",
+    "source": "shell completion"
+  },
+  {
+    "name": "reboot",
+    "source": "shell completion"
+  },
+  {
+    "name": "rename",
+    "source": "shell completion"
+  },
+  {
+    "name": "repeat",
+    "source": "shell completion"
+  },
+  {
+    "name": "rev",
+    "source": "shell completion"
+  },
+  {
+    "name": "rm",
+    "source": "shell completion"
+  },
+  {
+    "name": "samples",
+    "source": "shell completion"
+  },
+  {
+    "name": "screenshot",
+    "source": "shell completion"
+  },
+  {
+    "name": "script",
+    "source": "shell completion"
+  },
+  {
+    "name": "sdinfo",
+    "source": "shell completion"
+  },
+  {
+    "name": "sdread",
+    "source": "shell completion"
+  },
+  {
+    "name": "seq",
+    "source": "shell completion"
+  },
+  {
+    "name": "serial",
+    "source": "shell completion"
+  },
+  {
+    "name": "set",
+    "source": "shell completion"
+  },
+  {
+    "name": "settings",
+    "source": "shell completion"
+  },
+  {
+    "name": "shutdown",
+    "source": "shell completion"
+  },
+  {
+    "name": "sleep",
+    "source": "shell completion"
+  },
+  {
+    "name": "snake",
+    "source": "shell completion"
+  },
+  {
+    "name": "sort",
+    "source": "shell completion"
+  },
+  {
+    "name": "space",
+    "source": "shell completion"
+  },
+  {
+    "name": "sprite",
+    "source": "shell completion"
+  },
+  {
+    "name": "stat",
+    "source": "shell completion"
+  },
+  {
+    "name": "status",
+    "source": "shell completion"
+  },
+  {
+    "name": "stopwatch",
+    "source": "shell completion"
+  },
+  {
+    "name": "strings",
+    "source": "shell completion"
+  },
+  {
+    "name": "sysinfo",
+    "source": "shell completion"
+  },
+  {
+    "name": "sysmon",
+    "source": "shell completion"
+  },
+  {
+    "name": "tail",
+    "source": "shell completion"
+  },
+  {
+    "name": "tasks",
+    "source": "shell completion"
+  },
+  {
+    "name": "tasks-export",
+    "source": "shell completion"
+  },
+  {
+    "name": "tcc",
+    "source": "shell completion"
+  },
+  {
+    "name": "tee",
+    "source": "shell completion"
+  },
+  {
+    "name": "telnet",
+    "source": "shell completion"
+  },
+  {
+    "name": "term",
+    "source": "shell completion"
+  },
+  {
+    "name": "terminal",
+    "source": "shell completion"
+  },
+  {
+    "name": "tetris",
+    "source": "shell completion"
+  },
+  {
+    "name": "theme",
+    "source": "shell completion"
+  },
+  {
+    "name": "time",
+    "source": "shell completion"
+  },
+  {
+    "name": "timer",
+    "source": "shell completion"
+  },
+  {
+    "name": "tinyc",
+    "source": "shell completion"
+  },
+  {
+    "name": "todo",
+    "source": "shell completion"
+  },
+  {
+    "name": "touch",
+    "source": "shell completion"
+  },
+  {
+    "name": "tree",
+    "source": "shell completion"
+  },
+  {
+    "name": "true",
+    "source": "shell completion"
+  },
+  {
+    "name": "tty",
+    "source": "shell completion"
+  },
+  {
+    "name": "umount",
+    "source": "shell completion"
+  },
+  {
+    "name": "unalias",
+    "source": "shell completion"
+  },
+  {
+    "name": "uname",
+    "source": "shell completion"
+  },
+  {
+    "name": "uniq",
+    "source": "shell completion"
+  },
+  {
+    "name": "unmount",
+    "source": "shell completion"
+  },
+  {
+    "name": "unset",
+    "source": "shell completion"
+  },
+  {
+    "name": "uptime",
+    "source": "shell completion"
+  },
+  {
+    "name": "version",
+    "source": "shell completion"
+  },
+  {
+    "name": "watch",
+    "source": "shell completion"
+  },
+  {
+    "name": "wc",
+    "source": "shell completion"
+  },
+  {
+    "name": "weather",
+    "source": "shell completion"
+  },
+  {
+    "name": "wget",
+    "source": "shell completion"
+  },
+  {
+    "name": "wifi",
+    "source": "shell completion"
+  },
+  {
+    "name": "write",
+    "source": "shell completion"
+  },
+  {
+    "name": "xmodem",
+    "source": "shell completion"
+  },
+  {
+    "name": "xxd",
+    "source": "shell completion"
+  },
+  {
+    "name": "yes",
+    "source": "shell completion"
+  }
+]

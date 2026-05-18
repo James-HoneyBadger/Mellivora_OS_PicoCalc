@@ -9,5 +9,6 @@ void app_sort(const char *arg);
 void app_tail(const char *arg);
 void app_wc(const char *arg);
 void app_cut(const char *arg);
+void app_uniq(const char *arg);
 
 #endif

@@ -42,6 +42,8 @@
 /* ------------------------------------------------------------------ */
 /* Configuration                                                        */
 /* ------------------------------------------------------------------ */
+/* Last exit status — set after each command dispatch; $? expands to it. */
+static int _last_exit = 0;
 
 #define LINE_BUF        256
 #define CWD_MAX         256
@@ -74,8 +76,13 @@ static void rm_recurse(const char *path);
 static void copy_str(char *dst, size_t dst_sz, const char *src);
 
 #define BANNER \
-    "Mellivora OS v" MELLIVORA_VERSION "\n" \
-    "PicoCalc ready\n\n"
+    "\n" \
+    "  Mellivora OS v" MELLIVORA_VERSION "\n" \
+    "  ====================================\n" \
+    "  PicoCalc bare-metal UNIX shell\n" \
+    "  Built: " __DATE__ "\n" \
+    "  Type 'help' to list commands.\n" \
+    "\n"
 
 /* ANSI escape sequences forwarded to the serial console */
 #define ANSI_UP   "\x1b[A"
@@ -187,15 +194,28 @@ static void var_expand(char *line, size_t line_sz) {
         bool braced = false;
         if (line[j] == '{') { braced = true; j++; }
         char name[ALIAS_NAME_SZ]; size_t ni = 0;
-        while (line[j] && ni + 1 < sizeof name) {
-            char nc = line[j];
-            if (braced ? (nc == '}') : !(isalnum((unsigned char)nc) || nc == '_')) break;
-            name[ni++] = nc; j++;
+        /* Special single-char tokens: $? */
+        if (!braced && line[j] == '?') {
+            name[0] = '?'; name[1] = '\0'; ni = 1; j++;
+        } else {
+            while (line[j] && ni + 1 < sizeof name) {
+                char nc = line[j];
+                if (braced ? (nc == '}') : !(isalnum((unsigned char)nc) || nc == '_')) break;
+                name[ni++] = nc; j++;
+            }
         }
         name[ni] = '\0';
         if (braced && line[j] == '}') j++;
         if (ni == 0) { out[oi++] = c; continue; }   /* lone $ */
-        const char *val = var_lookup(name);
+        /* $? resolves to last exit status */
+        char status_str[8];
+        const char *val;
+        if (name[0] == '?' && name[1] == '\0') {
+            snprintf(status_str, sizeof status_str, "%d", _last_exit);
+            val = status_str;
+        } else {
+            val = var_lookup(name);
+        }
         if (val) {
             size_t vl = strlen(val);
             if (oi + vl >= sizeof out) vl = sizeof out - 1 - oi;
@@ -301,8 +321,7 @@ static void out_prompt(void) {
 static void cwd_persist(void) {
     if (!_fat_mounted) return;
     /* Best-effort write; do not surface errors (cwd persistence is a nicety). */
-    fat_unlink(LASTCWD_FILE);
-    fat_create(LASTCWD_FILE, (const uint8_t *)_cwd, (uint32_t)strlen(_cwd));
+    fat_write_atomic(LASTCWD_FILE, (const uint8_t *)_cwd, (uint32_t)strlen(_cwd));
 }
 
 static void cwd_restore(void) {
@@ -349,6 +368,11 @@ static void trim_right(char *s) {
 
 static void dispatch(char *line);
 static void cmd_help(const char *arg);
+
+/* Forward declarations for the command registry (defined in the tab-completion
+   section further below, but used by cmd_help/_cmd_suggest earlier). */
+typedef struct { const char *name; const char *group; } cmd_meta_t;
+static const cmd_meta_t _cmd_registry[];
 
 /* ------------------------------------------------------------------ */
 /* History                                                              */
@@ -422,8 +446,8 @@ static void hist_save(void) {
     }
     if (old_n + pos < sizeof existing) {
         memcpy(existing + old_n, buf, pos);
-        fat_unlink(HISTORY_FILE);
-        fat_create(HISTORY_FILE, (const uint8_t *)existing, (uint32_t)(old_n + pos));
+        /* Crash-safe replace via temp file + rename. */
+        fat_write_atomic(HISTORY_FILE, (const uint8_t *)existing, (uint32_t)(old_n + pos));
     }
 }
 
@@ -763,157 +787,182 @@ static void cmd_man(const char *arg) {
         }
         topic[i] = '\0';
     }
+    /* Delegate entirely to cmd_help; it handles groups, detail pages, and
+       individual command name look-ups via the registry. */
+    cmd_help(*topic ? topic : NULL);
+}
 
-    if (!*topic) {
-        cmd_help(NULL);
-        return;
+/* Print all registry commands belonging to a group, 4 per row, indented. */
+static void _help_print_group(const char *group) {
+    int col = 0;
+    for (const cmd_meta_t *c = _cmd_registry; c->name; c++) {
+        if (strcmp(c->group, group) != 0) continue;
+        if (col == 0) out_str("  ");
+        out_fmt("%-14s", c->name);
+        col++;
+        if (col == 4) { out_char('\n'); col = 0; }
     }
-
-    if (!strcmp(topic, "mount") || !strcmp(topic, "ls") || !strcmp(topic, "cd") ||
-        !strcmp(topic, "pwd") || !strcmp(topic, "cat") || !strcmp(topic, "touch") ||
-        !strcmp(topic, "write") || !strcmp(topic, "mkdir") || !strcmp(topic, "rm") ||
-        !strcmp(topic, "cp") || !strcmp(topic, "mv") || !strcmp(topic, "stat") ||
-        !strcmp(topic, "tree") || !strcmp(topic, "du") || !strcmp(topic, "df") || !strcmp(topic, "edit") ||
-        !strcmp(topic, "hexedit") || !strcmp(topic, "browse") || !strcmp(topic, "notes") || !strcmp(topic, "todo") ||
-        !strcmp(topic, "planner") || !strcmp(topic, "journal") || !strcmp(topic, "habits") ||
-        !strcmp(topic, "bookmarks") || !strcmp(topic, "sprite") || !strcmp(topic, "terminal")) {
-        cmd_help("fs");
-        return;
-    }
-
-    if (!strcmp(topic, "basic") || !strcmp(topic, "tcc") || !strcmp(topic, "calc")) {
-        cmd_help("lang");
-        return;
-    }
-
-    if (!strcmp(topic, "games") || !strcmp(topic, "dice") || !strcmp(topic, "coin") ||
-        !strcmp(topic, "guess") || !strcmp(topic, "snake")) {
-        out_str("Games pack:\n");
-        out_str("  games               Open the mini game menu\n");
-        out_str("  dice [COUNT] [SIDES]  Roll one or more dice\n");
-        out_str("  coin [COUNT]        Flip one or more coins\n");
-        out_str("  guess               Play guess-the-number\n");
-        out_str("  snake               Play the step-based snake game\n");
-        return;
-    }
-
-    if (!strcmp(topic, "apps") || !strcmp(topic, "fs") || !strcmp(topic, "lang")) {
-        cmd_help(topic);
-        return;
-    }
-
-    if (!strcmp(topic, "alias") || !strcmp(topic, "unalias") || !strcmp(topic, "history") || !strcmp(topic, "man")) {
-        out_str("Shell helpers:\n");
-        out_str("  history [clear|run N]  Show, clear, or replay history\n");
-        out_str("  !! and !N              Rerun the last or numbered command\n");
-        out_str("  alias NAME VALUE       Create a persistent alias\n");
-        out_str("  unalias NAME           Remove a saved alias\n");
-        out_str("  man TOPIC              Open built-in help\n");
-        return;
-    }
-
-    out_fmt("No manual entry for %s. Try: man fs, man apps, man lang\n", topic);
+    if (col) out_char('\n');
 }
 
 static void cmd_help(const char *arg) {
     const char *topic = arg ? arg : "";
     while (*topic == ' ') topic++;
 
+    /* ---- Top-level overview ---- */
     if (!*topic) {
-        out_str("System commands:\n");
-        out_str("  help [apps|fs|lang]  Show overview or a topic\n");
-        out_str("  man TOPIC            Open built-in detailed help\n");
-        out_str("  history [clear]      Show or clear shell history\n");
-        out_str("  alias [N V]          List or define a persistent alias\n");
-        out_str("  unalias NAME         Remove a command alias\n");
-        out_str("  uname                OS and platform info\n");
-        out_str("  sysinfo              Detailed system information\n");
-        out_str("  uptime               Time since boot (ms)\n");
-        out_str("  status [on|off]      Toggle status bar\n");
-        out_str("  clear                Clear the screen\n");
-        out_str("  battery              Battery charge level\n");
-        out_str("  backlight <n>        Keyboard backlight 0-255\n");
-        out_str("  reboot               Warm reboot\n");
-        out_str("\nStorage commands:\n");
-        out_str("  mount ls dir cd pwd cat touch write mkdir rm rename mv\n");
-        out_str("  sdinfo sdread edit browse tree du df\n");
-        out_str("\nApp commands:\n");
-        out_str("  hello basename dirname seq head tail wc cut grep find tree du df pager rev sort\n");
-        out_str("  hexdump od hexedit calc cp mv stat edit browse notes journal habits todo planner\n");
-        out_str("  bookmarks games snake dice coin guess sprite terminal home dashboard sysmon\n");
-        out_str("  samples clock cal script paint settings set sleep id true false basic tcc\n");
+        out_str("Mellivora OS " MELLIVORA_VERSION " — command overview\n");
+        out_str("Use  man TOPIC  for details on any command.\n\n");
+
+        out_str("[system]  help man uname sysinfo uptime clear battery backlight\n");
+        out_str("          echo date reboot screenshot version lock sleep dmesg id\n\n");
+
+        out_str("[shell]   history alias unalias set unset env script\n\n");
+
+        out_str("[fs]      mount ls cd pwd cat touch write mkdir rm rename cp mv\n");
+        out_str("          stat tree du df edit hexedit browse sdinfo sdread\n\n");
+
+        out_str("[apps]    notes journal todo planner habits bookmarks\n");
+        out_str("          calc basic tcc forth home dashboard sysmon samples\n");
+        out_str("          head tail grep sort wc cut rev find hexdump\n");
+        out_str("          games snake tetris life piano mandelbrot paint sprite\n");
+        out_str("          stopwatch pomodoro clock cal theme\n\n");
+
 #ifdef PICO_CYW43_SUPPORTED
-        out_str("\nNetwork commands (Pico 2W):\n");
-        out_str("  wifi connect|scan|status|disconnect\n");
-        out_str("  ping ifconfig ntp dns fetch wget weather irc telnet netstat\n");
+        out_str("[net]     wifi ping ifconfig ntp dns fetch wget weather irc telnet\n\n");
 #endif
-        out_str("\nUse UP/DOWN for history, Ctrl-U to clear a line, and Ctrl-L to redraw.\n");
-        out_str("Tip: append | more to long commands for paging.\n");
+
+        out_str("Keys: UP/DOWN=history  Tab=complete  Ctrl-U=clear  Ctrl-L=redraw\n");
+        out_str("Tip:  append  | more  to long commands for paging.\n");
         return;
     }
 
-    if (!strcmp(topic, "fs")) {
-        out_str("Filesystem help:\n");
+    /* ---- Dynamic group listing from registry ---- */
+    bool found_group = false;
+    for (const cmd_meta_t *c = _cmd_registry; c->name; c++) {
+        if (strcmp(c->group, topic) == 0) { found_group = true; break; }
+    }
+    if (found_group) {
+        out_fmt("[%s] commands:\n", topic);
+        _help_print_group(topic);
+        return;
+    }
+
+    /* ---- Per-topic detail pages ---- */
+    if (!strcmp(topic, "fs") || !strcmp(topic, "storage")) {
+        out_str("Storage and filesystem commands:\n");
         out_str("  mount               Mount the SD FAT volume\n");
-        out_str("  history [clear|run N]  Show, clear, or replay history\n");
-        out_str("  alias NAME VALUE    Create a persistent command alias\n");
-        out_str("  unalias NAME        Remove a command alias\n");
-        out_str("  ls [path]           List a directory\n");
-        out_str("  cd [path]           Change directory\n");
-        out_str("  cat <path>          Show a text file\n");
-        out_str("  touch <path>        Create an empty file\n");
-        out_str("  write <p> <text>    Replace a file with text\n");
-        out_str("  mkdir <path>        Create a directory\n");
-        out_str("  rm <path>           Remove a file or empty directory\n");
-        out_str("  rename OLD NEW      Rename a file (same directory)\n");
-        out_str("  tree [-L N] [PATH]  Show a recursive directory tree\n");
-        out_str("  du [PATH]           Show recursive disk usage\n");
-        out_str("  df                  Show filesystem capacity and free space\n");
-        out_str("  cp SRC DST          Copy a file\n");
-        out_str("  mv SRC DST          Move or rename a file\n");
-        out_str("  stat PATH           Show compact file info\n");
-        out_str("  edit FILE           Open the line editor for a text file\n");
-        out_str("  hexedit FILE        Open the interactive byte editor\n");
-        out_str("  browse [PATH]       Open the interactive file browser\n");
-        out_str("  notes [FILE]        Open the notes editor using the configured default\n");
-        out_str("  journal ...         Manage a persistent dated journal\n");
-        out_str("  habits ...          Track and record habit completions\n");
-        out_str("  todo ...            Manage a persistent task list\n");
-        out_str("  planner ...         Manage dated agenda and planner entries\n");
-        out_str("  bookmarks ...       Save and launch favorite files, paths, or apps\n");
-        out_str("  sprite [FILE]       Open the sprite editor\n");
-        out_str("  terminal            Open raw terminal mode\n");
-        out_str("  games               Open the mini game pack\n");
-        out_str("  settings            Show or manage persistent device settings\n");
-        out_str("  set K V             Shortcut for settings set KEY VALUE\n");
-        out_str("  samples ...         List, show, write, or run bundled demo programs\n");
-        out_str("  sysmon              Open the system monitor\n");
-        out_str("  script FILE         Run a shell script file\n");
-        out_str("  paint               Open the pixel paint application\n");
-        out_str("  clock               Open the uptime-based clock view\n");
-        out_str("  cal [m] [y]         Show a calendar for a month and year\n");
+        out_str("  ls [path]           List directory\n");
+        out_str("  cd [path]           Change directory (persistent)\n");
+        out_str("  cat <file>          Show file contents\n");
+        out_str("  touch <file>        Create empty file\n");
+        out_str("  write <f> <text>    Replace file with text\n");
+        out_str("  mkdir <path>        Create directory\n");
+        out_str("  rm [-rf] <path>     Remove file or directory\n");
+        out_str("  cp SRC DST          Copy file or directory\n");
+        out_str("  mv SRC DST          Move or rename\n");
+        out_str("  stat <path>         File info\n");
+        out_str("  tree [path]         Recursive directory tree\n");
+        out_str("  du [path]           Disk usage\n");
+        out_str("  df                  Free space\n");
+        out_str("  edit <file>         Line editor\n");
+        out_str("  hexedit <file>      Byte editor\n");
+        out_str("  browse [path]       Visual file browser\n");
+        out_str("  diff <a> <b>        Line diff\n");
+        out_str("  find [path] [-name PATTERN] [-type f|d]\n");
+        out_str("  head/tail [-n N] <file>\n");
+        out_str("  grep [-n] [-e] PATTERN <file>\n");
+        out_str("  sort [-r] [-n] <file>     wc <file>    cut -dC -fN <file>\n");
+        out_str("  rev <file>                hexdump/od <file>\n");
         return;
     }
 
-    if (!strcmp(topic, "lang")) {
-        out_str("Language help:\n");
-        out_str("  basic [file.bas]    BASIC with IF, FOR/NEXT, GOSUB, RETURN, CLS\n");
-        out_str("  tcc [file.tc]       Tiny C with arrays, bitwise ops, clear, vars\n");
-        out_str("  calc [expr]         Quick calculator and expression REPL\n");
-        out_str("  home                Open the simple app launcher\n");
-        out_str("  dashboard           Open the live status dashboard\n");
+    if (!strcmp(topic, "lang") || !strcmp(topic, "programming")) {
+        out_str("Programming environments:\n");
+        out_str("  basic [file.bas]  BASIC: PRINT LET INPUT IF FOR/NEXT GOSUB RUN LIST\n");
+        out_str("  tcc [file.tc]     Tiny C: int arrays if while print vars clear\n");
+        out_str("  forth             Forth: + - * / dup drop swap . .s words :\n");
+        out_str("  calc [expr]       Quick arithmetic REPL (infix)\n");
+        out_str("  script <file>     Run a shell script from SD\n");
         return;
     }
 
-    if (!strcmp(topic, "apps")) {
-        out_str("Application help:\n");
-        out_str("  text: head tail wc cut grep pager rev sort hexdump od\n");
-        out_str("  file: find tree du df cp mv stat edit hexedit browse notes journal habits todo planner bookmarks sprite samples basename dirname\n");
-        out_str("  misc: hello seq sleep id true false calc games snake dice coin guess terminal home dashboard sysmon script paint clock cal settings set\n");
+    if (!strcmp(topic, "apps") || !strcmp(topic, "productivity")) {
+        out_str("Productivity apps (data persisted on SD):\n");
+        out_str("  notes             Edit the default notes file\n");
+        out_str("  journal           Dated journal entries\n");
+        out_str("  todo              Task list with done/undone tracking\n");
+        out_str("  planner           Dated agenda\n");
+        out_str("  habits            Habit tracker with streaks\n");
+        out_str("  bookmarks         Saved path/app bookmarks\n");
+        out_str("  settings          Device preferences (backlight, theme, paths)\n");
         return;
     }
 
-    out_str("Unknown help topic. Try: help, help fs, help apps, help lang\n");
+    if (!strcmp(topic, "games") || !strcmp(topic, "fun")) {
+        out_str("Games and creative tools:\n");
+        out_str("  snake             Classic snake (persistent high score)\n");
+        out_str("  tetris            Tetris\n");
+        out_str("  life              Conway's Game of Life\n");
+        out_str("  mandelbrot        Mandelbrot viewer\n");
+        out_str("  piano             On-screen piano (PWM audio)\n");
+        out_str("  paint             Pixel-art canvas\n");
+        out_str("  sprite            16x16 sprite editor\n");
+        out_str("  dice [N] [S]      Roll N dice with S sides\n");
+        out_str("  coin [N]          Flip N coins\n");
+        out_str("  guess             Guess-the-number game\n");
+        return;
+    }
+
+#ifdef PICO_CYW43_SUPPORTED
+    if (!strcmp(topic, "net") || !strcmp(topic, "network") || !strcmp(topic, "wifi")) {
+        out_str("Network commands (Pico 2W only):\n");
+        out_str("  wifi scan                Scan for networks\n");
+        out_str("  wifi connect SSID PASS   Connect to network\n");
+        out_str("  wifi status              Connection status\n");
+        out_str("  ping HOST                ICMP echo\n");
+        out_str("  ifconfig                 IP/gateway/DNS info\n");
+        out_str("  dns HOST                 Resolve hostname\n");
+        out_str("  ntp [server]             Sync clock from NTP\n");
+        out_str("  fetch URL                HTTP GET to display\n");
+        out_str("  wget URL                 HTTP GET to file\n");
+        out_str("  weather [location]       Fetch weather\n");
+        out_str("  irc HOST PORT NICK CHAN  IRC client\n");
+        out_str("  telnet HOST PORT         Telnet client\n");
+        out_str("  netstat                  Open sockets\n");
+        return;
+    }
+#endif
+
+    if (!strcmp(topic, "shell") || !strcmp(topic, "scripting")) {
+        out_str("Shell features:\n");
+        out_str("  history [clear|run N]  Show, clear, or replay\n");
+        out_str("  !! / !N                Rerun last / numbered command\n");
+        out_str("  alias NAME VALUE       Persistent alias\n");
+        out_str("  unalias NAME           Remove alias\n");
+        out_str("  set NAME=VALUE         Set shell variable\n");
+        out_str("  unset NAME             Remove variable\n");
+        out_str("  env                    Show variables\n");
+        out_str("  script <file>          Run script file\n");
+        out_str("  CMD > FILE             Redirect output\n");
+        out_str("  CMD >> FILE            Append output\n");
+        out_str("  CMD ; CMD              Chain commands\n");
+        out_str("  CMD | more             Page long output\n");
+        out_str("  $NAME  ${NAME}         Variable expansion\n");
+        return;
+    }
+
+    /* Fall back: look for a single command name match in the registry and show its group */
+    const char *matched_group = NULL;
+    for (const cmd_meta_t *c = _cmd_registry; c->name; c++) {
+        if (strcmp(c->name, topic) == 0) { matched_group = c->group; break; }
+    }
+    if (matched_group) {
+        out_fmt("'%s' is in group [%s]. Try: man %s\n", topic, matched_group, matched_group);
+        return;
+    }
+
+    out_fmt("No help for '%s'. Try: help  or  man fs|shell|apps|lang|net|games\n", topic);
 }
 
 static void cmd_uname(const char *arg) {
@@ -944,7 +993,17 @@ static void cmd_version(void) {
 
 static void cmd_uptime(void) {
     int64_t us = absolute_time_diff_us(g_boot_time, get_absolute_time());
-    out_fmt("%lld ms\n", us / 1000LL);
+    int64_t sec = us / 1000000LL;
+    int64_t days  = sec / 86400;
+    int64_t hours = (sec % 86400) / 3600;
+    int64_t mins  = (sec % 3600) / 60;
+    int64_t secs  = sec % 60;
+    if (days > 0)
+        out_fmt("up %lldd %02lldh %02lldm %02llds\n", days, hours, mins, secs);
+    else if (hours > 0)
+        out_fmt("up %02lldh %02lldm %02llds\n", hours, mins, secs);
+    else
+        out_fmt("up %02lldm %02llds\n", mins, secs);
 }
 
 /* ------------------------------------------------------------------ */
@@ -986,8 +1045,7 @@ static void clock_persist(void) {
     char buf[40];
     int n = snprintf(buf, sizeof buf, "%lld\n", (long long)sys_now_epoch_ms());
     if (n <= 0) return;
-    fat_unlink(CLOCK_FILE);
-    fat_create(CLOCK_FILE, (const uint8_t *)buf, (uint32_t)n);
+    fat_write_atomic(CLOCK_FILE, (const uint8_t *)buf, (uint32_t)n);
 }
 
 static void clock_restore(void) {
@@ -1053,39 +1111,40 @@ static void cmd_dmesg(const char *arg) {
 }
 
 static void cmd_sysinfo(void) {
-    out_fmt("Mellivora OS for PicoCalc\n");
-#ifdef PICO_RP2350A
-    out_fmt("Platform: RP2350 (Pico 2)\n");
-    out_fmt("RAM:      520 KB\n");
-    out_fmt("Flash:    4 MB\n");
-    out_fmt("Cores:    2 (core1 active)\n");
+    out_str("  Mellivora OS v" MELLIVORA_VERSION " for PicoCalc\n");
+    out_str("  ====================================\n");
+#if defined(PICO_CYW43_SUPPORTED)
+    out_str("  Platform: RP2350 + CYW43 (Pico 2W)\n");
+    out_str("  RAM:      520 KB SRAM\n");
+    out_str("  Flash:    4 MB XIP\n");
+    out_str("  WiFi:     CYW43439 802.11n 2.4 GHz\n");
+#elif defined(PICO_RP2350A)
+    out_str("  Platform: RP2350 (Pico 2)\n");
+    out_str("  RAM:      520 KB SRAM\n");
+    out_str("  Flash:    4 MB XIP\n");
+    out_str("  WiFi:     none\n");
 #else
-    out_fmt("Platform: RP2040 (Pico)\n");
-    out_fmt("RAM:      264 KB\n");
-    out_fmt("Flash:    2 MB\n");
-    out_fmt("Cores:    2 (core1 idle)\n");
+    out_str("  Platform: RP2040 (Pico)\n");
+    out_str("  RAM:      264 KB SRAM\n");
+    out_str("  Flash:    2 MB XIP\n");
+    out_str("  WiFi:     none\n");
 #endif
-#ifdef PICO_CYW43_SUPPORTED
-    out_fmt("WiFi:     CYW43 (Pico 2W)\n");
-#else
-    out_fmt("WiFi:     none\n");
-#endif
-    out_fmt("Clock:    %lu MHz\n",
+    out_str("  LCD:      ILI9488 320x320 SPI1\n");
+    out_str("  KBD:      STM32 co-proc I2C1\n");
+    out_str("  SD:       SPI0 FAT\n");
+    out_fmt("  Clock:    %lu MHz\n",
             (unsigned long)(clock_get_hz(clk_sys) / 1000000));
-    out_fmt("DMA LCD:  %s\n",
-#ifdef PICO_RP2350A
-            "enabled"
-#else
-            "enabled"
-#endif
-            );
-    out_fmt("Status bar: %s\n", _statusbar_enabled ? "on" : "off");
+    out_fmt("  SD:       %s\n", _fat_mounted ? "mounted" : "not mounted");
+    out_fmt("  Status:   bar %s\n", _statusbar_enabled ? "on" : "off");
     int64_t us = absolute_time_diff_us(g_boot_time, get_absolute_time());
-    uint32_t sec = (uint32_t)(us / 1000000LL);
-    out_fmt("Uptime:   %lu:%02lu:%02lu\n",
-            (unsigned long)(sec / 3600),
-            (unsigned long)((sec / 60) % 60),
-            (unsigned long)(sec % 60));
+    int64_t sec = us / 1000000LL;
+    int64_t days = sec / 86400, hours = (sec % 86400) / 3600;
+    int64_t mins = (sec % 3600) / 60, secs = sec % 60;
+    if (days > 0)
+        out_fmt("  Uptime:   %lldd %02lldh %02lldm %02llds\n", days, hours, mins, secs);
+    else
+        out_fmt("  Uptime:   %02lldh %02lldm %02llds\n", hours, mins, secs);
+    out_str("  Built:    " __DATE__ " " __TIME__ "\n");
 }
 
 static void cmd_status(const char *arg) {
@@ -1132,16 +1191,39 @@ static void cmd_mount(void) {
     out_fmt("mount: %s\n", fat_result_str(r));
 }
 
+static void cmd_umount(void) {
+    if (!_fat_mounted) { out_str("umount: not mounted\n"); return; }
+    _fat_mounted = false;
+    out_str("umount: SD card unmounted\n");
+}
+
+/* Format a byte count as a human-readable string (e.g. "1.2 MB"). */
+static void _fmt_size(uint32_t bytes, char *out, size_t out_sz) {
+    if (bytes >= 1024UL * 1024UL) {
+        unsigned long w = bytes / (1024UL * 1024UL);
+        unsigned long f = (bytes % (1024UL * 1024UL)) * 10UL / (1024UL * 1024UL);
+        snprintf(out, out_sz, "%lu.%lu MB", w, f);
+    } else if (bytes >= 1024UL) {
+        unsigned long w = bytes / 1024UL;
+        unsigned long f = (bytes % 1024UL) * 10UL / 1024UL;
+        snprintf(out, out_sz, "%lu.%lu KB", w, f);
+    } else {
+        snprintf(out, out_sz, "%lu B", (unsigned long)bytes);
+    }
+}
+
 static void _ls_entry(const char *name, uint32_t size,
                       bool is_dir, void *ctx) {
     (void)ctx;
     uint32_t saved_fg = lcd_get_fg();
     if (is_dir) {
         lcd_set_fg(LCD_CYAN);
-        out_fmt("  [DIR]  %s\n", name);
+        out_fmt("  %8s  %s/\n", "[DIR]", name);
     } else {
+        char sz[16];
+        _fmt_size(size, sz, sizeof sz);
         lcd_set_fg(LCD_GREEN);
-        out_fmt("  %8lu  %s\n", (unsigned long)size, name);
+        out_fmt("  %8s  %s\n", sz, name);
     }
     lcd_set_fg(saved_fg);
 }
@@ -1505,35 +1587,118 @@ static void redir_char(char c) {
 
 /* ---- Tab completion ---- */
 
-static const char *_shell_cmds[] = {
-    "help", "man", "history", "alias", "unalias", "uname", "uptime", "clear",
-    "battery", "backlight", "mount", "ls", "dir", "cd", "pwd", "cat", "echo",
-    "touch", "write", "mkdir", "rm", "rename", "sdinfo", "sdread", "reboot",
-    "date", "dmesg",
-    "hello", "basename", "dirname", "seq", "head", "tail", "wc", "cut", "grep",
-    "find", "tree", "du", "df", "disk", "space", "pager", "more", "rev", "sort",
-    "hexdump", "od", "hexedit", "hex", "calc", "cp", "mv", "stat", "edit",
-    "bedit", "browse", "files", "notes", "memo", "journal", "diary", "habits",
-    "habit", "bookmarks", "bookmark", "favs", "favorites", "games", "game",
-    "dice", "coin", "guess", "snake", "sprite", "terminal", "term", "tty",
-    "serial", "home", "launcher", "dashboard", "status", "sysmon", "monitor",
-    "settings", "set", "todo", "tasks", "planner", "agenda", "plan", "samples",
-    "demos", "clock", "cal", "calendar", "basic", "tcc", "tinyc", "script",
-    "paint", "sleep", "id", "true", "false",
-    "shutdown", "halt", "poweroff", "version",
-    "stopwatch", "timer", "pomodoro", "screenshot", "set", "unset",
-    "watch", "diff", "env", "lock", "xxd", "strings", "yes", "tee",
-    "life", "tetris", "mandelbrot", "fractal", "piano", "forth",
-    "xmodem", "theme",
-    "sysinfo",
+/* cmd_meta_t is forward-declared near the top of the file. */
+
+#define SHELL_COMMAND_LIST(X) \
+    X("help", "system") X("man", "system") X("history", "shell") X("alias", "shell") \
+    X("unalias", "shell") X("uname", "system") X("uptime", "system") X("clear", "system") \
+    X("battery", "system") X("backlight", "system") X("mount", "fs") X("ls", "fs") \
+    X("dir", "fs") X("cd", "fs") X("pwd", "fs") X("cat", "fs") X("echo", "system") \
+    X("touch", "fs") X("write", "fs") X("mkdir", "fs") X("rm", "fs") X("rename", "fs") \
+    X("sdinfo", "fs") X("sdread", "fs") X("reboot", "system") X("date", "time") \
+    X("dmesg", "system") X("hello", "apps") X("basename", "apps") X("dirname", "apps") \
+    X("seq", "apps") X("head", "apps") X("tail", "apps") X("wc", "apps") X("cut", "apps") \
+    X("grep", "apps") X("find", "apps") X("tree", "apps") X("du", "apps") X("df", "apps") \
+    X("disk", "apps") X("space", "apps") X("pager", "apps") X("more", "apps") X("rev", "apps") \
+    X("sort", "apps") X("hexdump", "apps") X("od", "apps") X("hexedit", "apps") X("hex", "apps") \
+    X("calc", "apps") X("cp", "apps") X("mv", "apps") X("stat", "apps") X("edit", "apps") \
+    X("bedit", "apps") X("browse", "apps") X("files", "apps") X("notes", "apps") X("memo", "apps") \
+    X("journal", "apps") X("diary", "apps") X("habits", "apps") X("habit", "apps") \
+    X("bookmarks", "apps") X("bookmark", "apps") X("favs", "apps") X("favorites", "apps") \
+    X("tasks-export", "apps") X("journal-export", "apps") X("habits-export", "apps") \
+    X("games", "apps") X("game", "apps") X("dice", "apps") X("coin", "apps") X("guess", "apps") \
+    X("snake", "apps") X("sprite", "apps") X("terminal", "apps") X("term", "apps") X("tty", "apps") \
+    X("serial", "apps") X("home", "apps") X("launcher", "apps") X("dashboard", "apps") \
+    X("status", "apps") X("sysmon", "apps") X("monitor", "apps") X("settings", "apps") \
+    X("set", "shell") X("todo", "apps") X("tasks", "apps") X("planner", "apps") X("agenda", "apps") \
+    X("plan", "apps") X("samples", "apps") X("demos", "apps") X("clock", "time") X("cal", "time") \
+    X("calendar", "time") X("basic", "apps") X("tcc", "apps") X("tinyc", "apps") X("script", "shell") \
+    X("paint", "apps") X("sleep", "system") X("id", "system") X("true", "system") X("false", "system") \
+    X("shutdown", "system") X("halt", "system") X("poweroff", "system") X("version", "system") \
+    X("stopwatch", "apps") X("timer", "apps") X("pomodoro", "apps") X("screenshot", "system") \
+    X("unset", "shell") X("watch", "apps") X("diff", "apps") X("env", "shell") X("lock", "apps") \
+    X("xxd", "apps") X("strings", "apps") X("yes", "apps") X("tee", "apps") X("life", "apps") \
+    X("tetris", "apps") X("mandelbrot", "apps") X("fractal", "apps") X("piano", "apps") \
+    X("forth", "apps") X("xmodem", "apps") X("theme", "apps") X("sysinfo", "system") \
+    X("less", "apps") X("uniq", "apps") X("umount", "fs") X("unmount", "fs") \
+    X("time", "shell") X("repeat", "shell") X("printf", "shell") \
+    X("base64", "apps") X("crc32", "apps") X("minesweeper", "apps") X("mines", "apps") \
+    X("2048", "apps")
+
 #ifdef PICO_CYW43_SUPPORTED
-    "wifi", "ping", "ifconfig", "ntp", "dns", "fetch", "wget",
-    "weather", "irc", "netstat", "telnet",
+#define NET_COMMAND_LIST(X) \
+    X("wifi", "net") X("ping", "net") X("ifconfig", "net") X("ntp", "net") X("dns", "net") \
+    X("fetch", "net") X("wget", "net") X("weather", "net") X("irc", "net") X("netstat", "net") \
+    X("telnet", "net")
+#else
+#define NET_COMMAND_LIST(X)
 #endif
-    NULL
+
+#define CMD_META_ENTRY(_name, _group) { _name, _group },
+
+static const cmd_meta_t _cmd_registry[] = {
+    SHELL_COMMAND_LIST(CMD_META_ENTRY)
+    NET_COMMAND_LIST(CMD_META_ENTRY)
+    { NULL, NULL }
 };
 
-/* File completion context for fat_ls callback */
+#undef CMD_META_ENTRY
+#undef NET_COMMAND_LIST
+#undef SHELL_COMMAND_LIST
+
+/* Return a simple Hamming-style edit distance (substitutions only) up to 3.
+   Used for "did you mean?" suggestions. */
+static int _cmd_edit_dist(const char *a, const char *b) {
+    size_t la = strlen(a), lb = strlen(b);
+    if (la == 0 || lb == 0) return (int)(la + lb);
+    if (la > lb + 2 || lb > la + 2) return 4; /* length gap too large */
+    /* simple substitution count on min-length prefix */
+    int diff = (int)(la > lb ? la - lb : lb - la);
+    size_t min_len = la < lb ? la : lb;
+    for (size_t i = 0; i < min_len; i++)
+        if (a[i] != b[i]) diff++;
+    return diff;
+}
+
+/* Print up to 3 "did you mean?" suggestions for an unknown command. */
+static void _cmd_suggest(const char *unknown) {
+    const char *best[3] = {NULL, NULL, NULL};
+    int bdist[3] = {4, 4, 4};
+    size_t ulen = strlen(unknown);
+
+    for (const cmd_meta_t *c = _cmd_registry; c->name; c++) {
+        /* Skip very short strings that match everything */
+        if (strlen(c->name) < 2) continue;
+        /* Prefix match: unknown starts with the command or vice versa */
+        size_t clen = strlen(c->name);
+        int dist;
+        if (ulen >= 2 && strncmp(c->name, unknown, ulen < clen ? ulen : clen) == 0)
+            dist = (int)(ulen > clen ? ulen - clen : clen - ulen);
+        else
+            dist = _cmd_edit_dist(unknown, c->name);
+        if (dist < 3) {
+            /* Insert into best[3] sorted by dist */
+            for (int i = 0; i < 3; i++) {
+                if (dist < bdist[i]) {
+                    /* Shift down */
+                    for (int j = 2; j > i; j--) { best[j] = best[j-1]; bdist[j] = bdist[j-1]; }
+                    best[i] = c->name; bdist[i] = dist;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!best[0]) return;
+    out_str("  Similar: ");
+    for (int i = 0; i < 3 && best[i]; i++) {
+        if (i) out_str(", ");
+        out_str(best[i]);
+    }
+    out_char('\n');
+}
+
+
 typedef struct {
     const char *prefix;
     size_t plen;
@@ -1657,9 +1822,9 @@ static int tab_complete(char *line, int idx) {
     const char *match = NULL;
     int match_count = 0;
 
-    for (const char **c = _shell_cmds; *c; c++) {
-        if (strncmp(*c, prefix, plen) == 0) {
-            match = *c;
+    for (const cmd_meta_t *c = _cmd_registry; c->name; c++) {
+        if (strncmp(c->name, prefix, plen) == 0) {
+            match = c->name;
             match_count++;
         }
     }
@@ -1676,9 +1841,9 @@ static int tab_complete(char *line, int idx) {
         }
     } else if (match_count > 1) {
         out_char('\n');
-        for (const char **c = _shell_cmds; *c; c++) {
-            if (strncmp(*c, prefix, plen) == 0) {
-                out_str(*c);
+        for (const cmd_meta_t *c = _cmd_registry; c->name; c++) {
+            if (strncmp(c->name, prefix, plen) == 0) {
+                out_str(c->name);
                 out_str("  ");
             }
         }
@@ -1690,6 +1855,90 @@ static int tab_complete(char *line, int idx) {
 }
 
 static void dispatch_single(char *line);
+
+static void cmd_time(const char *arg) {
+    if (!arg || !*arg) { out_str("usage: time COMMAND\n"); return; }
+    char tmp[LINE_BUF];
+    strncpy(tmp, arg, sizeof tmp - 1);
+    tmp[sizeof tmp - 1] = '\0';
+    uint32_t t0 = sys_time_ms();
+    dispatch(tmp);
+    uint32_t elapsed = sys_time_ms() - t0;
+    out_fmt("real\t%lu.%03lu s\n", (unsigned long)(elapsed / 1000UL),
+            (unsigned long)(elapsed % 1000UL));
+}
+
+static void cmd_repeat(const char *arg) {
+    const char *s = skip_ws(arg);
+    char count_str[16];
+    s = next_token(s, count_str, sizeof count_str);
+    if (!*count_str || !s || !*s) { out_str("usage: repeat N COMMAND\n"); return; }
+    long n = strtol(count_str, NULL, 10);
+    if (n < 1 || n > 1000) { out_str("repeat: N must be 1-1000\n"); return; }
+    for (long i = 0; i < n; i++) {
+        if (_interrupted) break;
+        watchdog_update();
+        char tmp[LINE_BUF];
+        strncpy(tmp, s, sizeof tmp - 1);
+        tmp[sizeof tmp - 1] = '\0';
+        dispatch(tmp);
+    }
+}
+
+static void cmd_printf(const char *arg) {
+    if (!arg || !*arg) { out_str("usage: printf FORMAT [ARGS...]\n"); return; }
+    /* Extract format token */
+    char fmt[LINE_BUF];
+    const char *rest = next_token(arg, fmt, sizeof fmt);
+    /* Remove optional surrounding quotes */
+    size_t flen = strlen(fmt);
+    if (flen >= 2 && fmt[0] == '"' && fmt[flen - 1] == '"') {
+        memmove(fmt, fmt + 1, flen - 2);
+        fmt[flen - 2] = '\0';
+        flen -= 2;
+    }
+    /* Collect remaining tokens as arguments */
+    char argv_buf[8][64];
+    int argc = 0;
+    while (rest && *rest && argc < 8) {
+        rest = next_token(rest, argv_buf[argc], sizeof argv_buf[0]);
+        if (*argv_buf[argc]) argc++;
+    }
+    int argi = 0;
+    for (size_t i = 0; fmt[i]; i++) {
+        if (fmt[i] == '\\') {
+            i++;
+            switch (fmt[i]) {
+                case 'n': out_char('\n'); break;
+                case 't': out_char('\t'); break;
+                case '\\': out_char('\\'); break;
+                default: out_char('\\'); out_char(fmt[i]); break;
+            }
+        } else if (fmt[i] == '%' && fmt[i + 1]) {
+            i++;
+            char spec = fmt[i];
+            const char *a = (argi < argc) ? argv_buf[argi++] : "";
+            if (spec == 'd' || spec == 'i') {
+                out_fmt("%ld", strtol(a, NULL, 10));
+            } else if (spec == 'u') {
+                out_fmt("%lu", strtoul(a, NULL, 10));
+            } else if (spec == 'x') {
+                out_fmt("%lx", strtoul(a, NULL, 0));
+            } else if (spec == 'X') {
+                out_fmt("%lX", strtoul(a, NULL, 0));
+            } else if (spec == 's') {
+                out_str(a);
+            } else if (spec == '%') {
+                out_char('%');
+                argi--;  /* no arg consumed */
+            } else {
+                out_char('%'); out_char(spec);
+            }
+        } else {
+            out_char(fmt[i]);
+        }
+    }
+}
 
 static void dispatch(char *line) {
     /* Strip trailing whitespace */
@@ -1713,23 +1962,49 @@ static void dispatch(char *line) {
     hist_push(line);
     hist_save();
 
-    /* Split on ';' for command chaining (outside quotes) */
+    /* Split on ';', '&&', '||' for command chaining (outside quotes).
+       sep_kind[i] is the operator that precedes segment i:
+         0 = first / ';'  (always run)
+         1 = '&&'         (run only if prev succeeded)
+         2 = '||'         (run only if prev failed)        */
     char *segments[16];
+    uint8_t sep_kind[16];
     int nseg = 0;
     char *p = line;
     bool in_quotes = false;
     segments[0] = p;
+    sep_kind[0] = 0;
     nseg = 1;
     while (*p) {
         if (*p == '"') in_quotes = !in_quotes;
-        else if (*p == ';' && !in_quotes && nseg < 16) {
-            *p = '\0';
-            segments[nseg++] = p + 1;
+        else if (!in_quotes && nseg < 16) {
+            if (p[0] == '&' && p[1] == '&') {
+                *p = '\0';
+                segments[nseg] = p + 2;
+                sep_kind[nseg] = 1;
+                nseg++;
+                p++;  /* consume second '&' */
+            } else if (p[0] == '|' && p[1] == '|') {
+                *p = '\0';
+                segments[nseg] = p + 2;
+                sep_kind[nseg] = 2;
+                nseg++;
+                p++;  /* consume second '|' */
+            } else if (*p == ';') {
+                *p = '\0';
+                segments[nseg] = p + 1;
+                sep_kind[nseg] = 0;
+                nseg++;
+            }
         }
         p++;
     }
 
     for (int i = 0; i < nseg && !_interrupted; i++) {
+        if (i > 0) {
+            if (sep_kind[i] == 1 && _last_exit != 0) continue;  /* && skip on fail */
+            if (sep_kind[i] == 2 && _last_exit == 0) continue;  /* || skip on success */
+        }
         char *seg = skip_spaces(segments[i]);
         trim_right(seg);
         if (*seg) dispatch_single(seg);
@@ -1781,8 +2056,13 @@ static void dispatch_single(char *line) {
     /* Separate command from optional argument */
     char *arg = split_arg(line);
 
+    /* Default to success for the chained-operator (&&, ||) bookkeeping.
+       Commands that detect a real error are free to overwrite _last_exit. */
+    _last_exit = 0;
+
     if      (!strcmp(line, "help"))      cmd_help(arg);
     else if (!strcmp(line, "man"))       cmd_man(arg);
+    else if (!strcmp(line, "."))         app_run("script", arg);  /* dot-source */
     else if (!strcmp(line, "history"))   cmd_history(arg);
     else if (!strcmp(line, "alias"))     cmd_alias(arg);
     else if (!strcmp(line, "unalias"))   cmd_unalias(arg);
@@ -1795,11 +2075,16 @@ static void dispatch_single(char *line) {
     else if (!strcmp(line, "date"))      cmd_date(arg);
     else if (!strcmp(line, "dmesg"))     cmd_dmesg(arg);
     else if (!strcmp(line, "sysinfo"))   cmd_sysinfo();
+    else if (!strcmp(line, "time"))      cmd_time(arg);
+    else if (!strcmp(line, "repeat"))    cmd_repeat(arg);
+    else if (!strcmp(line, "printf"))    cmd_printf(arg);
     else if (!strcmp(line, "status"))    cmd_status(arg);
     else if (!strcmp(line, "clear"))     cmd_clear();
     else if (!strcmp(line, "battery"))   cmd_battery();
     else if (!strcmp(line, "backlight")) cmd_backlight(arg);
     else if (!strcmp(line, "mount"))     cmd_mount();
+    else if (!strcmp(line, "umount") ||
+             !strcmp(line, "unmount"))   cmd_umount();
     else if (!strcmp(line, "ls"))        cmd_ls(arg);
     else if (!strcmp(line, "dir"))       cmd_ls(arg);
     else if (!strcmp(line, "cd"))        cmd_cd(arg);
@@ -1836,12 +2121,16 @@ static void dispatch_single(char *line) {
     else if (app_run(line, arg)) {
         strncpy(_cwd, _sys_cwd, CWD_MAX - 1);
         _cwd[CWD_MAX - 1] = '\0';
+        _last_exit = 0;
     }
     else {
         uint32_t sf = lcd_get_fg();
         lcd_set_fg(LCD_RED);
-        out_fmt("unknown: %s  (type 'help')\n", line);
+        out_fmt("unknown: %s\n", line);
         lcd_set_fg(sf);
+        _cmd_suggest(line);
+        out_str("  Type  help  to list all commands.\n");
+        _last_exit = 127;
     }
 
     if (use_more) {
@@ -1858,8 +2147,7 @@ static void dispatch_single(char *line) {
         if (redir_append) {
             fat_append(abs, (const uint8_t *)_redir_buf, (uint32_t)_redir_pos);
         } else {
-            fat_unlink(abs);
-            fat_create(abs, (const uint8_t *)_redir_buf, (uint32_t)_redir_pos);
+            fat_write_atomic(abs, (const uint8_t *)_redir_buf, (uint32_t)_redir_pos);
         }
         _redir_buf = NULL;
         _redir_pos = 0;
@@ -1939,6 +2227,14 @@ static void _draw_status_bar(void) {
     if (_last_draw_ms != 0 && (now - _last_draw_ms) < 1000) return;
     _last_draw_ms = now;
 
+    /* Read battery state via I2C *before* acquiring the LCD lock.
+     * kbd_battery_percent() / kbd_is_charging() call i2c_read_blocking()
+     * which can stall if the keyboard MCU is slow to respond.  Holding the
+     * LCD lock across that wait causes core0 to deadlock whenever it tries
+     * to do any LCD output (e.g. during an ls callback). */
+    int bat = kbd_battery_percent();
+    bool charging = kbd_is_charging();
+
     /* Acquire the LCD lock so the entire bar redraw is atomic versus core0
        output (recursive mutex — safe even though the lcd_* helpers below
        also acquire it). */
@@ -1957,9 +2253,6 @@ static void _draw_status_bar(void) {
     char bar[41];
     memset(bar, ' ', 40);
     bar[40] = '\0';
-
-    int bat = kbd_battery_percent();
-    bool charging = kbd_is_charging();
 
     /* Visual warning for very low battery */
     uint32_t bar_bg = LCD_GREY;
@@ -2123,8 +2416,10 @@ int main(void) {
     int hist_browse = -1;  /* -1 = not browsing history */
     int cursor = 0;        /* cursor position within line */
 
-    /* Enable hardware watchdog: ~3 seconds, pause-on-debug */
-    watchdog_enable(3000, true);
+    /* Enable hardware watchdog: 8 seconds, pause-on-debug.
+     * 8 s gives ample headroom for slow SD ops, rendering, and idle games
+     * while still catching genuine hangs. */
+    watchdog_enable(8000, true);
 
     /* Idle backlight dim — saves the LCD/CYW43 a little power */
     uint32_t last_activity_ms = sys_time_ms();
@@ -2224,6 +2519,27 @@ int main(void) {
             for (int i = cursor; i < idx; i++) out_str("\b");
             line[cursor] = '\0';
             idx = cursor;
+            continue;
+        }
+
+        /* ---- Ctrl+W — delete word backward ---- */
+        if (ch == 0x17) {
+            if (cursor > 0) {
+                int new_cur = cursor;
+                /* Skip trailing spaces */
+                while (new_cur > 0 && line[new_cur - 1] == ' ') new_cur--;
+                /* Skip non-space (word chars) */
+                while (new_cur > 0 && line[new_cur - 1] != ' ') new_cur--;
+                int deleted = cursor - new_cur;
+                memmove(&line[new_cur], &line[cursor], (size_t)(idx - cursor + 1));
+                /* Redraw: back up, print rest of line, blank tail */
+                for (int i = 0; i < cursor - new_cur; i++) out_str("\b");
+                for (int i = new_cur; i < idx - deleted; i++) out_char(line[i]);
+                for (int i = 0; i < deleted; i++) out_char(' ');
+                for (int i = 0; i < idx - new_cur; i++) out_str("\b");
+                idx -= deleted;
+                cursor = new_cur;
+            }
             continue;
         }
 

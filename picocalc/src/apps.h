@@ -59,3 +59,16 @@ void        copy_cstr(char *dst, size_t dst_sz, const char *src);
 void        append_cstr(char *dst, size_t dst_sz, const char *src);
 void        app_join_path(const char *root, const char *name, char *out, size_t out_sz);
 int         load_file_bytes(const char *path, uint8_t *buf, size_t cap, uint32_t *out_len, const char *label);
+
+/* ---- Option parsing helpers (Phase 2.5) -------------------------------
+   Lightweight, stateless. Operate on the raw arg string passed to a command.
+   Tokens are whitespace-separated; no quoting is interpreted here (callers
+   that need quoting should pre-tokenize).
+   - opt_flag(args, "-d")        -> true if the token "-d" appears
+   - opt_value(args, "-o", out, out_sz) -> true if "-o NAME" found; copies NAME
+   - opt_strip(args, out, out_sz)       -> copy args with all -X / -X VAL
+                                            options removed (positional only)
+   ---------------------------------------------------------------------- */
+bool opt_flag(const char *args, const char *flag);
+bool opt_value(const char *args, const char *opt, char *out, size_t out_sz);
+void opt_strip(const char *args, char *out, size_t out_sz);

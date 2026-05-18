@@ -1,0 +1,31 @@
+name: Quality checks
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run quality checks
+        run: |
+          chmod +x tools/quality/baseline_report.sh tools/quality/doc_consistency_check.sh tools/quality/command_registry_check.sh tools/quality/size_baseline.sh
+          make quality-check
+
+      - name: Upload quality artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-artifacts
+          path: |
+            reports/baseline-latest.md
+            reports/command-registry-latest.json
+            reports/command-coverage-latest.md
+            reports/size-baseline-latest.md
+            docs/COMMANDS.generated.md
+          if-no-files-found: error

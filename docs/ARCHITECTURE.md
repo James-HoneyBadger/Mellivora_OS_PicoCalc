@@ -126,7 +126,7 @@ All persistent state lives on the SD card:
 |------------------|---------------------------------------------|
 | `/CWD.CFG`       | Last working directory                      |
 | `/HISTORY.LOG`   | Shell history (last ~32 entries)            |
-| `/ALIAS.CFG`     | Aliases                                     |
+| `/ALIASES.CFG`   | Aliases                                     |
 | `/CLOCK.CFG`     | Software RTC offset                         |
 | `/SETTINGS.CFG`  | App settings (fg/bg, theme)                 |
 | `/WIFI.CFG`      | Saved WiFi credentials                      |

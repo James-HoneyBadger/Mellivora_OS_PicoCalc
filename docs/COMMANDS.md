@@ -26,39 +26,53 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `sleep`                    | Display-off low-power mode (any key wakes)             |
 | `sleep MS`                 | Pause for MS milliseconds (script use)                 |
 | `clear`                    | Clear screen                                           |
+| `battery`                  | Show battery percentage and charging state             |
+| `backlight N`              | Set display/keyboard backlight level                   |
+| `echo TEXT`                | Print text                                             |
 | `id`                       | Always prints `mellivora`                              |
 | `true` / `false`           | Exit status helpers (for scripts)                      |
 | `lock`                     | Lock the device with a PIN                             |
+| `screenshot [file]`        | Save current LCD text cells to a file                  |
 
 ## File System
 
 | Command                      | Description                                          |
 |------------------------------|------------------------------------------------------|
-| `mount` / `umount`           | Mount/unmount the SD card                            |
+| `mount` / `umount` / `unmount` | Mount/unmount the SD card                          |
 | `ls [-l] [path]`             | List directory                                       |
+| `dir [path]`                 | Alias for `ls`                                       |
 | `cd [path]`                  | Change working directory (persistent)                |
 | `pwd`                        | Print working directory                              |
+| `touch <file>`               | Create empty file                                    |
 | `mkdir <path>`               | Create directory                                     |
 | `rm [-rRf] <path>`           | Remove file (or recursively for directories)         |
 | `cp [-r] <src> <dst>`        | Copy file or directory                               |
 | `mv <src> <dst>` / `rename`  | Rename / move                                        |
 | `cat <file>`                 | Display file contents                                |
+| `sdinfo`                     | Show SD-card status and geometry                     |
+| `sdread LBA`                 | Read and inspect a raw SD block                      |
 | `more <file>` / `less`       | Paged display                                        |
+| `pager <file>`               | Paged display alias                                  |
 | `head [-n N] <file>`         | First N (or 10) lines                                |
 | `tail [-n N] <file>`         | Last N (or 10) lines                                 |
 | `wc [-lwc] <file>`           | Line / word / byte counts                            |
 | `cut -dCHR -fN <file>`       | Extract a column                                     |
 | `sort <file>`                | Sort lines                                           |
+| `rev <file>`                 | Reverse characters per line                          |
 | `uniq <file>`                | Collapse adjacent duplicate lines                    |
 | `grep [-i] PATTERN <file>`   | Regex search                                         |
 | `find <path> -name PATTERN`  | Find files                                           |
+| `tree [path]`                | Recursive tree view                                  |
 | `du <path>`                  | Disk usage                                           |
 | `df`                         | Free space                                           |
+| `disk` / `space`             | Aliases for `df`                                     |
 | `stat <file>`                | File metadata                                        |
 | `hexdump` / `xxd` / `od`     | Binary dump                                          |
 | `hexedit` / `hex`            | Interactive hex editor                               |
 | `strings <file>`             | Printable ASCII runs                                 |
 | `diff <a> <b>`               | Line-based diff                                      |
+| `base64 [-d] [-o OUT] <file>`| Encode (default) or decode (`-d`) a file; never overwrites input |
+| `crc32 <file>`               | CRC-32 (ISO-HDLC) checksum of a file                 |
 | `tee <file>`                 | Tee stdin to file (and stdout)                       |
 | `write <file>`               | Read stdin until `.` line, write to file             |
 | `edit <file>` / `bedit`      | Line editor / block editor                           |
@@ -69,16 +83,23 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | Command                 | Description                                              |
 |-------------------------|----------------------------------------------------------|
 | `history`               | Show command history                                     |
+| `man [topic]`           | Show detailed help pages                                 |
 | `alias [name=value]`    | List or define aliases                                   |
 | `unalias <name>`        | Remove alias                                             |
 | `env`                   | Show environment / variables                             |
 | `set X=Y`               | Set a shell variable                                     |
+| `unset NAME`            | Remove a shell variable                                  |
 | `script <file>`         | Run a script of shell commands                           |
 | `watch CMD`             | Re-run CMD every 2s until any key                        |
 | `yes [STRING]`          | Repeatedly print STRING                                  |
 | `seq N` / `seq A B`     | Numeric sequence                                         |
 | `hello`                 | Greeting (sample command)                                |
+| `basename PATH`         | Print final path component                               |
+| `dirname PATH`          | Print parent directory component                         |
 | `help`                  | Show categorized help                                    |
+| `time CMD`              | Run CMD and print wall-clock elapsed time                |
+| `repeat N CMD`          | Run CMD N times (1–1000)                                 |
+| `printf FORMAT [ARGS...]` | Formatted print with `\n` / `%s` / `%d` / `%x`         |
 
 ## Time & Calendar
 
@@ -86,6 +107,7 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 |-------------------|----------------------------------------------------------|
 | `date`            | Show current date/time                                   |
 | `date YYYY-MM-DD HH:MM:SS` | Set the software RTC manually                   |
+| `uptime`          | Show time since boot                                     |
 | `clock`           | Full-screen clock app                                    |
 | `cal` / `calendar`| Month / planner views                                    |
 
@@ -125,6 +147,10 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `planner` / `agenda` / `plan` | Daily / weekly planner                        |
 | `habits` / `habit`     | Habit tracker with streaks                           |
 | `bookmarks` / `favs`   | Path bookmarks (saves CWD)                           |
+| `bookmark` / `favorites` | Bookmark aliases                                     |
+| `tasks-export`         | Export tasks to CSV file                             |
+| `journal-export`       | Export journal entries to Markdown file              |
+| `habits-export`        | Export habits to CSV file                            |
 
 ## Apps & Games
 
@@ -138,6 +164,11 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `mandelbrot` / `fractal`   | Mandelbrot zoom                                   |
 | `piano`                    | On-screen piano (PWM audio)                       |
 | `dice` / `coin` / `guess`  | Quick games                                       |
+| `2048`                     | 2048 sliding-tile game                            |
+| `minesweeper` / `mines`    | Minesweeper                                       |
+| `games` / `game`          | Game launcher                                        |
+| `stopwatch` / `timer`     | Elapsed-time utility                                 |
+| `pomodoro`                | Focus timer workflow                                 |
 | `samples` / `demos`        | Sample programs                                   |
 | `home` / `launcher` / `dashboard` | Visual launchers                            |
 | `sysmon` / `monitor` / `status` | System monitor                               |
