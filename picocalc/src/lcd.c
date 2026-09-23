@@ -564,6 +564,17 @@ static int _cur_row = 0;
 static char     _text_buf[LCD_ROWS][LCD_COLS];
 static uint32_t _color_buf[LCD_ROWS][LCD_COLS]; /* per-character foreground color */
 
+/* Cursor blink state */
+static bool _cursor_enabled = false;
+static bool _cursor_block    = true;
+static bool _cursor_visible  = false;
+static uint32_t _cursor_last_ms = 0;
+static int _cursor_last_col = -1;
+static int _cursor_last_row = -1;
+
+static void _lcd_cursor_render(bool visible);
+static void _lcd_cursor_erase_last(void);
+
 static void _clear_text_buf(void) {
     for (int r = 0; r < LCD_ROWS; r++) {
         for (int c = 0; c < LCD_COLS; c++) {
@@ -624,11 +635,77 @@ void lcd_cls(uint32_t bg) {
     lcd_fill(bg);
     _cur_col = 0;
     _cur_row = 0;
+    _cursor_last_col = -1;
+    _cursor_last_row = -1;
+    if (_cursor_enabled) _lcd_cursor_render(true);
+    _lcd_unlock();
+}
+
+/* Draw or erase the blinking cursor at (_cur_col, _cur_row). */
+static void _lcd_cursor_render(bool visible) {
+    if (_cur_row < 0 || _cur_row >= LCD_ROWS || _cur_col < 0 || _cur_col >= LCD_COLS) return;
+    char ch = _text_buf[_cur_row][_cur_col];
+    if ((uint8_t)ch < 0x20 || (uint8_t)ch > 0x7E) ch = ' ';
+    uint32_t cfg = _color_buf[_cur_row][_cur_col];
+    uint16_t px = (uint16_t)(_cur_col * LCD_CHAR_W);
+    uint16_t py = (uint16_t)(_cur_row * LCD_CHAR_H);
+    if (visible) {
+        if (_cursor_block) {
+            lcd_draw_char(px, py, ch, _bg, cfg);
+        } else {
+            /* Underscore cursor: draw '_' in foreground color. */
+            lcd_draw_char(px, py, '_', cfg, _bg);
+        }
+    } else {
+        lcd_draw_char(px, py, ch, cfg, _bg);
+    }
+    _cursor_last_col = _cur_col;
+    _cursor_last_row = _cur_row;
+}
+
+static void _lcd_cursor_erase_last(void) {
+    if (_cursor_last_row < 0 || _cursor_last_row >= LCD_ROWS ||
+        _cursor_last_col < 0 || _cursor_last_col >= LCD_COLS) return;
+    char ch = _text_buf[_cursor_last_row][_cursor_last_col];
+    if ((uint8_t)ch < 0x20 || (uint8_t)ch > 0x7E) ch = ' ';
+    uint32_t cfg = _color_buf[_cursor_last_row][_cursor_last_col];
+    lcd_draw_char((uint16_t)(_cursor_last_col * LCD_CHAR_W),
+                  (uint16_t)(_cursor_last_row * LCD_CHAR_H),
+                  ch, cfg, _bg);
+    _cursor_last_col = -1;
+    _cursor_last_row = -1;
+}
+
+bool lcd_cursor_enabled(void) { return _cursor_enabled; }
+bool lcd_cursor_is_block(void) { return _cursor_block; }
+
+void lcd_cursor_enable(bool enable, bool block) {
+    _lcd_lock();
+    if (_cursor_enabled && !enable) {
+        _lcd_cursor_erase_last();
+    }
+    _cursor_enabled = enable;
+    _cursor_block = block;
+    _cursor_visible = enable;
+    _cursor_last_ms = (uint32_t)to_ms_since_boot(get_absolute_time());
+    if (enable) _lcd_cursor_render(true);
+    _lcd_unlock();
+}
+
+void lcd_cursor_tick(void) {
+    if (!_cursor_enabled) return;
+    uint32_t now = (uint32_t)to_ms_since_boot(get_absolute_time());
+    if (now - _cursor_last_ms < 500) return;
+    _cursor_last_ms = now;
+    _lcd_lock();
+    _cursor_visible = !_cursor_visible;
+    _lcd_cursor_render(_cursor_visible);
     _lcd_unlock();
 }
 
 void lcd_putc(char c) {
     _lcd_lock();
+    if (_cursor_enabled) _lcd_cursor_render(false);
     if (c == '\n') {
         _cur_col = 0;
         _cur_row++;
@@ -663,12 +740,79 @@ void lcd_putc(char c) {
         _cur_row++;
         if (_cur_row >= LCD_ROWS) _scroll_up();
     }
+    if (_cursor_enabled) _lcd_cursor_render(true);
     _lcd_unlock();
 }
 
 void lcd_puts(const char *s) {
     _lcd_lock();
     while (*s) lcd_putc(*s++);
+    _lcd_unlock();
+}
+
+/* ============================================================
+ * Boot splash
+ * ============================================================ */
+
+void lcd_splash_show(const char *version, const char *target, int progress_pct) {
+    _lcd_lock();
+    uint32_t fg = LCD_AMBER;
+    uint32_t bg = LCD_BLACK;
+    _fg = fg;
+    _bg = bg;
+    _clear_text_buf();
+    lcd_fill(bg);
+    _cur_col = 0;
+    _cur_row = 0;
+
+    /* Decorative top rule */
+    lcd_set_cursor(0, 1);
+    for (int i = 0; i < LCD_COLS; i++) lcd_putc('=');
+
+    /* Title */
+    const char *title = "Mellivora OS";
+    int tlen = (int)strlen(title);
+    lcd_set_cursor((LCD_COLS - tlen) / 2, 3);
+    lcd_puts(title);
+
+    /* Version / target */
+    char line[LCD_COLS + 1];
+    snprintf(line, sizeof line, "v%s  [%s]", version ? version : "", target ? target : "Pico");
+    int llen = (int)strlen(line);
+    lcd_set_cursor((LCD_COLS - llen) / 2, 5);
+    lcd_puts(line);
+
+    /* Simple honeycomb-ish motif */
+    const char *motif[] = {
+        "  ##  ##  ",
+        " #  ##  # ",
+        "#        #",
+        " #  ##  # ",
+        "  ##  ##  ",
+    };
+    int motif_rows = sizeof motif / sizeof motif[0];
+    int motif_start = (LCD_ROWS - motif_rows) / 2 - 1;
+    for (int r = 0; r < motif_rows; r++) {
+        int mlen = (int)strlen(motif[r]);
+        lcd_set_cursor((LCD_COLS - mlen) / 2, motif_start + r);
+        lcd_puts(motif[r]);
+    }
+
+    /* Status line */
+    lcd_set_cursor(0, LCD_ROWS - 3);
+    for (int i = 0; i < LCD_COLS; i++) lcd_putc('-');
+
+    lcd_set_cursor(2, LCD_ROWS - 2);
+    lcd_puts("Booting...");
+
+    /* Progress bar: 36 chars wide, centered-ish */
+    int bar_w = 36;
+    int filled = progress_pct < 0 ? 0 : progress_pct > 100 ? bar_w : (progress_pct * bar_w) / 100;
+    lcd_set_cursor(2, LCD_ROWS - 1);
+    lcd_putc('[');
+    for (int i = 0; i < bar_w; i++) lcd_putc(i < filled ? '#' : ' ');
+    lcd_putc(']');
+
     _lcd_unlock();
 }
 
@@ -727,8 +871,12 @@ uint32_t lcd_get_fg(void) { return _fg; }
 uint32_t lcd_get_bg(void) { return _bg; }
 
 void lcd_set_cursor(int col, int row) {
+    _lcd_lock();
+    if (_cursor_enabled) _lcd_cursor_render(false);
     if (col >= 0 && col < LCD_COLS) _cur_col = col;
     if (row >= 0 && row < LCD_ROWS) _cur_row = row;
+    if (_cursor_enabled) _lcd_cursor_render(true);
+    _lcd_unlock();
 }
 
 int lcd_get_col(void) { return _cur_col; }

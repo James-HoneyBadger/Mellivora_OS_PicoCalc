@@ -88,6 +88,10 @@
     "source": "shell completion"
   },
   {
+    "name": "cursor",
+    "source": "shell completion"
+  },
+  {
     "name": "cut",
     "source": "shell completion"
   },
@@ -356,6 +360,14 @@
     "source": "shell completion"
   },
   {
+    "name": "pass",
+    "source": "shell completion"
+  },
+  {
+    "name": "password",
+    "source": "shell completion"
+  },
+  {
     "name": "piano",
     "source": "shell completion"
   },
@@ -577,6 +589,10 @@
   },
   {
     "name": "uniq",
+    "source": "shell completion"
+  },
+  {
+    "name": "units",
     "source": "shell completion"
   },
   {

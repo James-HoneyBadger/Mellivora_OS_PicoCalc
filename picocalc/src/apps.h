@@ -31,6 +31,7 @@
 #define HEXEDIT_BYTES_MAX  APP_READ_MAX
 
 /* Sub-module headers */
+#include "apps/app_shared.h"
 #include "apps/text.h"
 #include "apps/hex.h"
 #include "apps/fs.h"
@@ -43,8 +44,8 @@ void app_init(void);
 void app_boot(void);
 bool app_run(const char *cmd, const char *arg);
 
-/* Shared internal helpers (implemented in apps.c) */
-const char *skip_ws(const char *s);
+/* Shared internal helpers (copy_cstr, append_cstr, skip_ws, etc. are in
+   apps/app_shared.h). The rest are implemented in apps.c. */
 const char *next_token(const char *s, char *tok, size_t tok_sz);
 void        print_line(const char *s);
 int         read_text_file(const char *path, char *buf, size_t cap, const char *label);
@@ -55,8 +56,12 @@ bool        match_simple_re(const char *re, const char *text);
 void        app_make_abs(const char *path, char *out, size_t out_sz);
 int         app_read_line(const char *prompt, char *buf, size_t size);
 void        rtrim_in_place(char *s);
-void        copy_cstr(char *dst, size_t dst_sz, const char *src);
-void        append_cstr(char *dst, size_t dst_sz, const char *src);
+
+/* ---- Full-screen app chrome -----------------------------------------
+   Draw a top title bar (row 0) showing the app name, battery level and
+   current time.  The caller should continue output on row 1.
+   ---------------------------------------------------------------------- */
+void        app_draw_header(const char *title);
 void        app_join_path(const char *root, const char *name, char *out, size_t out_sz);
 int         load_file_bytes(const char *path, uint8_t *buf, size_t cap, uint32_t *out_len, const char *label);
 

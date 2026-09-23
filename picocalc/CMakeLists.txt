@@ -17,11 +17,13 @@ add_executable(mellivora_picocalc
     src/fat.c
     src/syscall.c
     src/apps.c
+    src/apps/app_shared.c
     src/apps/text.c
     src/apps/hex.c
     src/apps/fs.c
     src/net.c
     src/netapps.c
+    src/hal/hal_pico.c
 )
 
 target_include_directories(mellivora_picocalc PRIVATE src)
@@ -38,7 +40,7 @@ endif()
 
 target_compile_definitions(mellivora_picocalc PRIVATE
     PICO_DEFAULT_UART_BAUD_RATE=115200
-    MELLIVORA_VERSION="2.3.0"
+    MELLIVORA_VERSION="2.5.0"
     MELLIVORA_BUILD_DATE="${CMAKE_PROJECT_NAME}-${CMAKE_BUILD_TYPE}"
 )
 

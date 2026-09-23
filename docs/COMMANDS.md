@@ -33,6 +33,7 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `true` / `false`           | Exit status helpers (for scripts)                      |
 | `lock`                     | Lock the device with a PIN                             |
 | `screenshot [file]`        | Save current LCD text cells to a file                  |
+| `cursor [STYLE]`           | Configure shell cursor (`on off block underscore`)   |
 
 ## File System
 
@@ -170,6 +171,8 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `stopwatch` / `timer`     | Elapsed-time utility                                 |
 | `pomodoro`                | Focus timer workflow                                 |
 | `samples` / `demos`        | Sample programs                                   |
+| `units VALUE FROM TO`      | Convert length, weight, or temperature units      |
+| `pass [N]` / `password [N]`| Generate a random password of N characters        |
 | `home` / `launcher` / `dashboard` | Visual launchers                            |
 | `sysmon` / `monitor` / `status` | System monitor                               |
 | `terminal` / `term` / `tty` / `serial` | UART pass-through                      |

@@ -16,7 +16,10 @@
 #include <string.h>
 
 #include "syscall.h"
+#include "apps/app_shared.h"
 #include "picocalc_hw.h"
+#include "lcd.h"
+#include "kbd.h"
 #include "hardware/pwm.h"
 
 /* RP2350 sizes are set in apps.h */
@@ -90,6 +93,7 @@ typedef struct {
     char home_path[APP_TOKEN_MAX];
     char startup_app[APP_TOKEN_MAX];
     char autorun_path[APP_TOKEN_MAX];
+    char theme[32];
     bool loaded;
 } app_settings_state_t;
 
@@ -167,11 +171,6 @@ static void app_snake(const char *arg);
 static void app_sprite(const char *arg);
 static void app_terminal(const char *arg);
 
-const char *skip_ws(const char *s) {
-    while (s && (*s == ' ' || *s == '\t')) s++;
-    return s ? s : "";
-}
-
 /* ---- Option parsing helpers (Phase 2.5) -------------------------------- */
 static bool _opt_token_eq(const char *p, const char *tok) {
     size_t n = strlen(tok);
@@ -243,25 +242,61 @@ void opt_strip(const char *args, char *out, size_t out_sz) {
     }
 }
 
-void copy_cstr(char *dst, size_t dst_sz, const char *src) {
-    if (!dst || dst_sz == 0) return;
-    if (!src) src = "";
-    size_t n = strlen(src);
-    if (n >= dst_sz) n = dst_sz - 1;
-    memcpy(dst, src, n);
-    dst[n] = '\0';
-}
-
-void append_cstr(char *dst, size_t dst_sz, const char *src) {
-    if (!dst || dst_sz == 0 || !src) return;
-    size_t len = strlen(dst);
-    while (*src && len + 1 < dst_sz) dst[len++] = *src++;
-    dst[len] = '\0';
-}
-
 void print_line(const char *s) {
     sys_print(s);
     sys_putchar('\n');
+}
+
+void app_draw_header(const char *title) {
+    if (!title) title = "";
+
+    lcd_lock();
+    uint32_t save_fg = lcd_get_fg();
+    uint32_t save_bg = lcd_get_bg();
+
+    lcd_set_fg(LCD_BLACK);
+    lcd_set_bg(LCD_CYAN);
+
+    char bar[41];
+    memset(bar, ' ', 40);
+    bar[40] = '\0';
+
+    /* Title, padded left with a little margin */
+    int tlen = (int)strlen(title);
+    if (tlen > 34) tlen = 34;
+    memcpy(bar + 1, title, (size_t)tlen);
+
+    /* Right side: battery + clock */
+    int bat = kbd_battery_percent();
+    char rt[12];
+    if (sys_rtc_is_set()) {
+        int64_t epoch = sys_now_epoch_ms();
+        int32_t secs = (int32_t)(epoch / 1000);
+        int h = (secs / 3600) % 24;
+        int m = (secs / 60) % 60;
+        snprintf(rt, sizeof rt, "%02d:%02d", h, m);
+    } else {
+        snprintf(rt, sizeof rt, "--:--");
+    }
+
+    char info[20];
+    if (bat >= 0)
+        snprintf(info, sizeof info, "%d%% ", bat);
+    else
+        snprintf(info, sizeof info, "?%% ");
+    append_cstr(info, sizeof info, rt);
+    int ilen = (int)strlen(info);
+    if (ilen > 38) ilen = 38;
+    memcpy(bar + 40 - ilen, info, (size_t)ilen);
+
+    for (int i = 0; i < 40; i++)
+        lcd_draw_cell(i, 0, bar[i], LCD_BLACK, LCD_CYAN);
+
+    lcd_set_fg(save_fg);
+    lcd_set_bg(save_bg);
+    /* Leave the caller on the first content row */
+    lcd_set_cursor(0, 1);
+    lcd_unlock();
 }
 
 int read_text_file(const char *path, char *buf, size_t cap, const char *label) {
@@ -379,6 +414,7 @@ static void settings_reset_defaults(void) {
     g_settings.backlight = 128;
     copy_cstr(g_settings.notes_path, sizeof g_settings.notes_path, "/NOTES.TXT");
     copy_cstr(g_settings.home_path, sizeof g_settings.home_path, "/");
+    copy_cstr(g_settings.theme, sizeof g_settings.theme, "green");
 }
 
 static void settings_set_path(char *dst, size_t dst_sz, const char *value, const char *fallback) {
@@ -418,7 +454,43 @@ static void settings_apply_pair(const char *key, const char *value) {
         }
     } else if (ci_eq(key, "autorun")) {
         settings_set_path(g_settings.autorun_path, sizeof g_settings.autorun_path, v, "");
+    } else if (ci_eq(key, "theme")) {
+        copy_cstr(g_settings.theme, sizeof g_settings.theme, v);
     }
+}
+
+/* Theme table and helper. Defined early so settings_load can apply the
+ * persisted theme at boot. */
+typedef struct {
+    const char *name;
+    uint32_t fg;
+    uint32_t bg;
+} theme_entry_t;
+
+static const theme_entry_t _themes[] = {
+    {"green",     LCD_GREEN,  LCD_BLACK},
+    {"amber",     LCD_AMBER,  LCD_BLACK},
+    {"white",     LCD_WHITE,  LCD_BLACK},
+    {"cyan",      LCD_CYAN,   LCD_BLACK},
+    {"blue",      LCD_WHITE,  LCD_BLUE},
+    {"matrix",    LCD_GREEN,  LCD_BLACK},
+    {"paper",     LCD_BLACK,  LCD_WHITE},
+    {"dark",      LCD_WHITE,  LCD_BLACK},
+    {"high-contrast", LCD_YELLOW, LCD_BLACK},
+};
+#define _THEME_COUNT (int)(sizeof _themes / sizeof _themes[0])
+
+static bool theme_apply_by_name(const char *name) {
+    if (!name || !*name) return false;
+    for (int i = 0; i < _THEME_COUNT; i++) {
+        if (strcmp(name, _themes[i].name) == 0) {
+            lcd_set_fg(_themes[i].fg);
+            lcd_set_bg(_themes[i].bg);
+            lcd_cls(_themes[i].bg);
+            return true;
+        }
+    }
+    return false;
 }
 
 static void settings_apply_live(void) {
@@ -426,6 +498,7 @@ static void settings_apply_live(void) {
     if (g_settings.backlight > 255) g_settings.backlight = 255;
     kbd_set_backlight((uint8_t)g_settings.backlight);
     if (*g_settings.home_path) (void)sys_chdir(g_settings.home_path);
+    if (*g_settings.theme) theme_apply_by_name(g_settings.theme);
 }
 
 static bool settings_load(bool verbose) {
@@ -467,12 +540,14 @@ static bool settings_save(bool verbose) {
                      "HOME=%s\n"
                      "NOTES=%s\n"
                      "STARTUP=%s\n"
-                     "AUTORUN=%s\n",
+                     "AUTORUN=%s\n"
+                     "THEME=%s\n",
                      g_settings.backlight,
                      *g_settings.home_path ? g_settings.home_path : "/",
                      *g_settings.notes_path ? g_settings.notes_path : "/NOTES.TXT",
                      *g_settings.startup_app ? g_settings.startup_app : "none",
-                     *g_settings.autorun_path ? g_settings.autorun_path : "none");
+                     *g_settings.autorun_path ? g_settings.autorun_path : "none",
+                     *g_settings.theme ? g_settings.theme : "green");
     if (n < 0 || n >= (int)sizeof buf) {
         if (verbose) print_line("settings: buffer overflow while saving");
         return false;
@@ -498,6 +573,8 @@ static void settings_show(void) {
     snprintf(out, sizeof out, "  startup:   %.96s", *g_settings.startup_app ? g_settings.startup_app : "(none)");
     print_line(out);
     snprintf(out, sizeof out, "  autorun:   %.96s", *g_settings.autorun_path ? g_settings.autorun_path : "(none)");
+    print_line(out);
+    snprintf(out, sizeof out, "  theme:     %.32s", *g_settings.theme ? g_settings.theme : "green");
     print_line(out);
     print_line("Use: settings set KEY VALUE");
 }
@@ -874,6 +951,7 @@ void app_edit(const char *arg) {
     editor_load(&g_editor, path);
     if (g_editor.path[0] == '\0') app_make_abs(path, g_editor.path, sizeof g_editor.path);
 
+    app_draw_header("Edit");
     print_line("Mellivora line editor");
     print_line("Commands: status, list, append, ins, set, del, find, save, saveas, quit");
     editor_status(&g_editor);
@@ -1044,6 +1122,7 @@ static void app_todo(const char *arg) {
     int count = todo_load(items, TODO_ITEMS_MAX);
 
     if (!*cmd || ci_eq(cmd, "list")) {
+        app_draw_header("Todo");
         todo_show(items, count);
         print_line("Usage: todo add TEXT | done N | undo N | del N | next | purge | edit");
         return;
@@ -1123,6 +1202,7 @@ static void app_notes(const char *arg) {
     next_token(arg, path, sizeof path);
     if (!*path) copy_cstr(path, sizeof path, *g_settings.notes_path ? g_settings.notes_path : "/NOTES.TXT");
 
+    app_draw_header("Notes");
     print_line("Opening notes file...");
     app_edit(path);
 }
@@ -1768,6 +1848,7 @@ static void app_planner(const char *arg) {
     planner_sort(items, count);
 
     if (!*cmd || ci_eq(cmd, "list") || ci_eq(cmd, "all")) {
+        app_draw_header("Planner");
         planner_show(items, count, "");
         print_line("Usage: planner add DATE TEXT | today | month YYYY-MM | del N | next | edit");
         return;
@@ -2144,6 +2225,7 @@ static void app_journal(const char *arg) {
     journal_sort(items, count);
 
     if (!*cmd || ci_eq(cmd, "list") || ci_eq(cmd, "show")) {
+        app_draw_header("Journal");
         journal_show(items, count, "");
         print_line("Usage: journal add [DATE] TEXT | today | month YYYY-MM | edit");
         return;
@@ -5618,31 +5700,31 @@ static void app_xmodem(const char *arg) {
 static void app_theme(const char *arg) {
     const char *name = skip_ws(arg);
 
-    struct { const char *name; uint32_t fg; uint32_t bg; } themes[] = {
-        {"green",  LCD_GREEN,  LCD_BLACK},
-        {"amber",  LCD_AMBER,  LCD_BLACK},
-        {"white",  LCD_WHITE,  LCD_BLACK},
-        {"cyan",   LCD_CYAN,   LCD_BLACK},
-        {"blue",   LCD_WHITE,  LCD_BLUE},
-        {"matrix", LCD_GREEN,  LCD_BLACK},
-        {"paper",  LCD_BLACK,  LCD_WHITE},
-    };
-    int n = (int)(sizeof themes / sizeof themes[0]);
-
     if (!*name) {
         print_line("Themes:");
-        for (int i = 0; i < n; i++) print_line(themes[i].name);
+        for (int i = 0; i < _THEME_COUNT; i++) {
+            char line[48];
+            snprintf(line, sizeof line, "  %s", _themes[i].name);
+            print_line(line);
+        }
         return;
     }
 
-    for (int i = 0; i < n; i++) {
-        if (strcmp(name, themes[i].name) == 0) {
-            lcd_set_fg(themes[i].fg);
-            lcd_set_bg(themes[i].bg);
-            lcd_cls(themes[i].bg);
-            char msg[32];
-            snprintf(msg, sizeof msg, "Theme: %s", themes[i].name);
+    if (strcmp(name, "default") == 0) name = "green";
+
+    for (int i = 0; i < _THEME_COUNT; i++) {
+        if (strcmp(name, _themes[i].name) == 0) {
+            lcd_set_fg(_themes[i].fg);
+            lcd_set_bg(_themes[i].bg);
+            lcd_cls(_themes[i].bg);
+            /* Preview strip across the top row */
+            lcd_set_cursor(0, 0);
+            for (int c = 0; c < LCD_COLS; c++) lcd_putc('=');
+            char msg[48];
+            snprintf(msg, sizeof msg, "Theme: %s", _themes[i].name);
             print_line(msg);
+            copy_cstr(g_settings.theme, sizeof g_settings.theme, _themes[i].name);
+            settings_save(false);
             return;
         }
     }
@@ -5655,6 +5737,92 @@ typedef struct {
     const char *name;
     app_handler_t handler;
 } app_cmd_entry_t;
+
+/* units — tiny length/temperature converter */
+static void app_units(const char *arg) {
+    const char *p = skip_ws(arg);
+    double v;
+    char from[16], to[16];
+    if (!p || sscanf(p, "%lf %15s %15s", &v, from, to) != 3) {
+        print_line("usage: units VALUE FROM TO");
+        print_line("  length: in ft yd mi mm cm m km");
+        print_line("  weight: oz lb g kg st");
+        print_line("  temp:   c f k");
+        return;
+    }
+
+    for (char *c = from; *c; c++) *c = (char)tolower((unsigned char)*c);
+    for (char *c = to;   *c; c++) *c = (char)tolower((unsigned char)*c);
+
+    double meters = 0.0, grams = 0.0, celsius = 0.0;
+    bool is_len = true, is_weight = false;
+
+    if (strcmp(from, "in") == 0) meters = v * 0.0254;
+    else if (strcmp(from, "ft") == 0) meters = v * 0.3048;
+    else if (strcmp(from, "yd") == 0) meters = v * 0.9144;
+    else if (strcmp(from, "mi") == 0) meters = v * 1609.344;
+    else if (strcmp(from, "mm") == 0) meters = v / 1000.0;
+    else if (strcmp(from, "cm") == 0) meters = v / 100.0;
+    else if (strcmp(from, "m")  == 0) meters = v;
+    else if (strcmp(from, "km") == 0) meters = v * 1000.0;
+    else if (strcmp(from, "oz") == 0) { grams = v * 28.3495; is_len = false; is_weight = true; }
+    else if (strcmp(from, "lb") == 0) { grams = v * 453.592; is_len = false; is_weight = true; }
+    else if (strcmp(from, "g")  == 0) { grams = v;           is_len = false; is_weight = true; }
+    else if (strcmp(from, "kg") == 0) { grams = v * 1000.0;  is_len = false; is_weight = true; }
+    else if (strcmp(from, "st") == 0) { grams = v * 6350.29; is_len = false; is_weight = true; }
+    else if (strcmp(from, "c")  == 0) { celsius = v;          is_len = false; }
+    else if (strcmp(from, "f")  == 0) { celsius = (v - 32.0) * 5.0 / 9.0; is_len = false; }
+    else if (strcmp(from, "k")  == 0) { celsius = v - 273.15; is_len = false; }
+    else { print_line("units: unknown source unit"); return; }
+
+    double out = 0.0;
+    if (is_len) {
+        if (strcmp(to, "in") == 0) out = meters / 0.0254;
+        else if (strcmp(to, "ft") == 0) out = meters / 0.3048;
+        else if (strcmp(to, "yd") == 0) out = meters / 0.9144;
+        else if (strcmp(to, "mi") == 0) out = meters / 1609.344;
+        else if (strcmp(to, "mm") == 0) out = meters * 1000.0;
+        else if (strcmp(to, "cm") == 0) out = meters * 100.0;
+        else if (strcmp(to, "m")  == 0) out = meters;
+        else if (strcmp(to, "km") == 0) out = meters / 1000.0;
+        else { print_line("units: unknown target unit"); return; }
+    } else if (is_weight) {
+        if (strcmp(to, "oz") == 0) out = grams / 28.3495;
+        else if (strcmp(to, "lb") == 0) out = grams / 453.592;
+        else if (strcmp(to, "g")  == 0) out = grams;
+        else if (strcmp(to, "kg") == 0) out = grams / 1000.0;
+        else if (strcmp(to, "st") == 0) out = grams / 6350.29;
+        else { print_line("units: unknown target unit"); return; }
+    } else {
+        if (strcmp(to, "c") == 0) out = celsius;
+        else if (strcmp(to, "f") == 0) out = celsius * 9.0 / 5.0 + 32.0;
+        else if (strcmp(to, "k") == 0) out = celsius + 273.15;
+        else { print_line("units: unknown target unit"); return; }
+    }
+
+    char msg[64];
+    snprintf(msg, sizeof msg, "%.4g %s = %.4g %s", v, from, out, to);
+    print_line(msg);
+}
+
+/* pass — generate a random password */
+static void app_pass(const char *arg) {
+    int len = 12;
+    if (arg && *arg) {
+        len = atoi(arg);
+        if (len < 4) len = 4;
+        if (len > 64) len = 64;
+    }
+    static const char chars[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+    size_t nchars = sizeof chars - 1;
+    srand((unsigned)sys_time_ms());
+    char out[65];
+    for (int i = 0; i < len; i++)
+        out[i] = chars[rand() % nchars];
+    out[len] = '\0';
+    print_line(out);
+}
 
 static void app_noop(const char *arg) {
     (void)arg;
@@ -5708,6 +5876,7 @@ static bool app_dispatch_named(const char *cmd, const char *arg) {
         {"lock", app_lock}, {"xxd", app_xxd}, {"strings", app_strings},
         {"yes", app_yes}, {"tee", app_tee},
         {"base64", app_base64}, {"crc32", app_crc32},
+        {"units", app_units}, {"pass", app_pass}, {"password", app_pass},
         /* New programs */
         {"life", app_life}, {"tetris", app_tetris},
         {"mandelbrot", app_mandelbrot}, {"fractal", app_mandelbrot},

@@ -338,6 +338,7 @@ static void app_tree_cb(const char *name, uint32_t size, bool is_dir, void *opaq
     tree_walk_t *ctx = (tree_walk_t *)opaque;
     if (!ctx || !name || !*name) return;
     if (sys_interrupted()) return;
+    watchdog_update();
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
 
     char line[192];
@@ -432,6 +433,8 @@ static void app_format_size(uint64_t bytes, char *out, size_t out_sz);
 static void app_du_accum_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
     du_walk_ctx_t *ctx = (du_walk_ctx_t *)opaque;
     if (!ctx || !name || !*name) return;
+    if (sys_interrupted()) return;
+    watchdog_update();
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
 
     if (is_dir) {
@@ -449,6 +452,7 @@ static void app_du_accum_cb(const char *name, uint32_t size, bool is_dir, void *
 }
 
 static uint32_t app_du_path(const char *path, du_stat_t *out) {
+    watchdog_update();
     du_stat_t zero = {0};
     if (!out) out = &zero;
     memset(out, 0, sizeof *out);
@@ -472,6 +476,7 @@ static void app_du_list_cb(const char *name, uint32_t size, bool is_dir, void *o
     du_walk_ctx_t *ctx = (du_walk_ctx_t *)opaque;
     if (!ctx || !name || !*name) return;
     if (sys_interrupted()) return;
+    watchdog_update();
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
 
     uint32_t bytes = size;

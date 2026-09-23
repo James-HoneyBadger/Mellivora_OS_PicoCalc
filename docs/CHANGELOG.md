@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Ctrl-W** word-delete — deletes the word to the left of the cursor in
   the shell input line (complements existing Ctrl-A/E/K/U/L/R bindings).
 
+### Fixed (2.4.0-dev)
+
+- **Pico 2 W freeze with keyboard firmware 1.6** — serialised all
+  keyboard-controller I2C access with a cross-core mutex so core0 input
+  polling and core1 status-bar battery reads cannot corrupt the I2C
+  state machine.  Also hardened bus recovery (de-init, clock SDA free,
+  STOP, re-init) and aligned I2C timeouts with the Clockwork reference
+  driver.
+
 ---
 
 ## [2.3.0] - 2026-04-27
@@ -64,7 +73,7 @@ networking, productivity, and CI improvements.
 - **`rm -r` / `rm -R`** — recursive directory removal with confirmation.
 - **NTP RTC sync** — `ntp` command sets the software RTC; **boot-time
   auto-sync** runs after WiFi auto-connect when the RTC is unset
-  (epoch < 2020); result persisted to `/CLOCK.TXT`.
+  (epoch < 2020); result persisted to `/CLOCK.CFG`.
 - **Status bar low-battery warning** — red `[BAT n%!]` when battery < 15
   % and not charging.
 - **Multi-AP WiFi credential store** — saves up to 4 networks to

@@ -41,6 +41,7 @@ typedef enum {
     FAT_ERR_RDONLY    = -8,
     FAT_ERR_NOTEMPTY  = -9,
     FAT_ERR_UNSUPPORTED = -10,
+    FAT_ERR_NAMETOOLONG = -11,
 } fat_result_t;
 
 typedef struct {

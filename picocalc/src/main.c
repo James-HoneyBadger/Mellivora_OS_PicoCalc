@@ -35,7 +35,10 @@
 #include "fat.h"
 #include "syscall.h"
 #include "apps.h"
+#include "apps/app_shared.h"
+#include "hal/hal.h"
 #ifdef PICO_CYW43_SUPPORTED
+#include "net.h"
 #include "netapps.h"
 #endif
 
@@ -59,6 +62,7 @@ static int _last_exit = 0;
 #define ALIAS_NAME_SZ   16
 #define ALIAS_VALUE_SZ  LINE_BUF
 #define ALIAS_FILE      "/ALIASES.CFG"
+#define ENV_FILE        "/ENV.CFG"
 
 /* Global interrupt flag — checked by long-running loops.
  * Aliased to _sys_interrupted (declared in syscall.h) so apps in apps.c /
@@ -67,13 +71,14 @@ static int _last_exit = 0;
 
 /* Status bar flag — declared early so cmd_sysinfo/cmd_status can see it */
 static volatile bool _statusbar_enabled = false;
+static volatile bool _screensaver_active = false;
 static void _draw_status_bar(void);
+static void _run_screensaver(void);
 
 /* Confirmation helpers (defined later, near read_input) */
 static bool confirm(const char *msg);
 static bool parse_force_flag(const char **arg);
 static void rm_recurse(const char *path);
-static void copy_str(char *dst, size_t dst_sz, const char *src);
 
 #define BANNER \
     "\n" \
@@ -165,8 +170,8 @@ static bool var_set(const char *name, const char *value) {
     if (slot < 0) slot = free_slot;
     if (slot < 0) return false;
     _vars[slot].used = true;
-    copy_str(_vars[slot].name, sizeof _vars[slot].name, name);
-    copy_str(_vars[slot].value, sizeof _vars[slot].value, value ? value : "");
+    copy_cstr(_vars[slot].name, sizeof _vars[slot].name, name);
+    copy_cstr(_vars[slot].value, sizeof _vars[slot].value, value ? value : "");
     return true;
 }
 
@@ -225,7 +230,7 @@ static void var_expand(char *line, size_t line_sz) {
         i = j - 1;
     }
     out[oi] = '\0';
-    copy_str(line, line_sz, out);
+    copy_cstr(line, line_sz, out);
 }
 
 /*
@@ -341,29 +346,6 @@ static void cwd_restore(void) {
     _cwd[CWD_MAX - 1] = '\0';
     strncpy(_sys_cwd, _cwd, sizeof _sys_cwd - 1);
     _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-}
-
-static void copy_str(char *dst, size_t dst_sz, const char *src) {
-    if (!dst || dst_sz == 0) return;
-    if (!src) src = "";
-    size_t n = strlen(src);
-    if (n >= dst_sz) n = dst_sz - 1;
-    memcpy(dst, src, n);
-    dst[n] = '\0';
-}
-
-static char *skip_spaces(char *s) {
-    while (s && (*s == ' ' || *s == '\t')) s++;
-    return s;
-}
-
-static void trim_right(char *s) {
-    if (!s) return;
-    size_t n = strlen(s);
-    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t' ||
-                      s[n - 1] == '\r' || s[n - 1] == '\n')) {
-        s[--n] = '\0';
-    }
 }
 
 static void dispatch(char *line);
@@ -524,8 +506,8 @@ static bool alias_set_entry(const char *name, const char *value, bool persist, b
     }
 
     _aliases[slot].used = true;
-    copy_str(_aliases[slot].name, sizeof _aliases[slot].name, name);
-    copy_str(_aliases[slot].value, sizeof _aliases[slot].value, value ? value : "");
+    copy_cstr(_aliases[slot].name, sizeof _aliases[slot].name, name);
+    copy_cstr(_aliases[slot].value, sizeof _aliases[slot].value, value ? value : "");
 
     if (persist && _fat_mounted && !alias_save() && verbose) {
         out_str("alias: warning: could not save aliases\n");
@@ -577,6 +559,56 @@ static void alias_list(void) {
     if (shown == 0) out_str("alias: no aliases defined\n");
 }
 
+/* ------------------------------------------------------------------ */
+/* Persistent environment variables                                     */
+/* ------------------------------------------------------------------ */
+static bool var_save(void) {
+    if (!_fat_mounted) return false;
+
+    char buf[2560];
+    int pos = 0;
+    for (int i = 0; i < VAR_MAX; i++) {
+        if (!_vars[i].used) continue;
+        int wrote = snprintf(buf + pos, sizeof buf - (size_t)pos,
+                             "%s=%s\n", _vars[i].name, _vars[i].value);
+        if (wrote < 0 || wrote >= (int)(sizeof buf - (size_t)pos)) return false;
+        pos += wrote;
+    }
+
+    return sys_fwrite(ENV_FILE, buf, (uint32_t)pos) >= 0;
+}
+
+static void var_load(void) {
+    if (!_fat_mounted) return;
+
+    char buf[1024];
+    int n = sys_fread(ENV_FILE, buf, sizeof buf - 1);
+    if (n < 0) return;
+    buf[n] = '\0';
+
+    char *saveptr = NULL;
+    for (char *line = strtok_r(buf, "\n", &saveptr); line; line = strtok_r(NULL, "\n", &saveptr)) {
+        trim_right(line);
+        char *s = skip_spaces(line);
+        if (!s || !*s || *s == '#') continue;
+
+        char *eq = strchr(s, '=');
+        if (!eq) continue;
+        *eq++ = '\0';
+        trim_right(s);
+        eq = skip_spaces(eq);
+        if (!s || !*s) continue;
+
+        size_t len = strlen(eq);
+        if (len >= 2 && ((eq[0] == '"' && eq[len - 1] == '"') || (eq[0] == '\'' && eq[len - 1] == '\''))) {
+            eq[len - 1] = '\0';
+            eq++;
+        }
+
+        (void)var_set(s, eq);
+    }
+}
+
 static bool alias_expand_line(char *line, size_t line_sz) {
     char first[ALIAS_NAME_SZ] = {0};
     char *s = skip_spaces(line);
@@ -597,10 +629,10 @@ static bool alias_expand_line(char *line, size_t line_sz) {
 
     char expanded[LINE_BUF];
     if (*rest) snprintf(expanded, sizeof expanded, "%s %s", _aliases[slot].value, rest);
-    else copy_str(expanded, sizeof expanded, _aliases[slot].value);
+    else copy_cstr(expanded, sizeof expanded, _aliases[slot].value);
 
     if (strcmp(expanded, line) == 0) return false;
-    copy_str(line, line_sz, expanded);
+    copy_cstr(line, line_sz, expanded);
     return true;
 }
 
@@ -627,7 +659,7 @@ static bool history_expand_bang(char *line, size_t line_sz) {
         return true;
     }
 
-    copy_str(line, line_sz, entry);
+    copy_cstr(line, line_sz, entry);
     out_fmt("%s\n", line);
     return true;
 }
@@ -640,7 +672,7 @@ static absolute_time_t g_boot_time;
 
 static void cmd_history(const char *arg) {
     char tmp[LINE_BUF];
-    copy_str(tmp, sizeof tmp, arg ? arg : "");
+    copy_cstr(tmp, sizeof tmp, arg ? arg : "");
     char *s = skip_spaces(tmp);
 
     if (!s || !*s) {
@@ -667,7 +699,7 @@ static void cmd_history(const char *arg) {
             return;
         }
         char replay[LINE_BUF];
-        copy_str(replay, sizeof replay, entry);
+        copy_cstr(replay, sizeof replay, entry);
         out_fmt("%s\n", replay);
         dispatch(replay);
         return;
@@ -681,7 +713,7 @@ static void cmd_history(const char *arg) {
 
 static void cmd_alias(const char *arg) {
     char tmp[LINE_BUF];
-    copy_str(tmp, sizeof tmp, arg ? arg : "");
+    copy_cstr(tmp, sizeof tmp, arg ? arg : "");
     char *s = skip_spaces(tmp);
 
     if (!s || !*s) {
@@ -714,7 +746,7 @@ static void cmd_alias(const char *arg) {
 
 static void cmd_unalias(const char *arg) {
     char tmp[LINE_BUF];
-    copy_str(tmp, sizeof tmp, arg ? arg : "");
+    copy_cstr(tmp, sizeof tmp, arg ? arg : "");
     char *name = skip_spaces(tmp);
 
     if (!name || !*name) {
@@ -737,7 +769,7 @@ static void cmd_unalias(const char *arg) {
 /* set [NAME=VALUE] | set NAME VALUE | set    -> list all */
 static void cmd_setvar(const char *arg) {
     char tmp[LINE_BUF];
-    copy_str(tmp, sizeof tmp, arg ? arg : "");
+    copy_cstr(tmp, sizeof tmp, arg ? arg : "");
     char *s = skip_spaces(tmp);
     if (!s || !*s) {
         bool any = false;
@@ -764,16 +796,24 @@ static void cmd_setvar(const char *arg) {
         char *end = strrchr(value, q);
         if (end) *end = '\0';
     }
-    if (!var_set(name, value)) out_str("set: too many variables\n");
+    if (!var_set(name, value)) {
+        out_str("set: too many variables\n");
+        return;
+    }
+    if (_fat_mounted && !var_save()) out_str("set: warning: could not save variables\n");
 }
 
 static void cmd_unsetvar(const char *arg) {
     char tmp[LINE_BUF];
-    copy_str(tmp, sizeof tmp, arg ? arg : "");
+    copy_cstr(tmp, sizeof tmp, arg ? arg : "");
     char *s = skip_spaces(tmp);
     trim_right(s);
     if (!s || !*s) { out_str("usage: unset NAME\n"); return; }
-    if (!var_unset(s)) out_fmt("unset: %s not found\n", s);
+    if (!var_unset(s)) {
+        out_fmt("unset: %s not found\n", s);
+        return;
+    }
+    if (_fat_mounted && !var_save()) out_str("unset: warning: could not save variables\n");
 }
 
 static void cmd_man(const char *arg) {
@@ -1165,6 +1205,29 @@ static void cmd_status(const char *arg) {
     }
 }
 
+static void cmd_cursor(const char *arg) {
+    const char *s = skip_spaces((char *)arg);
+    if (!s || !*s) {
+        out_fmt("Cursor: %s %s\n",
+                lcd_cursor_enabled() ? "on" : "off",
+                lcd_cursor_is_block() ? "block" : "underscore");
+        out_str("usage: cursor [on|off|block|underscore]\n");
+        return;
+    }
+    if (strcmp(s, "on") == 0 || strcmp(s, "block") == 0) {
+        lcd_cursor_enable(true, true);
+        out_str("Cursor: on (block)\n");
+    } else if (strcmp(s, "underscore") == 0 || strcmp(s, "under") == 0) {
+        lcd_cursor_enable(true, false);
+        out_str("Cursor: on (underscore)\n");
+    } else if (strcmp(s, "off") == 0) {
+        lcd_cursor_enable(false, false);
+        out_str("Cursor: off\n");
+    } else {
+        out_str("usage: cursor [on|off|block|underscore]\n");
+    }
+}
+
 static void cmd_battery(void) {
     int pct = kbd_battery_percent();
     if (pct < 0) out_str("Battery info unavailable\n");
@@ -1271,8 +1334,8 @@ static void cmd_cat(const char *arg) {
     while ((n = fat_read(&f, buf, sizeof buf)) > 0) {
         for (int32_t i = 0; i < n; i++) out_char((char)buf[i]);
     }
-    /* Ensure file handle is not leaked */
-    if (n != FAT_ERR_EOF && n < 0)
+    /* Report a real I/O error; EOF is normal. */
+    if (n < 0 && n != FAT_ERR_EOF)
         out_fmt("\ncat: %s: %s\n", abs, fat_result_str((fat_result_t)n));
     else
         out_char('\n');
@@ -1356,6 +1419,7 @@ static void _rm_collect_cb(const char *name, uint32_t size, bool is_dir, void *c
 
 static void rm_recurse(const char *path) {
     if (_interrupted) return;
+    watchdog_update();
     /* Loop in case directory has more than RM_BATCH_MAX entries */
     for (;;) {
         _rm_batch_t b = { .n = 0, .overflow = false };
@@ -1478,6 +1542,7 @@ static void cmd_shutdown(void) {
     if (_fat_mounted) {
         hist_save();
         alias_save();
+        var_save();
         cwd_persist();
         clock_persist();
     }
@@ -1620,9 +1685,11 @@ static void redir_char(char c) {
     X("xxd", "apps") X("strings", "apps") X("yes", "apps") X("tee", "apps") X("life", "apps") \
     X("tetris", "apps") X("mandelbrot", "apps") X("fractal", "apps") X("piano", "apps") \
     X("forth", "apps") X("xmodem", "apps") X("theme", "apps") X("sysinfo", "system") \
+    X("cursor", "system") \
     X("less", "apps") X("uniq", "apps") X("umount", "fs") X("unmount", "fs") \
     X("time", "shell") X("repeat", "shell") X("printf", "shell") \
-    X("base64", "apps") X("crc32", "apps") X("minesweeper", "apps") X("mines", "apps") \
+    X("base64", "apps") X("crc32", "apps") X("units", "apps") X("pass", "apps") \
+    X("password", "apps") X("minesweeper", "apps") X("mines", "apps") \
     X("2048", "apps")
 
 #ifdef PICO_CYW43_SUPPORTED
@@ -2079,6 +2146,7 @@ static void dispatch_single(char *line) {
     else if (!strcmp(line, "repeat"))    cmd_repeat(arg);
     else if (!strcmp(line, "printf"))    cmd_printf(arg);
     else if (!strcmp(line, "status"))    cmd_status(arg);
+    else if (!strcmp(line, "cursor"))    cmd_cursor(arg);
     else if (!strcmp(line, "clear"))     cmd_clear();
     else if (!strcmp(line, "battery"))   cmd_battery();
     else if (!strcmp(line, "backlight")) cmd_backlight(arg);
@@ -2216,7 +2284,7 @@ static bool parse_force_flag(const char **arg) {
 /* Status bar — last LCD row shows battery, cwd, uptime                 */
 /* ------------------------------------------------------------------ */
 static void _draw_status_bar(void) {
-    if (!_lcd_ready || !_statusbar_enabled) return;
+    if (!_lcd_ready || !_statusbar_enabled || _screensaver_active) return;
 
     /* Throttle redraws — the bar shows uptime in seconds, so refreshing more
        than once per second is wasted work and visible flicker. The two real
@@ -2249,7 +2317,7 @@ static void _draw_status_bar(void) {
     lcd_set_fg(LCD_BLACK);
     lcd_set_bg(LCD_GREY);
 
-    /* Build status line: "[BAT%] CWD          H:MM:SS" */
+    /* Build status line: "[SD][W][BAT%] CWD          HH:MM" */
     char bar[41];
     memset(bar, ' ', 40);
     bar[40] = '\0';
@@ -2258,18 +2326,32 @@ static void _draw_status_bar(void) {
     uint32_t bar_bg = LCD_GREY;
     if (bat >= 0 && bat < 15 && !charging) bar_bg = LCD_RED;
     lcd_set_bg(bar_bg);
+
+    int pos = 0;
+    if (_fat_mounted) {
+        memcpy(bar + pos, "[SD]", 4); pos += 4;
+    }
+#ifdef PICO_CYW43_SUPPORTED
+    if (net_is_connected()) {
+        memcpy(bar + pos, "[W]", 3); pos += 3;
+    }
+#endif
+
     char lft[24];
     if (charging)
-        snprintf(lft, sizeof lft, " [%d%%+]", bat);
+        snprintf(lft, sizeof lft, "[%d%%+]", bat);
     else if (bat >= 0 && bat < 15)
-        snprintf(lft, sizeof lft, " [BAT %d%%!]", bat);
+        snprintf(lft, sizeof lft, "[BAT %d%%!]", bat);
     else
-        snprintf(lft, sizeof lft, " [%d%%]", bat);
-    memcpy(bar, lft, strlen(lft));
+        snprintf(lft, sizeof lft, "[%d%%]", bat);
+    int lft_len = (int)strlen(lft);
+    memcpy(bar + pos, lft, (size_t)lft_len);
+    pos += lft_len;
 
     /* CWD in the middle */
-    int cwd_start = (int)strlen(lft) + 1;
-    int cwd_avail = 40 - cwd_start - 9; /* reserve 9 for time */
+    int cwd_start = pos + 1;
+    int time_w = sys_rtc_is_set() ? 6 : 9; /* "HH:MM" or "H:MM:SS" */
+    int cwd_avail = 40 - cwd_start - time_w;
     if (cwd_avail > 0) {
         int clen = (int)strlen(_cwd);
         if (clen <= cwd_avail) {
@@ -2282,12 +2364,19 @@ static void _draw_status_bar(void) {
         }
     }
 
-    /* Uptime on the right */
-    uint32_t secs = to_ms_since_boot(get_absolute_time()) / 1000;
-    uint32_t h = secs / 3600, m = (secs / 60) % 60, s = secs % 60;
+    /* Clock or uptime on the right */
     char rt[16];
-    snprintf(rt, sizeof rt, "%lu:%02lu:%02lu", (unsigned long)h,
-             (unsigned long)m, (unsigned long)s);
+    if (sys_rtc_is_set()) {
+        int64_t epoch = sys_now_epoch_ms();
+        int32_t secs = (int32_t)(epoch / 1000);
+        int32_t h = (secs / 3600) % 24, m = (secs / 60) % 60;
+        snprintf(rt, sizeof rt, "%02ld:%02ld", (long)h, (long)m);
+    } else {
+        uint32_t secs = to_ms_since_boot(get_absolute_time()) / 1000;
+        uint32_t h = secs / 3600, m = (secs / 60) % 60, s = secs % 60;
+        snprintf(rt, sizeof rt, "%lu:%02lu:%02lu", (unsigned long)h,
+                 (unsigned long)m, (unsigned long)s);
+    }
     int rlen = (int)strlen(rt);
     memcpy(bar + 40 - rlen - 1, rt, (size_t)rlen);
 
@@ -2302,6 +2391,48 @@ static void _draw_status_bar(void) {
     lcd_set_cursor(save_col, save_row);
 
     lcd_unlock();
+}
+
+/* ------------------------------------------------------------------ */
+/* Idle screensaver — bouncing logo, any key wakes                    */
+/* ------------------------------------------------------------------ */
+static void _run_screensaver(void) {
+    _screensaver_active = true;
+    lcd_cursor_enable(false, false);
+    lcd_cls(LCD_BLACK);
+
+    const char *word = "Mellivora";
+    int wx = (int)strlen(word) * LCD_CHAR_W;
+    int wy = LCD_CHAR_H;
+    int x = 0, y = 0;
+    int dx = 2, dy = 1;
+    int frame = 0;
+
+    for (;;) {
+        watchdog_update();
+        int key = read_input();
+        if (key >= 0) { kbd_clear_repeat(); break; }
+
+        /* Erase previous position */
+        lcd_fill_rect((uint16_t)x, (uint16_t)y, (uint16_t)wx, (uint16_t)wy, LCD_BLACK);
+
+        x += dx;
+        y += dy;
+        if (x <= 0) { x = 0; dx = -dx; }
+        if (x + wx >= LCD_WIDTH) { x = LCD_WIDTH - wx; dx = -dx; }
+        if (y <= 0) { y = 0; dy = -dy; }
+        if (y + wy >= LCD_HEIGHT) { y = LCD_HEIGHT - wy; dy = -dy; }
+
+        uint32_t colors[] = { LCD_CYAN, LCD_MAGENTA, LCD_YELLOW, LCD_GREEN,
+                              LCD_ORANGE, LCD_AMBER, LCD_RED, LCD_BLUE };
+        uint32_t fg = colors[(frame / 16) % (sizeof colors / sizeof colors[0])];
+        lcd_draw_str((uint16_t)x, (uint16_t)y, word, fg, LCD_BLACK);
+        frame++;
+        sleep_ms(40);
+    }
+
+    lcd_cls(LCD_BLACK);
+    _screensaver_active = false;
 }
 
 #ifdef PICO_RP2350A
@@ -2331,6 +2462,8 @@ int main(void) {
     stdio_init_all();
     sleep_ms(250);
 
+    hal_init();
+
     gpio_init(PICO_PIN_PS);
     gpio_set_dir(PICO_PIN_PS, GPIO_OUT);
     gpio_put(PICO_PIN_PS, 1);
@@ -2349,16 +2482,29 @@ int main(void) {
     lcd_cls(LCD_BLACK);
     out_str("\x1b[2J\x1b[H");
 
+    const char *target_name =
+#ifdef PICO_CYW43_SUPPORTED
+        "Pico 2W";
+#elif defined(PICO_RP2350A)
+        "Pico 2";
+#else
+        "Pico";
+#endif
+    lcd_splash_show(MELLIVORA_VERSION, target_name, 10);
+
     /* Match the official PicoCalc boot flow: give the SD card time to settle. */
-    sleep_ms(1500);
+    sleep_ms(1200);
+    lcd_splash_show(MELLIVORA_VERSION, target_name, 40);
 
     sd_result_t sd_r = sd_init();
     if (sd_r == SD_OK) {
+        lcd_splash_show(MELLIVORA_VERSION, target_name, 60);
         dmesg_log("SD: card initialized");
         if (fat_mount() == FAT_OK) {
             _fat_mounted = true;
             dmesg_log("FAT: mounted");
             alias_load();
+            var_load();
             /* Load persistent settings (backlight, home, autorun, startup) and
                then restore the last-known cwd if it still exists. */
             app_init();
@@ -2368,15 +2514,24 @@ int main(void) {
             cwd_restore();
             clock_restore();
             hist_load();
+            lcd_splash_show(MELLIVORA_VERSION, target_name, 90);
         } else {
             out_str("SD: FAT mount failed\n");
             dmesg_log("FAT: mount failed");
+            lcd_splash_show(MELLIVORA_VERSION, target_name, 70);
         }
     } else {
         out_str("SD: card not detected\n");
         dmesg_log("SD: card not detected");
+        lcd_splash_show(MELLIVORA_VERSION, target_name, 50);
     }
 
+    sleep_ms(300);
+    lcd_splash_show(MELLIVORA_VERSION, target_name, 100);
+    sleep_ms(200);
+
+    lcd_cls(LCD_BLACK);
+    out_str("\x1b[2J\x1b[H");
     out_str(BANNER);
 
 #ifdef PICO_CYW43_SUPPORTED
@@ -2411,6 +2566,7 @@ int main(void) {
 #endif
 
     out_prompt();
+    lcd_cursor_enable(true, true);
 
     memset(line, 0, sizeof line);
     int hist_browse = -1;  /* -1 = not browsing history */
@@ -2424,14 +2580,29 @@ int main(void) {
     /* Idle backlight dim — saves the LCD/CYW43 a little power */
     uint32_t last_activity_ms = sys_time_ms();
     bool dimmed = false;
-    const uint32_t IDLE_DIM_MS = 60000U;   /* 60s idle -> dim */
+    const uint32_t IDLE_DIM_MS = 60000U;        /* 60s idle -> dim */
+    const uint32_t IDLE_SCREENSAVER_MS = 180000U; /* 3 min idle -> screensaver */
     uint8_t saved_backlight = 255;
 
     for (;;) {
         watchdog_update();
         int ch = read_input();
         if (ch < 0) {
+            lcd_cursor_tick();
             uint32_t now = sys_time_ms();
+            if (!_screensaver_active && (now - last_activity_ms) > IDLE_SCREENSAVER_MS) {
+                _run_screensaver();
+                last_activity_ms = sys_time_ms();
+                /* Restore the shell display */
+                lcd_cls(LCD_BLACK);
+                out_str("\x1b[2J\x1b[H");
+                _draw_status_bar();
+                out_prompt();
+                for (int i = 0; i < idx; i++) out_char(line[i]);
+                for (int i = 0; i < idx - cursor; i++) out_str("\b");
+                lcd_cursor_enable(true, true);
+                continue;
+            }
             if (!dimmed && (now - last_activity_ms) > IDLE_DIM_MS) {
                 /* Save a sane "current" brightness; default to 255 */
                 kbd_set_backlight(48);
@@ -2449,6 +2620,7 @@ int main(void) {
         /* ---- Enter: execute ---- */
         if (ch == '\r' || ch == '\n') {
             out_char('\n');
+            lcd_cursor_enable(false, false);
             line[idx] = '\0';
             _interrupted = false;  /* clear stale Ctrl-C from previous cmd */
             if (idx > 0) dispatch(line);
@@ -2458,6 +2630,7 @@ int main(void) {
             hist_browse = -1;
             kbd_clear_repeat();
             out_prompt();
+            lcd_cursor_enable(true, true);
             continue;
         }
 

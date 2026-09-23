@@ -256,20 +256,25 @@ static void format_83(const uint8_t *name8, const uint8_t *ext3, char *out) {
     out[len] = '\0';
 }
 
-/* Convert path component to upper-case 8+3 fields (space-padded). */
-static void to_83(const char *component, uint8_t *name8, uint8_t *ext3) {
+/* Convert path component to upper-case 8+3 fields (space-padded).
+ * Returns true if the whole name fit, false if any part was truncated. */
+static bool to_83(const char *component, uint8_t *name8, uint8_t *ext3) {
     memset(name8, ' ', 8);
     memset(ext3,  ' ', 3);
     int ni = 0, ei = 0;
     bool in_ext = false;
+    bool truncated = false;
     for (const char *p = component; *p; p++) {
         if (*p == '.') { in_ext = true; continue; }
         if (in_ext) {
             if (ei < 3) ext3[ei++] = (uint8_t)toupper((unsigned char)*p);
+            else truncated = true;
         } else {
             if (ni < 8) name8[ni++] = (uint8_t)toupper((unsigned char)*p);
+            else truncated = true;
         }
     }
+    return !truncated;
 }
 
 /* ------------------------------------------------------------------
@@ -372,7 +377,7 @@ static fat_result_t resolve_path(const char *path, dirent_t *out) {
         while (*path == '/') path++;
 
         find_ctx_t f;
-        to_83(component, f.name8, f.ext3);
+        (void)to_83(component, f.name8, f.ext3);
         f.found = false;
 
         fat_result_t r = walk_dir(cur_cluster, is_root16, find_visitor, &f);
@@ -614,6 +619,7 @@ const char *fat_result_str(fat_result_t r) {
         case FAT_ERR_RDONLY:     return "read-only";
         case FAT_ERR_NOTEMPTY:   return "directory not empty";
         case FAT_ERR_UNSUPPORTED: return "unsupported filesystem; use FAT32";
+        case FAT_ERR_NAMETOOLONG: return "name too long (8.3)";
         default:                 return "unknown";
     }
 }
@@ -881,7 +887,7 @@ fat_result_t fat_mkdir(const char *path) {
     /* Add entry in parent directory */
     dirent_t entry;
     memset(&entry, 0, sizeof entry);
-    to_83(component, entry.name, entry.ext);
+    if (!to_83(component, entry.name, entry.ext)) return FAT_ERR_NAMETOOLONG;
     entry.attr             = FAT_ATTR_DIR;
     entry.first_cluster_lo = (uint16_t)(new_cluster & 0xFFFF);
     entry.first_cluster_hi = (uint16_t)(new_cluster >> 16);
@@ -1050,7 +1056,7 @@ fat_result_t fat_create(const char *path, const uint8_t *data, uint32_t len) {
     /* Add directory entry */
     dirent_t entry;
     memset(&entry, 0, sizeof entry);
-    to_83(component, entry.name, entry.ext);
+    if (!to_83(component, entry.name, entry.ext)) return FAT_ERR_NAMETOOLONG;
     entry.attr             = 0x20; /* ARCHIVE */
     entry.first_cluster_lo = (uint16_t)(first_cluster & 0xFFFF);
     entry.first_cluster_hi = (uint16_t)(first_cluster >> 16);
@@ -1091,8 +1097,8 @@ fat_result_t fat_rename(const char *old_path, const char *new_path) {
 
     /* Find old entry in parent and update its name in-place */
     uint8_t old_name8[8], old_ext3[3], new_name8[8], new_ext3[3];
-    to_83(src_comp, old_name8, old_ext3);
-    to_83(dst_comp, new_name8, new_ext3);
+    (void)to_83(src_comp, old_name8, old_ext3);
+    if (!to_83(dst_comp, new_name8, new_ext3)) return FAT_ERR_NAMETOOLONG;
 
     if (src_root16) {
         uint32_t max_sectors = (_root_entries * 32 + 511) / 512;
@@ -1164,10 +1170,11 @@ fat_result_t fat_append(const char *path, const uint8_t *data, uint32_t len) {
         start_cluster = last_cluster;
     } else {
         /* Walk chain to last cluster. Cache fat_entry() result and bound the
-           iteration to prevent infinite loops on a corrupted (cyclic) FAT. */
+           iteration to the actual cluster count plus a small margin so a
+           corrupted (cyclic) FAT is caught quickly instead of hanging. */
         uint32_t cur = start_cluster;
         uint32_t guard = 0;
-        const uint32_t guard_max = 0x10000000u; /* >256 M clusters: practical cap */
+        const uint32_t guard_max = _cluster_count + 2;
         for (;;) {
             uint32_t next = fat_entry(cur);
             if (is_eoc(next) || next < 2) break;
@@ -1233,7 +1240,7 @@ fat_result_t fat_append(const char *path, const uint8_t *data, uint32_t len) {
     if (r != FAT_OK) return r;
 
     uint8_t name8[8], ext3[3];
-    to_83(component, name8, ext3);
+    (void)to_83(component, name8, ext3);
 
     if (parent_root16) {
         uint32_t max_sectors = (_root_entries * 32 + 511) / 512;

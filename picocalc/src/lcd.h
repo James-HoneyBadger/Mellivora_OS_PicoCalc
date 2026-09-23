@@ -18,6 +18,7 @@
  */
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #include "picocalc_hw.h"
 
@@ -50,6 +51,11 @@ void lcd_draw_str(uint16_t x, uint16_t y, const char *s, uint32_t fg, uint32_t b
 void lcd_cls(uint32_t bg);
 void lcd_putc(char c);
 void lcd_puts(const char *s);
+void lcd_splash_show(const char *version, const char *target, int progress_pct);
+void lcd_cursor_enable(bool enable, bool block);
+void lcd_cursor_tick(void);
+bool lcd_cursor_enabled(void);
+bool lcd_cursor_is_block(void);
 
 /* Graphics primitives */
 void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t color);
