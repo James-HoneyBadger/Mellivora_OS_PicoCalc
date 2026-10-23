@@ -15,6 +15,8 @@ add_executable(mellivora_picocalc
     src/kbd.c
     src/sd.c
     src/fat.c
+    src/core/fatname.c
+    src/core/lfn.c
     src/syscall.c
     src/apps.c
     src/apps/app_shared.c

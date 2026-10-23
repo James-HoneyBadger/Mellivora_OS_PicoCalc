@@ -13,11 +13,15 @@
  *       Must be called before any other fat_ function.
  *
  *   fat_result_t fat_ls(const char *path, fat_ls_cb cb, void *ctx)
- *       Enumerate directory entries in 8.3 format.
+ *       Enumerate directory entries using 8.3 names.
  *       Calls cb(name, size, is_dir, ctx) for each non-deleted entry.
  *
+ *   fat_result_t fat_ls_ex(const char *path, fat_ls_ex_cb cb, void *ctx)
+ *       Like fat_ls, but also reports the VFAT long name when present.
+ *
  *   fat_result_t fat_open(const char *path, fat_file_t *f)
- *       Open a file by path (8.3 names, '/' separator).
+ *       Open a file by path ('/' separator). Components may be 8.3 names
+ *       or VFAT long names.
  *
  *   int32_t fat_read(fat_file_t *f, void *buf, uint32_t n)
  *       Read up to n bytes.  Returns bytes read or negative on error.
@@ -67,9 +71,14 @@ typedef struct {
 typedef void (*fat_ls_cb)(const char *name, uint32_t size,
                           bool is_dir, void *ctx);
 
+/* Extended listing callback: `long_name` is NULL when no valid LFN exists. */
+typedef void (*fat_ls_ex_cb)(const char *short_name, const char *long_name,
+                             uint32_t size, bool is_dir, void *ctx);
+
 fat_result_t fat_mount(void);
 fat_result_t fat_is_dir(const char *path);
 fat_result_t fat_ls(const char *path, fat_ls_cb cb, void *ctx);
+fat_result_t fat_ls_ex(const char *path, fat_ls_ex_cb cb, void *ctx);
 fat_result_t fat_open(const char *path, fat_file_t *f);
 int32_t      fat_read(fat_file_t *f, void *buf, uint32_t n);
 fat_result_t fat_get_usage(fat_usage_t *out);
