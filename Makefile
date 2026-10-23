@@ -13,7 +13,7 @@ PICO_ELF = $(PICO_BUILD_DIR)/mellivora_picocalc.elf
 PICO_UF2 = $(PICO_BUILD_DIR)/mellivora_picocalc.uf2
 PICOTOOL = $(PICO_BUILD_DIR)/_deps/picotool/picotool
 
-.PHONY: all all-targets picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean baseline-report doc-consistency-check command-registry-report command-registry-check quality-check clean
+.PHONY: all all-targets picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean baseline-report doc-consistency-check command-registry-report command-registry-check quality-check test lint format-check size-report size-baseline size-gate clean
 
 all: picocalc
 
@@ -108,6 +108,32 @@ size-report:
 	@chmod +x tools/quality/size_baseline.sh
 	@tools/quality/size_baseline.sh reports
 
+size-baseline:
+	@echo "=== Updating committed size baselines ==="
+	@test -f picocalc/build/mellivora_picocalc.elf || { echo "Missing Pico ELF; run 'make all-targets' first"; exit 1; }
+	@test -f picocalc/build-pico2/mellivora_picocalc.elf || { echo "Missing Pico 2 ELF; run 'make all-targets' first"; exit 1; }
+	@test -f picocalc/build-pico2w/mellivora_picocalc.elf || { echo "Missing Pico 2 W ELF; run 'make all-targets' first"; exit 1; }
+	@$(MAKE) --no-print-directory size-report
+
+size-gate:
+	@echo "=== Checking firmware size budgets and regressions ==="
+	@chmod +x tools/quality/size_gate.sh
+	@tools/quality/size_gate.sh $(SIZE_GATE_TARGETS)
+
+test:
+	@echo "=== Running host unit tests ==="
+	@$(MAKE) --no-print-directory -C picocalc/tests
+
+lint:
+	@echo "=== Running static analysis ==="
+	@chmod +x tools/quality/static_analysis.sh
+	@tools/quality/static_analysis.sh
+
+format-check:
+	@echo "=== Checking formatting ==="
+	@chmod +x tools/quality/format_check.sh
+	@tools/quality/format_check.sh
+
 doc-consistency-check:
 	@echo "=== Checking documentation consistency ==="
 	@chmod +x tools/quality/doc_consistency_check.sh
@@ -122,7 +148,7 @@ command-registry-check:
 	@chmod +x tools/quality/command_registry_check.sh
 	@tools/quality/command_registry_check.sh
 
-quality-check: baseline-report doc-consistency-check command-registry-check size-report
+quality-check: baseline-report doc-consistency-check command-registry-check size-report test
 	@echo "=== Quality checks passed ==="
 
 clean: picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean

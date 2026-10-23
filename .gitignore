@@ -18,6 +18,9 @@ picocalc/build/
 picocalc/build-pico2/
 picocalc/build-pico2w/
 
+# Host unit-test binaries
+picocalc/tests/build/
+
 # Pico SDK (fetched by build)
 picocalc/pico-sdk/
 
