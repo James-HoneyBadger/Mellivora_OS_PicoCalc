@@ -17,11 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Failures set `$?`** for the common filesystem commands (`mount`, `ls`,
   `cd`, `cat`, `touch`, `write`, `mkdir`, `rm`, `rename`), so `&&`, `||`,
   and the prompt error marker behave correctly.
+- **Static analysis now covers the firmware**, including `main.c`, `fat.c`,
+  `ui/`, and every `apps/app_*.c` module, using the compile database
+  produced by a normal build. Findings fixed: unsafe `strcpy`, dead stores,
+  an ineffective widening cast, and two verified analyzer false positives
+  annotated with `NOLINT`.
 - **`watch` accepts `watch CMD [SECONDS]`** as documented and can run shell
   builtins, not just app-table commands.
 - **Wildcards match VFAT long names** and matched names containing spaces
   are quoted automatically.
 - **Editor and paint saves stream to disk**, removing 25-33 KB stack frames.
+- **Whole-file saves are atomic.** `sys_fwrite` writes to a temp file in the
+  target directory and renames it over the original, closing the window
+  where a reset between unlink and create could lose settings, tasks, or
+  history.
+- **Journal entries append instead of rewriting the log**, reducing SD
+  writes for the most frequently edited productivity file.
 - **XMODEM aborts instead of silently dropping data** when the receive
   buffer is full.
 - **`cat` no longer appends a blank line** to files that already end with a

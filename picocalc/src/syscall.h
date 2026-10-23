@@ -328,8 +328,7 @@ static inline int sys_fread(const char *path, void *buf, uint32_t max_len) {
 static inline int sys_fwrite(const char *path, const void *buf, uint32_t len) {
     char abs[256];
     _sys_make_abs(path, abs, sizeof abs);
-    fat_unlink(abs);
-    return (fat_create(abs, (const uint8_t *)buf, len) == FAT_OK) ? (int)len : -1;
+    return (fat_write_atomic(abs, (const uint8_t *)buf, len) == FAT_OK) ? (int)len : -1;
 }
 
 /* ------------------------------------------------------------------ */

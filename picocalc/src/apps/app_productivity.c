@@ -12,6 +12,7 @@
 
 #include "apps/app_internal.h"
 #include "syscall.h"
+#include "ui/ui.h"
 
 #define TODO_FILE        "/TODO.TXT"
 #define PLANNER_FILE     "/PLANNER.TXT"
@@ -22,6 +23,7 @@
 #define TODO_TEXT_MAX    96
 #define PLANNER_ITEMS_MAX 96
 #define JOURNAL_ITEMS_MAX 96
+#define JOURNAL_TEXT_MAX_ENTRY 128
 #define BOOKMARKS_MAX    32
 #define BOOKMARK_LABEL_MAX 24
 #define HABITS_MAX       32
@@ -86,7 +88,7 @@ static int todo_load(todo_item_t *items, int max_items) {
 }
 
 static bool todo_save(const todo_item_t *items, int count) {
-    char buf[APP_READ_MAX + 1];
+    char buf[APP_READ_MAX + 1] = {0};
     size_t pos = 0;
 
     for (int i = 0; i < count; i++) {
@@ -289,7 +291,7 @@ static void planner_sort(planner_item_t *items, int count) {
 }
 
 static bool planner_save(planner_item_t *items, int count) {
-    char buf[APP_READ_MAX + 1];
+    char buf[APP_READ_MAX + 1] = {0};
     size_t pos = 0;
     planner_sort(items, count);
 
@@ -456,7 +458,7 @@ static int bookmarks_load(bookmark_item_t *items, int max_items) {
 }
 
 static bool bookmarks_save(bookmark_item_t *items, int count) {
-    char buf[APP_READ_MAX + 1];
+    char buf[APP_READ_MAX + 1] = {0};
     size_t pos = 0;
 
     for (int i = 0; i < count; i++) {
@@ -665,26 +667,6 @@ static void journal_sort(journal_item_t *items, int count) {
     }
 }
 
-static bool journal_save(journal_item_t *items, int count) {
-    char buf[APP_READ_MAX + 1];
-    size_t pos = 0;
-    journal_sort(items, count);
-
-    for (int i = 0; i < count; i++) {
-        int wrote = snprintf(buf + pos, sizeof buf - pos, "%s|%s\n", items[i].date, items[i].text);
-        if (wrote < 0 || (size_t)wrote >= sizeof buf - pos) {
-            print_line("journal: file too large to save");
-            return false;
-        }
-        pos += (size_t)wrote;
-    }
-
-    if (sys_fwrite(JOURNAL_FILE, buf, (uint32_t)pos) < 0) {
-        print_line("journal: save failed");
-        return false;
-    }
-    return true;
-}
 
 static void journal_show(const journal_item_t *items, int count, const char *prefix) {
     int shown = 0;
@@ -758,9 +740,21 @@ void app_journal(const char *arg) {
             return;
         }
 
-        copy_cstr(items[count].date, sizeof items[count].date, date);
-        copy_cstr(items[count].text, sizeof items[count].text, text);
-        if (journal_save(items, count + 1)) print_line("journal: entry added");
+        char record[JOURNAL_TEXT_MAX_ENTRY];
+        int rlen = snprintf(record, sizeof record, "%s|%.96s\n", date, text);
+        if (rlen < 0 || rlen >= (int)sizeof record) {
+            print_line("journal: entry too long");
+            return;
+        }
+        fat_result_t wr = fat_append(JOURNAL_FILE, (const uint8_t *)record,
+                                     (uint32_t)rlen);
+        if (wr == FAT_ERR_NOTFOUND)
+            wr = fat_create(JOURNAL_FILE, (const uint8_t *)record, (uint32_t)rlen);
+        if (wr != FAT_OK) {
+            ui_error("journal", "could not write entry");
+            return;
+        }
+        ui_ok("journal: entry added");
         return;
     }
 
@@ -957,7 +951,7 @@ static int habits_load(habit_item_t *items, int max_items) {
 }
 
 static bool habits_save(habit_item_t *items, int count) {
-    char buf[APP_READ_MAX + 1];
+    char buf[APP_READ_MAX + 1] = {0};
     size_t pos = 0;
 
     for (int i = 0; i < count; i++) {

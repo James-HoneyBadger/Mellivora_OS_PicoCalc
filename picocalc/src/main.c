@@ -413,6 +413,7 @@ static void hist_save(void) {
         buf[pos++] = '\n';
     }
     if (pos == 0) return;
+    buf[pos] = '\0';
     /* Append-on-write: read existing + append + truncate to ~32 lines */
     char existing[HIST_ENTRY_SZ * 32 + 16];
     fat_file_t f;
@@ -2054,7 +2055,6 @@ static void cmd_printf(const char *arg) {
     if (flen >= 2 && fmt[0] == '"' && fmt[flen - 1] == '"') {
         memmove(fmt, fmt + 1, flen - 2);
         fmt[flen - 2] = '\0';
-        flen -= 2;
     }
     /* Collect remaining tokens as arguments */
     char argv_buf[8][64];
@@ -2076,7 +2076,11 @@ static void cmd_printf(const char *arg) {
         } else if (fmt[i] == '%' && fmt[i + 1]) {
             i++;
             char spec = fmt[i];
-            const char *a = (argi < argc) ? argv_buf[argi++] : "";
+            const char *a = "";
+            if (argi < argc && argi >= 0) {
+                a = argv_buf[argi];  // NOLINT(clang-analyzer-security.ArrayBound)
+                argi++;
+            }
             if (spec == 'd' || spec == 'i') {
                 out_fmt("%ld", strtol(a, NULL, 10));
             } else if (spec == 'u') {

@@ -151,9 +151,9 @@ void app_find(const char *arg) {
         const char *scan = s;
         while (scan && *skip_ws(scan)) {
             char tok[APP_TOKEN_MAX];
-            scan = next_token(scan, tok, sizeof tok);
+            const char *next = next_token(scan, tok, sizeof tok);
             if (strcmp(tok, "-type") == 0) {
-                scan = next_token(scan, tflag, sizeof tflag);
+                (void)next_token(next, tflag, sizeof tflag);
                 if (tflag[0] == 'f') ctx.type_filter = 1;
                 else if (tflag[0] == 'd')
                     ctx.type_filter = 2;
@@ -639,7 +639,7 @@ void app_df(const char *arg) {
     snprintf(out, sizeof out, "filesystem: FAT%s", usage.fat32 ? "32" : "16");
     print_line(out);
     snprintf(out, sizeof out, "cluster size: %lu bytes",
-             (unsigned long)(usage.bytes_per_sector * usage.sectors_per_cluster));
+             (unsigned long)usage.bytes_per_sector * usage.sectors_per_cluster);
     print_line(out);
     snprintf(out, sizeof out, "total: %s", total);
     print_line(out);
@@ -665,10 +665,10 @@ static void browser_parent_dir(const char *cwd, char *out, size_t out_sz) {
         out[--len] = '\0';
     while (len > 1 && out[len - 1] != '/')
         out[--len] = '\0';
-    if (len == 0) strcpy(out, "/");
+    if (len == 0) copy_cstr(out, out_sz, "/");
     else if (len > 1 && out[len - 1] == '/')
         out[len - 1] = '\0';
-    if (out[0] == '\0') strcpy(out, "/");
+    if (out[0] == '\0') copy_cstr(out, out_sz, "/");
 }
 
 static void browser_collect_cb(const char *short_name, const char *long_name, uint32_t size,

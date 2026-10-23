@@ -608,7 +608,9 @@ static int expr_lookup_basic(void *ctx, const char *name, size_t len) {
     if (basic_name_is(name, len, "RND")) {
         return (int)((unsigned)rand() & 0x7FFFu);
     }
-    return env->vars[toupper((unsigned char)name[0]) - 'A'];
+    int vi = toupper((unsigned char)name[0]) - 'A';
+    if (vi < 0 || vi >= 26) return 0;
+    return env->vars[vi];
 }
 
 static int tinyc_find_var(tinyc_env_t *env, const char *name, size_t len) {
@@ -651,11 +653,9 @@ static int expr_lookup_tinyc(void *ctx, const char *name, size_t len) {
 
 static void tinyc_set_var(tinyc_env_t *env, const char *name, int value) {
     char base[16];
-    const char *br = strchr(name, '[');
-    size_t len = br ? (size_t)(br - name) : strlen(name);
-    if (len >= sizeof base) len = sizeof base - 1;
-    memcpy(base, name, len);
-    base[len] = '\0';
+    copy_cstr(base, sizeof base, name);
+    char *br = strchr(base, '[');
+    if (br) *br = '\0';
 
     int idx = tinyc_find_var(env, base, strlen(base));
     if (idx < 0) {
@@ -915,6 +915,10 @@ static void basic_exec_stmt(const char *stmt, int *pc) {
         int step = expr_eval(step_expr, expr_lookup_basic, &g_basic_env, &ok3);
         if (!ok1 || !ok2 || !ok3 || step == 0) {
             print_line("BASIC: bad FOR expression");
+            return;
+        }
+        if (var_index < 0 || var_index >= 26) {
+            print_line("BASIC: invalid loop variable");
             return;
         }
 

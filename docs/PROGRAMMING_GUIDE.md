@@ -50,6 +50,8 @@ Important files and responsibilities:
 
 1. edit code under `picocalc/src/`
 2. if you touched a pure module, add or update a test under `picocalc/tests/`
+   - build once with `make picocalc` so `make lint` can analyse the app and
+     firmware modules through `compile_commands.json`
 3. run the host checks:
 
    ```bash

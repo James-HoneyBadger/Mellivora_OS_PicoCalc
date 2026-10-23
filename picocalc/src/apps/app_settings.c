@@ -114,7 +114,7 @@ static bool settings_load(bool verbose) {
 }
 
 static bool settings_save(bool verbose) {
-    char buf[APP_READ_MAX];
+    char buf[APP_READ_MAX] = {0};
     int n = snprintf(buf, sizeof buf,
                      "# Mellivora PicoCalc settings\n"
                      "BACKLIGHT=%d\n"

@@ -62,7 +62,7 @@ void app_grep(const char *arg) {
     char pat[APP_TOKEN_MAX];
     char path[APP_TOKEN_MAX];
     s = next_token(s, pat, sizeof pat);
-    s = next_token(s, path, sizeof path);
+    (void)next_token(s, path, sizeof path);
 
     if (!*pat) {
         print_line("usage: grep [-n] [-e] PATTERN FILE");

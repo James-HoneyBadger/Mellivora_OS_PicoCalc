@@ -120,9 +120,13 @@ static bool editor_insert_line(editor_state_t *ed, int pos, const char *text) {
         print_line("edit: buffer full");
         return false;
     }
-    memmove(&ed->lines[pos + 1], &ed->lines[pos],
-            (size_t)(ed->line_count - pos) * sizeof ed->lines[0]);
-    copy_cstr(ed->lines[pos], EDIT_LINE_MAX, text ? text : "");
+    if (pos < ed->line_count) {
+        memmove(&ed->lines[pos + 1], &ed->lines[pos],
+                (size_t)(ed->line_count - pos) * sizeof ed->lines[0]);
+    }
+    if (pos >= EDIT_LINES_MAX) pos = EDIT_LINES_MAX - 1;
+    /* pos is clamped to [0, EDIT_LINES_MAX) above. */
+    copy_cstr(ed->lines[pos], EDIT_LINE_MAX, text ? text : "");  // NOLINT(clang-analyzer-security.ArrayBound)
     ed->line_count++;
     ed->dirty = true;
     return true;

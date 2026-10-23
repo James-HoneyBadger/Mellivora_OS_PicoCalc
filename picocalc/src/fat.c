@@ -763,7 +763,7 @@ static uint32_t alloc_cluster(void) {
     if (!_mounted) return 0;
 
     uint32_t total_lba = _fat_lba + _fat_size;
-    uint32_t sector = _fat_lba;
+    uint32_t sector;
 
     for (sector = _fat_lba; sector < _fat_lba + _fat_size; sector++) {
         if (read_sector(sector) != FAT_OK) return 0;
@@ -1249,7 +1249,7 @@ fat_result_t fat_append(const char *path, const uint8_t *data, uint32_t len) {
     uint32_t start_cluster = ((uint32_t)e.first_cluster_hi << 16) | e.first_cluster_lo;
 
     /* Find last cluster in chain */
-    uint32_t last_cluster = start_cluster;
+    uint32_t last_cluster;
     if (start_cluster < 2) {
         /* File was zero-length: allocate first cluster */
         last_cluster = alloc_cluster();
@@ -1378,19 +1378,31 @@ fat_result_t fat_write_atomic(const char *path, const uint8_t *data, uint32_t le
     if (!_mounted) return FAT_ERR_NOTMOUNTED;
     if (!path || !*path) return FAT_ERR_NOTFOUND;
 
-    static const char *TMP = "/_ATOMIC.TMP";
-    (void)fat_unlink(TMP); /* clean any stale tmp from a prior interrupted call */
+    /* Keep the temp file in the same directory: fat_rename cannot move
+       across directories. */
+    char tmp[256];
+    const char *slash = strrchr(path, '/');
+    size_t dlen = slash ? (size_t)(slash - path) : 0;
+    if (dlen == 0) {
+        memcpy(tmp, "/_ATOMIC.TMP", 13);
+    } else {
+        if (dlen + 13 > sizeof tmp) return FAT_ERR_NAMETOOLONG;
+        memcpy(tmp, path, dlen);
+        memcpy(tmp + dlen, "/_ATOMIC.TMP", 13);
+    }
 
-    fat_result_t r = fat_create(TMP, data, len);
+    (void)fat_unlink(tmp); /* clean any stale temp from an interrupted call */
+
+    fat_result_t r = fat_create(tmp, data, len);
     if (r != FAT_OK) return r;
 
     fat_result_t ur = fat_unlink(path);
     if (ur != FAT_OK && ur != FAT_ERR_NOTFOUND) {
-        (void)fat_unlink(TMP);
+        (void)fat_unlink(tmp);
         return ur;
     }
 
-    r = fat_rename(TMP, path);
-    if (r != FAT_OK) (void)fat_unlink(TMP);
+    r = fat_rename(tmp, path);
+    if (r != FAT_OK) (void)fat_unlink(tmp);
     return r;
 }
