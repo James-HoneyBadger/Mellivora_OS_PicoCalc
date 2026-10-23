@@ -262,13 +262,33 @@ void app_pass(const char *arg) {
         if (len < 4) len = 4;
         if (len > 64) len = 64;
     }
-    static const char chars[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-    size_t nchars = sizeof chars - 1;
+
+    static const char upper[] = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    static const char lower[] = "abcdefghijkmnopqrstuvwxyz";
+    static const char digit[] = "23456789";
+    static const char symbol[] = "!@#$%^&*-_=+";
+    const char *sets[] = {upper, lower, digit, symbol};
+
     srand((unsigned)sys_time_ms());
     char out[65];
-    for (int i = 0; i < len; i++)
-        out[i] = chars[rand() % nchars];
+
+    /* One character from each class, then fill from the combined set. */
+    for (int i = 0; i < 4; i++) {
+        size_t n = strlen(sets[i]);
+        out[i] = sets[i][(size_t)rand() % n];
+    }
+    static const char all[] =
+        "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_=+";
+    size_t alln = sizeof all - 1;
+    for (int i = 4; i < len; i++) out[i] = all[(size_t)rand() % alln];
     out[len] = '\0';
+
+    /* Fisher-Yates shuffle so the required classes are not always first. */
+    for (int i = len - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        char t = out[i];
+        out[i] = out[j];
+        out[j] = t;
+    }
     print_line(out);
 }

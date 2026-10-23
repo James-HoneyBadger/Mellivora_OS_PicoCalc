@@ -15,6 +15,7 @@
 #include "lcd.h"
 #include "pipe.h"
 #include "syscall.h"
+#include "ui/ui.h"
 
 #define PAINT_SAVE_MAX   (PAINT_WIDTH * PAINT_HEIGHT + PAINT_HEIGHT + 1)
 
@@ -201,13 +202,13 @@ void app_diff(const char *arg) {
             snprintf(out, sizeof out, "%d:", lineno);
             sys_print(out);
             uint32_t sf = lcd_get_fg();
-            lcd_set_fg(LCD_RED);
+            lcd_set_fg(ui_color(UI_ERROR));
             sys_print("< ");
             char lineout[64];
             size_t cp = s1 < sizeof lineout - 1 ? s1 : sizeof lineout - 1;
             memcpy(lineout, l1, cp); lineout[cp] = '\0';
             print_line(lineout);
-            lcd_set_fg(LCD_GREEN);
+            lcd_set_fg(ui_color(UI_SUCCESS));
             sys_print("> ");
             cp = s2 < sizeof lineout - 1 ? s2 : sizeof lineout - 1;
             memcpy(lineout, l2, cp); lineout[cp] = '\0';
