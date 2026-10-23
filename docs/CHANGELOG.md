@@ -4,9 +4,9 @@ All notable changes to **Mellivora OS for PicoCalc** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 2.5.0 development
+## [2.5.0] - 2026-10-22
 
-### Fixed (2.5.0-dev)
+### Fixed
 
 - **No more silent truncation in editors and copies.** `edit` refuses files
   larger than its buffer or with over-long lines; `hexedit` opens oversized
@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ui_header` keeps the title readable** when the right-hand label is
   long, and `ui_notify` writes its message under the LCD lock.
 
-### Added (2.5.0-dev)
+### Added
 
 - **Tiny C loops and loop control** — `for (init; cond; step)` joins
   `while`, with `break` and `continue` honoured by both.
@@ -50,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one uppercase, lowercase, digit, and symbol, avoid modulo bias, and are
   shuffled so the required classes are not always in the same position.
 
-### Changed (2.5.0-dev)
+### Changed
 
 - **Unified visual language** — new `ui/` module provides semantic colour
   roles (text, muted, accent, success, warning, error, border, panel,
@@ -71,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drops unused handlers per object file, shrinking firmware by ~3.5 KB.
 
 
-### Added (2.5.0-dev)
+### Added
 
 - **`uniq` command** — filter adjacent duplicate lines from a file.
   Supports `-c` (count), `-d` (only duplicates), `-u` (only unique).
@@ -145,7 +145,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`make size-baseline` / `make size-gate`** — reproducible size
   baselines and an enforceable regression gate.
 
-### Changed (2.5.0-dev)
+### Changed
 
 - **Testable core modules** — extracted the expression evaluator, shell
   line parsing (`$VAR`, `;`/`&&`/`||`, redirection, pager pipes), path
@@ -160,7 +160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Real size gate** — CI checks flash and RAM budgets for each target
   and fails on growth beyond the committed baselines.
 
-### Fixed (2.5.0-dev)
+### Fixed
 
 - **Redirection captures app output** — output written through
   `sys_print`/`sys_putchar` is now routed through the shell capture hook,

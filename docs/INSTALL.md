@@ -79,6 +79,18 @@ picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
 
 ## 5. Flashing to Hardware
 
+### Prebuilt images
+
+Release images are committed under `firmware/`:
+
+- `firmware/mellivora_v2.5.0_pico.uf2`
+- `firmware/mellivora_v2.5.0_pico2.uf2`
+- `firmware/mellivora_v2.5.0_pico2w.uf2`
+
+Use the image that matches the board; the Pico 2 W image is required for
+WiFi support.
+
+
 1. Disconnect the device if it is already attached.
 2. Hold the BOOTSEL button.
 3. Connect the USB cable while holding BOOTSEL.

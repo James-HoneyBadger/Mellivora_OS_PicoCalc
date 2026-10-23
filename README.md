@@ -53,12 +53,25 @@ picocalc/build-pico2/mellivora_picocalc_pico2.uf2
 picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
 ```
 
+### Prebuilt firmware (v2.5.0)
+
+Ready-to-flash images for the current release live in [`firmware/`](firmware):
+
+| Board | Image |
+| --- | --- |
+| Pico (RP2040) | `firmware/mellivora_v2.5.0_pico.uf2` |
+| Pico 2 (RP2350) | `firmware/mellivora_v2.5.0_pico2.uf2` |
+| Pico 2 W (RP2350 + CYW43) | `firmware/mellivora_v2.5.0_pico2w.uf2` |
+
 ### Flash
 
-1. Put the Pico or Pico 2 device into BOOTSEL mode.
-2. Copy the matching UF2 file to the mounted drive.
-3. Reboot into Mellivora PicoCalc.
+1. Put the board into BOOTSEL mode (hold BOOTSEL, connect USB, release).
+2. Copy the matching UF2 file to the mounted `RPI-RP2` drive.
+3. The board reboots automatically into Mellivora PicoCalc.
 4. Insert an SD card and run `mount` to enable filesystem features.
+
+The Pico 2 W image also enables WiFi; use it only on boards with the
+wireless module.
 
 ## Documentation
 
