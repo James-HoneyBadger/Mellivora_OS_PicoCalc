@@ -2,13 +2,14 @@
 /*
  * hal.h — Hardware Abstraction Layer for Mellivora PicoCalc
  *
- * Thin function-pointer table that decouples apps from direct hardware
- * calls. The production build wires this to lcd.c, kbd.c, fat.c, and
- * syscall.c; test builds can substitute a mock HAL later.
+ * Thin function-pointer table that decouples new code from direct hardware
+ * calls. The production build wires it to lcd.c, kbd.c, fat.c, syscall.c,
+ * console.c, and audio.c; a test build can install a mock table instead.
  *
- * This header is intentionally non-invasive for v2.5.0: existing code
- * continues to call sys_* helpers, which forward into the HAL. Over time
- * new code can call hal_* directly.
+ * Existing code still calls the sys_* helpers directly. New code should
+ * prefer the hal_* wrappers below so it can be exercised with a mock HAL,
+ * but the pure parsing modules under src/core/ are the primary host-test
+ * surface.
  */
 
 #include <stddef.h>

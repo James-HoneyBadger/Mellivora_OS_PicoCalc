@@ -5,12 +5,14 @@
  */
 #include "apps.h"
 #include "apps/hex.h"
+#include "core/glob.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdint.h>
 #include "syscall.h"
+#include "ui/ui.h"
 #include "fat.h"
 
 /* Forward declaration for app_edit (implemented in apps.c) */
@@ -24,7 +26,7 @@ typedef struct {
     const char *pattern;
     char root[APP_TOKEN_MAX];
     int count;
-    int type_filter;  /* 0=any, 1=file only, 2=dir only */
+    int type_filter; /* 0=any, 1=file only, 2=dir only */
 } find_ctx_t;
 
 typedef struct {
@@ -33,7 +35,8 @@ typedef struct {
 } dir_stat_t;
 
 typedef struct {
-    char name[BROWSE_NAME_MAX];
+    char name[BROWSE_NAME_MAX]; /* long name (or 8.3 alias) for display */
+    char short_name[13];        /* 8.3 name used for filesystem calls    */
     bool is_dir;
     uint32_t size;
 } browser_entry_t;
@@ -67,32 +70,13 @@ typedef struct {
  * find
  * -------------------------------------------------------------------------- */
 
-static bool glob_match_star(const char *pattern, const char *str) {
-    const char *star_pat = NULL;
-    const char *star_str = NULL;
-
-    while (1) {
-        if (*pattern == '*') { pattern++; star_pat = pattern; star_str = str; continue; }
-        if (*pattern == '\0') {
-            if (*str == '\0') return true;
-            if (!star_pat) return false;
-            if (*star_str == '\0') return false;
-            star_str++; str = star_str; pattern = star_pat; continue;
-        }
-        if (*str != '\0' && *pattern == *str) { pattern++; str++; continue; }
-        if (!star_pat) return false;
-        if (*star_str == '\0') return false;
-        star_str++; str = star_str; pattern = star_pat;
-    }
-}
-
 static void app_find_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
     (void)size;
     find_ctx_t *ctx = (find_ctx_t *)opaque;
     if (!ctx || !name || !*name) return;
     if (sys_interrupted()) return;
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
-    if (ctx->pattern && !glob_match_star(ctx->pattern, name)) return;
+    if (ctx->pattern && !glob_match(ctx->pattern, name, true)) return;
     if (ctx->type_filter == 1 && is_dir) return;
     if (ctx->type_filter == 2 && !is_dir) return;
 
@@ -118,29 +102,43 @@ void app_find(const char *arg) {
     const char *pattern = NULL;
     const char *s = next_token(arg, tok1, sizeof tok1);
 
-    root[0] = '\0'; tok2[0] = '\0'; tok3[0] = '\0';
+    root[0] = '\0';
+    tok2[0] = '\0';
+    tok3[0] = '\0';
 
     if (!*tok1) {
         copy_cstr(root, sizeof root, _sys_cwd);
     } else if (strcmp(tok1, "-name") == 0) {
         s = next_token(s, tok2, sizeof tok2);
-        if (!*tok2) { print_line("usage: find [PATH] [-name PATTERN]"); return; }
+        if (!*tok2) {
+            print_line("usage: find [PATH] [-name PATTERN]");
+            return;
+        }
         pattern = tok2;
         copy_cstr(root, sizeof root, _sys_cwd);
     } else {
         app_make_abs(tok1, root, sizeof root);
         s = next_token(s, tok2, sizeof tok2);
         if (*tok2) {
-            if (strcmp(tok2, "-name") != 0) { print_line("usage: find [PATH] [-name PATTERN]"); return; }
+            if (strcmp(tok2, "-name") != 0) {
+                print_line("usage: find [PATH] [-name PATTERN]");
+                return;
+            }
             s = next_token(s, tok3, sizeof tok3);
-            if (!*tok3) { print_line("usage: find [PATH] [-name PATTERN]"); return; }
+            if (!*tok3) {
+                print_line("usage: find [PATH] [-name PATTERN]");
+                return;
+            }
             pattern = tok3;
         }
     }
 
-    if (fat_is_dir(root) != FAT_OK) { print_line("find: path is not a directory"); return; }
+    if (fat_is_dir(root) != FAT_OK) {
+        print_line("find: path is not a directory");
+        return;
+    }
 
-    find_ctx_t ctx = { .pattern = pattern, .count = 0, .type_filter = 0 };
+    find_ctx_t ctx = {.pattern = pattern, .count = 0, .type_filter = 0};
     copy_cstr(ctx.root, sizeof ctx.root, root);
 
     {
@@ -152,14 +150,14 @@ void app_find(const char *arg) {
             if (strcmp(tok, "-type") == 0) {
                 scan = next_token(scan, tflag, sizeof tflag);
                 if (tflag[0] == 'f') ctx.type_filter = 1;
-                else if (tflag[0] == 'd') ctx.type_filter = 2;
+                else if (tflag[0] == 'd')
+                    ctx.type_filter = 2;
                 break;
             }
         }
     }
 
-    if (fat_ls(root, app_find_cb, &ctx) != FAT_OK)
-        print_line("find: unable to list directory");
+    if (fat_ls(root, app_find_cb, &ctx) != FAT_OK) print_line("find: unable to list directory");
 }
 
 /* --------------------------------------------------------------------------
@@ -179,7 +177,7 @@ typedef struct {
 typedef struct {
     char name[CP_BATCH_MAX][13];
     bool is_dir[CP_BATCH_MAX];
-    int  n;
+    int n;
     bool overflow;
 } _cp_batch_t;
 
@@ -188,20 +186,33 @@ static void _cp_collect_cb(const char *name, uint32_t size, bool is_dir, void *c
     _cp_batch_t *b = (_cp_batch_t *)ctx;
     if (sys_interrupted()) return;
     if (!name || !*name || !strcmp(name, ".") || !strcmp(name, "..")) return;
-    if (b->n >= CP_BATCH_MAX) { b->overflow = true; return; }
-    strncpy(b->name[b->n], name, 12); b->name[b->n][12] = '\0';
+    if (b->n >= CP_BATCH_MAX) {
+        b->overflow = true;
+        return;
+    }
+    strncpy(b->name[b->n], name, 12);
+    b->name[b->n][12] = '\0';
     b->is_dir[b->n] = is_dir;
     b->n++;
 }
 
 static void cp_recurse(const char *src_dir, const char *dst_dir, _cp_dir_ctx_t *cpctx) {
-    if (sys_interrupted()) { cpctx->err = true; return; }
-    _cp_batch_t batch = { .n = 0, .overflow = false };
-    if (fat_ls(src_dir, _cp_collect_cb, &batch) != FAT_OK) { cpctx->err = true; return; }
+    if (sys_interrupted()) {
+        cpctx->err = true;
+        return;
+    }
+    _cp_batch_t batch = {.n = 0, .overflow = false};
+    if (fat_ls(src_dir, _cp_collect_cb, &batch) != FAT_OK) {
+        cpctx->err = true;
+        return;
+    }
     if (batch.overflow) cpctx->err = true;
 
     for (int i = 0; i < batch.n; i++) {
-        if (sys_interrupted()) { cpctx->err = true; return; }
+        if (sys_interrupted()) {
+            cpctx->err = true;
+            return;
+        }
         char fsrc[APP_TOKEN_MAX], fdst[APP_TOKEN_MAX];
         snprintf(fsrc, sizeof fsrc, "%s/%s", src_dir, batch.name[i]);
         snprintf(fdst, sizeof fdst, "%s/%s", dst_dir, batch.name[i]);
@@ -216,11 +227,18 @@ static void cp_recurse(const char *src_dir, const char *dst_dir, _cp_dir_ctx_t *
         } else {
             uint8_t buf[APP_READ_MAX];
             fat_file_t f;
-            if (fat_open(fsrc, &f) != FAT_OK) { cpctx->err = true; continue; }
+            if (fat_open(fsrc, &f) != FAT_OK) {
+                cpctx->err = true;
+                continue;
+            }
             int32_t rd = fat_read(&f, buf, sizeof buf);
-            if (rd < 0) { cpctx->err = true; continue; }
+            if (rd < 0) {
+                cpctx->err = true;
+                continue;
+            }
             if (fat_create(fdst, buf, (uint32_t)rd) == FAT_OK) cpctx->count++;
-            else cpctx->err = true;
+            else
+                cpctx->err = true;
         }
     }
 }
@@ -230,26 +248,34 @@ void app_cp(const char *arg) {
     const char *s = next_token(arg, src, sizeof src);
     next_token(s, dst, sizeof dst);
 
-    if (!*src || !*dst) { print_line("usage: cp SRC DST"); return; }
+    if (!*src || !*dst) {
+        print_line("usage: cp SRC DST");
+        return;
+    }
 
     char abs_src[APP_TOKEN_MAX], abs_dst[APP_TOKEN_MAX];
     app_make_abs(src, abs_src, sizeof abs_src);
     app_make_abs(dst, abs_dst, sizeof abs_dst);
 
-    if (strcmp(abs_src, abs_dst) == 0) { print_line("cp: source and destination are the same"); return; }
+    if (strcmp(abs_src, abs_dst) == 0) {
+        print_line("cp: source and destination are the same");
+        return;
+    }
 
     if (fat_is_dir(abs_src) == FAT_OK) {
         if (fat_mkdir(abs_dst) != FAT_OK && fat_is_dir(abs_dst) != FAT_OK) {
-            print_line("cp: cannot create destination directory"); return;
+            print_line("cp: cannot create destination directory");
+            return;
         }
         static _cp_dir_ctx_t cpctx;
         copy_cstr(cpctx.src, sizeof cpctx.src, abs_src);
         copy_cstr(cpctx.dst, sizeof cpctx.dst, abs_dst);
-        cpctx.count = 0; cpctx.err = false;
+        cpctx.count = 0;
+        cpctx.err = false;
         cp_recurse(abs_src, abs_dst, &cpctx);
         char out[64];
-        snprintf(out, sizeof out, "copied %d entries%s",
-                 cpctx.count, cpctx.err ? " (with errors)" : "");
+        snprintf(out, sizeof out, "copied %d entries%s", cpctx.count,
+                 cpctx.err ? " (with errors)" : "");
         print_line(out);
         return;
     }
@@ -257,7 +283,10 @@ void app_cp(const char *arg) {
     uint8_t buf[APP_READ_MAX];
     uint32_t n = 0;
     if (load_file_bytes(src, buf, sizeof buf, &n, "cp") < 0) return;
-    if (sys_fwrite(dst, buf, n) < 0) { print_line("cp: write failed"); return; }
+    if (sys_fwrite(dst, buf, n) < 0) {
+        print_line("cp: write failed");
+        return;
+    }
 
     char out[64];
     snprintf(out, sizeof out, "copied %lu bytes", (unsigned long)n);
@@ -269,20 +298,35 @@ void app_mv(const char *arg) {
     const char *s = next_token(arg, src, sizeof src);
     next_token(s, dst, sizeof dst);
 
-    if (!*src || !*dst) { print_line("usage: mv SRC DST"); return; }
+    if (!*src || !*dst) {
+        print_line("usage: mv SRC DST");
+        return;
+    }
 
     char abs_src[APP_TOKEN_MAX], abs_dst[APP_TOKEN_MAX];
     app_make_abs(src, abs_src, sizeof abs_src);
     app_make_abs(dst, abs_dst, sizeof abs_dst);
 
-    if (strcmp(abs_src, abs_dst) == 0) { print_line("mv: source and destination are the same"); return; }
-    if (fat_is_dir(abs_src) == FAT_OK) { print_line("mv: directory move not supported yet"); return; }
+    if (strcmp(abs_src, abs_dst) == 0) {
+        print_line("mv: source and destination are the same");
+        return;
+    }
+    if (fat_is_dir(abs_src) == FAT_OK) {
+        print_line("mv: directory move not supported yet");
+        return;
+    }
 
     uint8_t buf[APP_READ_MAX];
     uint32_t n = 0;
     if (load_file_bytes(src, buf, sizeof buf, &n, "mv") < 0) return;
-    if (sys_fwrite(dst, buf, n) < 0) { print_line("mv: write failed"); return; }
-    if (sys_unlink(src) < 0) { print_line("mv: destination written but source removal failed"); return; }
+    if (sys_fwrite(dst, buf, n) < 0) {
+        print_line("mv: write failed");
+        return;
+    }
+    if (sys_unlink(src) < 0) {
+        print_line("mv: destination written but source removal failed");
+        return;
+    }
 
     char out[64];
     snprintf(out, sizeof out, "moved %lu bytes", (unsigned long)n);
@@ -304,7 +348,10 @@ static void app_stat_dir_cb(const char *name, uint32_t size, bool is_dir, void *
 void app_stat(const char *arg) {
     char path[APP_TOKEN_MAX];
     next_token(arg, path, sizeof path);
-    if (!*path) { print_line("usage: stat PATH"); return; }
+    if (!*path) {
+        print_line("usage: stat PATH");
+        return;
+    }
 
     char abs[APP_TOKEN_MAX];
     app_make_abs(path, abs, sizeof abs);
@@ -313,20 +360,21 @@ void app_stat(const char *arg) {
         dir_stat_t st = {0};
         fat_ls(abs, app_stat_dir_cb, &st);
         char out[160];
-        snprintf(out, sizeof out,
-                 "path: %.96s\ntype: directory\nentries: %d\nfile-bytes: %lu",
-                 abs, st.count, (unsigned long)st.total_size);
+        snprintf(out, sizeof out, "path: %.96s\ntype: directory\nentries: %d\nfile-bytes: %lu", abs,
+                 st.count, (unsigned long)st.total_size);
         print_line(out);
         return;
     }
 
     fat_file_t f;
-    if (fat_open(abs, &f) != FAT_OK) { print_line("stat: not found"); return; }
+    if (fat_open(abs, &f) != FAT_OK) {
+        print_line("stat: not found");
+        return;
+    }
 
     char out[160];
-    snprintf(out, sizeof out,
-             "path: %.96s\ntype: file\nsize: %lu bytes\ncluster: %lu",
-             abs, (unsigned long)f.size, (unsigned long)f.first_cluster);
+    snprintf(out, sizeof out, "path: %.96s\ntype: file\nsize: %lu bytes\ncluster: %lu", abs,
+             (unsigned long)f.size, (unsigned long)f.first_cluster);
     print_line(out);
 }
 
@@ -345,11 +393,12 @@ static void app_tree_cb(const char *name, uint32_t size, bool is_dir, void *opaq
     int pos = 0;
     int indent = ctx->depth * 2;
     if (indent > 48) indent = 48;
-    while (pos < indent && pos + 1 < (int)sizeof line) line[pos++] = ' ';
-    pos += snprintf(line + pos, sizeof line - (size_t)pos, "%s%s",
-                    is_dir ? "|- " : "- ", name);
+    while (pos < indent && pos + 1 < (int)sizeof line)
+        line[pos++] = ' ';
+    pos += snprintf(line + pos, sizeof line - (size_t)pos, "%s%s", is_dir ? "|- " : "- ", name);
     if (is_dir) pos += snprintf(line + pos, sizeof line - (size_t)pos, "/");
-    else        pos += snprintf(line + pos, sizeof line - (size_t)pos, " (%lu)", (unsigned long)size);
+    else
+        pos += snprintf(line + pos, sizeof line - (size_t)pos, " (%lu)", (unsigned long)size);
     if (pos < 0) return;
     line[sizeof line - 1] = '\0';
     print_line(line);
@@ -383,7 +432,8 @@ void app_tree(const char *arg) {
             s = next_token(s, tok2, sizeof tok2);
             long depth = strtol(tok2, &endptr, 10);
             if (!*tok2 || endptr == tok2 || depth < 1) {
-                print_line("usage: tree [-L DEPTH] [PATH]"); return;
+                print_line("usage: tree [-L DEPTH] [PATH]");
+                return;
             }
             max_depth = (int)depth;
             next_token(s, path, sizeof path);
@@ -401,13 +451,16 @@ void app_tree(const char *arg) {
         print_line(abs);
 
         tree_walk_t ctx = {
-            .depth = 1, .max_depth = max_depth,
-            .file_count = &files, .dir_count = &dirs,
+            .depth = 1,
+            .max_depth = max_depth,
+            .file_count = &files,
+            .dir_count = &dirs,
         };
         copy_cstr(ctx.path, sizeof ctx.path, abs);
 
         if (fat_ls(abs, app_tree_cb, &ctx) != FAT_OK) {
-            print_line("tree: unable to list directory"); return;
+            print_line("tree: unable to list directory");
+            return;
         }
         char out[96];
         snprintf(out, sizeof out, "%d directories, %d files", dirs, files);
@@ -416,7 +469,10 @@ void app_tree(const char *arg) {
     }
 
     fat_file_t f;
-    if (fat_open(abs, &f) != FAT_OK) { print_line("tree: path not found"); return; }
+    if (fat_open(abs, &f) != FAT_OK) {
+        print_line("tree: path not found");
+        return;
+    }
 
     char out[160];
     snprintf(out, sizeof out, "%.120s (%lu bytes)", abs, (unsigned long)f.size);
@@ -488,14 +544,14 @@ static void app_du_list_cb(const char *name, uint32_t size, bool is_dir, void *o
         app_join_path(ctx->path, name, child, sizeof child);
         bytes = app_du_path(child, &nested);
         files = nested.files;
-        dirs  = nested.dirs + 1;
+        dirs = nested.dirs + 1;
     } else {
         files = 1;
     }
 
     ctx->stat.total_bytes += bytes;
     ctx->stat.files += files;
-    ctx->stat.dirs  += dirs;
+    ctx->stat.dirs += dirs;
 
     char line[160];
     char sz[16];
@@ -518,19 +574,23 @@ void app_du(const char *arg) {
 
         print_line("bytes     name");
         if (fat_ls(abs, app_du_list_cb, &ctx) != FAT_OK) {
-            print_line("du: unable to list directory"); return;
+            print_line("du: unable to list directory");
+            return;
         }
         char out[128];
         char sz[16];
         app_format_size((uint64_t)ctx.stat.total_bytes, sz, sizeof sz);
-        snprintf(out, sizeof out, "total: %s | files: %d | dirs: %d",
-                 sz, ctx.stat.files, ctx.stat.dirs + 1);
+        snprintf(out, sizeof out, "total: %s | files: %d | dirs: %d", sz, ctx.stat.files,
+                 ctx.stat.dirs + 1);
         print_line(out);
         return;
     }
 
     fat_file_t f;
-    if (fat_open(abs, &f) != FAT_OK) { print_line("du: path not found"); return; }
+    if (fat_open(abs, &f) != FAT_OK) {
+        print_line("du: path not found");
+        return;
+    }
 
     char out[160];
     char sz[16];
@@ -542,7 +602,8 @@ void app_du(const char *arg) {
 static void app_format_size(uint64_t bytes, char *out, size_t out_sz) {
     if (bytes >= (1024ULL * 1024ULL * 1024ULL)) {
         unsigned long long w = bytes / (1024ULL * 1024ULL * 1024ULL);
-        unsigned long long f = (bytes % (1024ULL * 1024ULL * 1024ULL)) * 10ULL / (1024ULL * 1024ULL * 1024ULL);
+        unsigned long long f =
+            (bytes % (1024ULL * 1024ULL * 1024ULL)) * 10ULL / (1024ULL * 1024ULL * 1024ULL);
         snprintf(out, out_sz, "%llu.%llu GB", w, f);
     } else if (bytes >= (1024ULL * 1024ULL)) {
         unsigned long long w = bytes / (1024ULL * 1024ULL);
@@ -561,27 +622,32 @@ void app_df(const char *arg) {
     (void)arg;
     fat_usage_t usage;
     fat_result_t r = fat_get_usage(&usage);
-    if (r != FAT_OK) { print_line("df: filesystem not mounted"); return; }
+    if (r != FAT_OK) {
+        print_line("df: filesystem not mounted");
+        return;
+    }
 
     char total[32], used[32], free_sp[32], out[160];
     app_format_size(usage.total_bytes, total, sizeof total);
     app_format_size(usage.used_bytes, used, sizeof used);
     app_format_size(usage.free_bytes, free_sp, sizeof free_sp);
 
-    uint32_t used_pct = usage.total_bytes
-        ? (uint32_t)((usage.used_bytes * 100ULL) / usage.total_bytes) : 0;
+    uint32_t used_pct =
+        usage.total_bytes ? (uint32_t)((usage.used_bytes * 100ULL) / usage.total_bytes) : 0;
 
     snprintf(out, sizeof out, "filesystem: FAT%s", usage.fat32 ? "32" : "16");
     print_line(out);
     snprintf(out, sizeof out, "cluster size: %lu bytes",
              (unsigned long)(usage.bytes_per_sector * usage.sectors_per_cluster));
     print_line(out);
-    snprintf(out, sizeof out, "total: %s", total); print_line(out);
-    snprintf(out, sizeof out, "used:  %s (%lu%%)", used, (unsigned long)used_pct); print_line(out);
-    snprintf(out, sizeof out, "free:  %s", free_sp); print_line(out);
+    snprintf(out, sizeof out, "total: %s", total);
+    print_line(out);
+    snprintf(out, sizeof out, "used:  %s (%lu%%)", used, (unsigned long)used_pct);
+    print_line(out);
+    snprintf(out, sizeof out, "free:  %s", free_sp);
+    print_line(out);
     snprintf(out, sizeof out, "clusters: %lu total, %lu used, %lu free",
-             (unsigned long)usage.cluster_count,
-             (unsigned long)usage.used_clusters,
+             (unsigned long)usage.cluster_count, (unsigned long)usage.used_clusters,
              (unsigned long)usage.free_clusters);
     print_line(out);
 }
@@ -594,22 +660,28 @@ static void browser_parent_dir(const char *cwd, char *out, size_t out_sz) {
     strncpy(out, cwd, out_sz - 1);
     out[out_sz - 1] = '\0';
     size_t len = strlen(out);
-    while (len > 1 && out[len - 1] == '/') out[--len] = '\0';
-    while (len > 1 && out[len - 1] != '/') out[--len] = '\0';
+    while (len > 1 && out[len - 1] == '/')
+        out[--len] = '\0';
+    while (len > 1 && out[len - 1] != '/')
+        out[--len] = '\0';
     if (len == 0) strcpy(out, "/");
-    else if (len > 1 && out[len - 1] == '/') out[len - 1] = '\0';
+    else if (len > 1 && out[len - 1] == '/')
+        out[len - 1] = '\0';
     if (out[0] == '\0') strcpy(out, "/");
 }
 
-static void browser_collect_cb(const char *name, uint32_t size, bool is_dir, void *opaque) {
+static void browser_collect_cb(const char *short_name, const char *long_name, uint32_t size,
+                               bool is_dir, void *opaque) {
     browser_state_t *br = (browser_state_t *)opaque;
-    if (!br || !name || !*name) return;
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
+    if (!br || !short_name || !*short_name) return;
+    if (strcmp(short_name, ".") == 0 || strcmp(short_name, "..") == 0) return;
     if (br->count >= BROWSE_ITEMS_MAX) return;
 
-    copy_cstr(br->items[br->count].name, sizeof br->items[br->count].name, name);
-    br->items[br->count].is_dir = is_dir;
-    br->items[br->count].size   = size;
+    browser_entry_t *e = &br->items[br->count];
+    copy_cstr(e->name, sizeof e->name, long_name ? long_name : short_name);
+    copy_cstr(e->short_name, sizeof e->short_name, short_name);
+    e->is_dir = is_dir;
+    e->size = size;
     br->count++;
 }
 
@@ -632,40 +704,63 @@ static void browser_sort(browser_state_t *br) {
 
 static void browser_refresh(browser_state_t *br) {
     br->count = 0;
-    if (fat_ls(br->cwd, browser_collect_cb, br) == FAT_OK) browser_sort(br);
+    if (fat_ls_ex(br->cwd, browser_collect_cb, br) == FAT_OK) browser_sort(br);
+}
+
+static void _browser_size(uint32_t bytes, char *out, size_t out_sz) {
+    if (bytes < 1024) snprintf(out, out_sz, "%lu B", (unsigned long)bytes);
+    else if (bytes < 1024U * 1024U) snprintf(out, out_sz, "%lu K", (unsigned long)(bytes / 1024));
+    else snprintf(out, out_sz, "%lu M", (unsigned long)(bytes / (1024U * 1024U)));
 }
 
 static void browser_render(browser_state_t *br, int sel) {
-    sys_clear();
-    sys_print("Mellivora browser\n");
-    sys_print(br->cwd);
-    sys_print("\n\n");
-    sys_print("j/k move, Enter open, e edit, x hex, n new file, m mkdir, d delete, u up, r refresh, q quit\n\n");
+    ui_clear();
+    ui_header("Files", br->cwd);
 
-    if (strcmp(br->cwd, "/") != 0)
-        sys_print(sel == 0 ? "> [DIR] ..\n" : "  [DIR] ..\n");
-
-    int base       = (strcmp(br->cwd, "/") != 0) ? 1 : 0;
+    const int top_row = 1;
+    const int bottom_row = LCD_ROWS - 3;
+    const int visible = bottom_row - top_row + 1;
+    int base = (strcmp(br->cwd, "/") != 0) ? 1 : 0;
+    int total = br->count + base;
     int page_start = 0;
-    int visible    = 12;
     if (sel >= visible) page_start = sel - visible + 1;
 
     for (int disp = 0; disp < visible; disp++) {
         int row = page_start + disp;
-        if (row == 0 && base == 1) continue;
-        int idx = row - base;
-        if (idx < 0 || idx >= br->count) continue;
+        int y = top_row + disp;
+        char line[LCD_COLS + 1];
+        memset(line, ' ', LCD_COLS);
+        line[LCD_COLS] = '\0';
 
-        char line[80];
-        snprintf(line, sizeof line, "%c %s %-20s %6lu\n",
-                 (row == sel) ? '>' : ' ',
-                 br->items[idx].is_dir ? "[DIR]" : "[FIL]",
-                 br->items[idx].name,
-                 (unsigned long)br->items[idx].size);
-        sys_print(line);
+        if (row == 0 && base == 1) {
+            snprintf(line, sizeof line, "  [..]  parent directory");
+        } else {
+            int idx = row - base;
+            if (idx < 0 || idx >= br->count) continue;
+
+            char sz[16];
+            _browser_size(br->items[idx].size, sz, sizeof sz);
+            snprintf(line, sizeof line, "  %-5s %-22.22s %7.7s",
+                     br->items[idx].is_dir ? "[DIR]" : "",
+                     br->items[idx].name,
+                     br->items[idx].is_dir ? "" : sz);
+        }
+
+        bool is_sel = (row == sel);
+        uint32_t fg = is_sel ? ui_color(UI_SELECT_TEXT) : ui_color(UI_TEXT);
+        uint32_t bg = is_sel ? ui_color(UI_SELECT_BG) : ui_bg();
+        lcd_lock();
+        for (int c = 0; c < LCD_COLS; c++)
+            lcd_draw_cell(c, y, line[c], fg, bg);
+        lcd_unlock();
     }
 
-    if (br->count == 0) sys_print("(empty directory)\n");
+    if (br->count == 0 && base == 0) {
+        ui_print(UI_MUTED, "  (empty directory)");
+    }
+
+    ui_footer("j/k move  enter open  e edit  x hex  d del  q quit");
+    (void)total;
 }
 
 void app_browse(const char *arg) {
@@ -673,16 +768,21 @@ void app_browse(const char *arg) {
     char path[APP_TOKEN_MAX];
     next_token(arg, path, sizeof path);
     if (*path) app_make_abs(path, br.cwd, sizeof br.cwd);
-    else copy_cstr(br.cwd, sizeof br.cwd, _sys_cwd);
+    else
+        copy_cstr(br.cwd, sizeof br.cwd, _sys_cwd);
 
-    if (fat_is_dir(br.cwd) != FAT_OK) { print_line("browse: path is not a directory"); return; }
+    if (fat_is_dir(br.cwd) != FAT_OK) {
+        print_line("browse: path is not a directory");
+        return;
+    }
 
+    ui_set_fullscreen(true);
     copy_cstr(_sys_cwd, sizeof _sys_cwd, br.cwd);
     browser_refresh(&br);
 
     int sel = 0;
     while (1) {
-        int base  = (strcmp(br.cwd, "/") != 0) ? 1 : 0;
+        int base = (strcmp(br.cwd, "/") != 0) ? 1 : 0;
         int total = br.count + base;
         if (sel < 0) sel = 0;
         if (sel >= total && total > 0) sel = total - 1;
@@ -691,15 +791,26 @@ void app_browse(const char *arg) {
         int ch = sys_getchar();
         if (ch == 'q' || ch == 'Q' || ch == 0x03) break;
 
-        if (ch == 'j' || ch == 's' || ch == 0x0E) { if (sel + 1 < total) sel++; continue; }
-        if (ch == 'k' || ch == 'w' || ch == 0x10) { if (sel > 0) sel--; continue; }
-        if (ch == 'r' || ch == 'R') { browser_refresh(&br); continue; }
+        if (ch == 'j' || ch == 's' || ch == 0x0E) {
+            if (sel + 1 < total) sel++;
+            continue;
+        }
+        if (ch == 'k' || ch == 'w' || ch == 0x10) {
+            if (sel > 0) sel--;
+            continue;
+        }
+        if (ch == 'r' || ch == 'R') {
+            browser_refresh(&br);
+            continue;
+        }
         if (ch == 'u' || ch == 'U') {
             char parent[APP_TOKEN_MAX];
             browser_parent_dir(br.cwd, parent, sizeof parent);
             copy_cstr(br.cwd, sizeof br.cwd, parent);
             copy_cstr(_sys_cwd, sizeof _sys_cwd, br.cwd);
-            browser_refresh(&br); sel = 0; continue;
+            browser_refresh(&br);
+            sel = 0;
+            continue;
         }
 
         if (ch == 'n' || ch == 'N') {
@@ -711,7 +822,10 @@ void app_browse(const char *arg) {
                     strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
                     _sys_cwd[sizeof _sys_cwd - 1] = '\0';
                     if (sys_fwrite(name, "", 0) < 0) print_line("browse: create failed");
-                    else { browser_refresh(&br); sel = total > 0 ? total - 1 : 0; }
+                    else {
+                        browser_refresh(&br);
+                        sel = total > 0 ? total - 1 : 0;
+                    }
                 }
             }
             continue;
@@ -726,7 +840,8 @@ void app_browse(const char *arg) {
                     strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
                     _sys_cwd[sizeof _sys_cwd - 1] = '\0';
                     if (sys_mkdir(name) < 0) print_line("browse: mkdir failed");
-                    else browser_refresh(&br);
+                    else
+                        browser_refresh(&br);
                 }
             }
             continue;
@@ -743,8 +858,11 @@ void app_browse(const char *arg) {
                 if (ok == 'y' || ok == 'Y') {
                     strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
                     _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-                    if (sys_delete(ent->name) < 0) print_line("browse: delete failed");
-                    else { browser_refresh(&br); if (sel > 0 && sel >= br.count + base) sel--; }
+                    if (sys_delete(ent->short_name) < 0) print_line("browse: delete failed");
+                    else {
+                        browser_refresh(&br);
+                        if (sel > 0 && sel >= br.count + base) sel--;
+                    }
                 }
             }
             continue;
@@ -757,9 +875,10 @@ void app_browse(const char *arg) {
                     char abs[APP_TOKEN_MAX];
                     strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
                     _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-                    app_make_abs(ent->name, abs, sizeof abs);
+                    app_make_abs(ent->short_name, abs, sizeof abs);
                     if (ch == 'x' || ch == 'X') app_hexedit(abs);
-                    else app_edit(abs);
+                    else
+                        app_edit(abs);
                 }
             }
             continue;
@@ -773,7 +892,9 @@ void app_browse(const char *arg) {
                 br.cwd[sizeof br.cwd - 1] = '\0';
                 strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
                 _sys_cwd[sizeof _sys_cwd - 1] = '\0';
-                browser_refresh(&br); sel = 0; continue;
+                browser_refresh(&br);
+                sel = 0;
+                continue;
             }
 
             if (sel < base) continue;
@@ -782,14 +903,15 @@ void app_browse(const char *arg) {
             _sys_cwd[sizeof _sys_cwd - 1] = '\0';
 
             if (ent->is_dir) {
-                if (sys_chdir(ent->name) == 0) {
+                if (sys_chdir(ent->short_name) == 0) {
                     strncpy(br.cwd, _sys_cwd, sizeof br.cwd - 1);
                     br.cwd[sizeof br.cwd - 1] = '\0';
-                    browser_refresh(&br); sel = 0;
+                    browser_refresh(&br);
+                    sel = 0;
                 }
             } else {
                 char abs[APP_TOKEN_MAX];
-                app_make_abs(ent->name, abs, sizeof abs);
+                app_make_abs(ent->short_name, abs, sizeof abs);
                 app_pager(abs);
             }
         }
@@ -797,5 +919,6 @@ void app_browse(const char *arg) {
 
     strncpy(_sys_cwd, br.cwd, sizeof _sys_cwd - 1);
     _sys_cwd[sizeof _sys_cwd - 1] = '\0';
+    ui_set_fullscreen(false);
     sys_clear();
 }

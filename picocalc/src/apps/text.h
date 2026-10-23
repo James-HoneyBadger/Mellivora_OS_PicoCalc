@@ -10,5 +10,8 @@ void app_tail(const char *arg);
 void app_wc(const char *arg);
 void app_cut(const char *arg);
 void app_uniq(const char *arg);
+void app_tr(const char *arg);
+void app_sed(const char *arg);
+void app_md(const char *arg);
 
 #endif

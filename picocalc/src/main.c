@@ -34,9 +34,16 @@
 #include "sd.h"
 #include "fat.h"
 #include "syscall.h"
+#include "ui/ui.h"
 #include "apps.h"
 #include "apps/app_shared.h"
+#include "core/expr.h"
+#include "core/glob.h"
+#include "core/path_util.h"
+#include "core/shell_parse.h"
 #include "hal/hal.h"
+#include "pipe.h"
+#include "shell.h"
 #ifdef PICO_CYW43_SUPPORTED
 #include "net.h"
 #include "netapps.h"
@@ -50,7 +57,7 @@ static int _last_exit = 0;
 
 #define LINE_BUF        256
 #define CWD_MAX         256
-#ifdef PICO_RP2350A
+#if defined(PICO_RP2350A) || defined(PICO_RP2350)
 #define HIST_ENTRIES    64
 #define APP_REDIR_MAX   8192
 #else
@@ -104,10 +111,7 @@ static bool   _redir_active;
 static void   redir_char(char c);
 
 static void out_char(char c) {
-    if (_redir_active) {
-        redir_char(c);
-        return;
-    }
+    if (sys_output_capture_char(c)) return;
     if (!_lcd_ready) {
         putchar_raw(c);
         return;
@@ -118,6 +122,14 @@ static void out_char(char c) {
 static void out_str(const char *s) {
     while (*s) out_char(*s++);
 }
+
+static void out_role(ui_role_t role, const char *s) {
+    uint32_t saved = lcd_get_fg();
+    lcd_set_fg(ui_color(role));
+    out_str(s);
+    lcd_set_fg(saved);
+}
+
 
 static void out_fmt(const char *fmt, ...) {
     char buf[512];
@@ -185,52 +197,14 @@ static bool var_unset(const char *name) {
     return false;
 }
 
-/* In-place expansion of $NAME and ${NAME} in a buffer. */
+static const char *var_lookup_cb(void *ctx, const char *name) {
+    (void)ctx;
+    return var_lookup(name);
+}
+
+/* In-place expansion of $NAME, ${NAME}, and $? in a buffer. */
 static void var_expand(char *line, size_t line_sz) {
-    char out[LINE_BUF];
-    size_t oi = 0;
-    bool in_squote = false;
-    for (size_t i = 0; line[i] && oi + 1 < sizeof out; i++) {
-        char c = line[i];
-        if (c == '\'') { in_squote = !in_squote; out[oi++] = c; continue; }
-        if (in_squote || c != '$') { out[oi++] = c; continue; }
-        /* $NAME or ${NAME} */
-        size_t j = i + 1;
-        bool braced = false;
-        if (line[j] == '{') { braced = true; j++; }
-        char name[ALIAS_NAME_SZ]; size_t ni = 0;
-        /* Special single-char tokens: $? */
-        if (!braced && line[j] == '?') {
-            name[0] = '?'; name[1] = '\0'; ni = 1; j++;
-        } else {
-            while (line[j] && ni + 1 < sizeof name) {
-                char nc = line[j];
-                if (braced ? (nc == '}') : !(isalnum((unsigned char)nc) || nc == '_')) break;
-                name[ni++] = nc; j++;
-            }
-        }
-        name[ni] = '\0';
-        if (braced && line[j] == '}') j++;
-        if (ni == 0) { out[oi++] = c; continue; }   /* lone $ */
-        /* $? resolves to last exit status */
-        char status_str[8];
-        const char *val;
-        if (name[0] == '?' && name[1] == '\0') {
-            snprintf(status_str, sizeof status_str, "%d", _last_exit);
-            val = status_str;
-        } else {
-            val = var_lookup(name);
-        }
-        if (val) {
-            size_t vl = strlen(val);
-            if (oi + vl >= sizeof out) vl = sizeof out - 1 - oi;
-            memcpy(out + oi, val, vl);
-            oi += vl;
-        }
-        i = j - 1;
-    }
-    out[oi] = '\0';
-    copy_cstr(line, line_sz, out);
+    shell_expand_vars(line, line_sz, var_lookup_cb, NULL, _last_exit);
 }
 
 /*
@@ -238,83 +212,103 @@ static void var_expand(char *line, size_t line_sz) {
  * Result is stored in out (size CWD_MAX).
  * Handles ".." components.
  */
-/* Maximum length of any single path component (FAT 8.3 needs 12, leave headroom). */
-#define PATH_COMP_MAX   64
-
 static void resolve_abs(const char *input, char *out) {
-    char tmp[CWD_MAX * 2];
+    path_canonicalize(_cwd, input, out, CWD_MAX);
+}
 
-    if (!input || input[0] == '\0') {
-        strncpy(out, _cwd, CWD_MAX - 1);
-        out[CWD_MAX - 1] = '\0';
-        return;
-    }
+static void prompt_append(char *buf, size_t cap, size_t *pos, const char *s) {
+    while (s && *s && *pos + 1 < cap) buf[(*pos)++] = *s++;
+}
 
-    if (input[0] == '/') {
-        /* Already absolute */
-        strncpy(tmp, input, sizeof tmp - 1);
-        tmp[sizeof tmp - 1] = '\0';
+static void prompt_time(char *out, size_t cap) {
+    if (sys_rtc_is_set()) {
+        int32_t secs = (int32_t)(sys_now_epoch_ms() / 1000);
+        int h = (secs / 3600) % 24;
+        int m = (secs / 60) % 60;
+        snprintf(out, cap, "%02d:%02d", h, m);
     } else {
-        /* Relative — prepend cwd */
-        if (strcmp(_cwd, "/") == 0)
-            snprintf(tmp, sizeof tmp, "/%s", input);
-        else
-            snprintf(tmp, sizeof tmp, "%s/%s", _cwd, input);
+        uint32_t secs = to_ms_since_boot(get_absolute_time()) / 1000;
+        snprintf(out, cap, "%lu:%02lu", (unsigned long)(secs / 3600),
+                 (unsigned long)((secs / 60) % 60));
     }
+}
 
-    /* Canonicalise: process each component. tmp is guaranteed to start with '/'
-       above, so the loop only ever encounters the slash branch. */
-    char canon[CWD_MAX];
-    char *p = tmp;
-    canon[0] = '\0';
+/* Render PROMPT with %c (cwd), %t (time), %b (battery), %w (WiFi), %% . */
+static void render_prompt(char *buf, size_t cap) {
+    const char *fmt = var_lookup("PROMPT");
+    if (!fmt || !*fmt) fmt = "%c";
 
-    while (*p == '/') {
-        /* Collapse multiple slashes */
-        while (*p == '/') p++;
+    size_t pos = 0;
+    for (const char *p = fmt; *p && pos + 1 < cap; p++) {
+        if (*p != '%') {
+            buf[pos++] = *p;
+            continue;
+        }
+        p++;
         if (*p == '\0') break;
 
-        /* Extract component into a small bounded buffer */
-        char comp[PATH_COMP_MAX];
-        int ci = 0;
-        while (*p && *p != '/') {
-            if (ci + 1 < (int)sizeof comp) comp[ci++] = *p;
-            p++;
-        }
-        comp[ci] = '\0';
-
-        if (strcmp(comp, ".") == 0) {
-            /* skip */
-        } else if (strcmp(comp, "..") == 0) {
-            /* Go up: remove last component. Stops at root — '..' from '/' is '/'. */
-            char *last = strrchr(canon, '/');
-            if (last) *last = '\0';
-        } else {
-            size_t clen = strlen(canon);
-            if (clen + 1 + strlen(comp) < CWD_MAX) {
-                canon[clen++] = '/';
-                const char *src = comp;
-                while (*src) canon[clen++] = *src++;
-                canon[clen] = '\0';
+        switch (*p) {
+            case 'c':
+                prompt_append(buf, cap, &pos, _cwd);
+                break;
+            case 't': {
+                char t[16];
+                prompt_time(t, sizeof t);
+                prompt_append(buf, cap, &pos, t);
+                break;
             }
-            /* If component would overflow, silently drop it — safer than truncating
-               part of a name and producing a different path. */
+            case 'b': {
+                int bat = kbd_battery_percent();
+                char t[12];
+                if (bat >= 0) snprintf(t, sizeof t, "%d%%", bat);
+                else copy_cstr(t, sizeof t, "?");
+                prompt_append(buf, cap, &pos, t);
+                break;
+            }
+            case 'w':
+#ifdef PICO_CYW43_SUPPORTED
+                prompt_append(buf, cap, &pos, net_is_connected() ? "W" : "-");
+#else
+                prompt_append(buf, cap, &pos, "-");
+#endif
+                break;
+            case '%':
+                buf[pos++] = '%';
+                break;
+            default:
+                if (pos + 2 < cap) {
+                    buf[pos++] = '%';
+                    buf[pos++] = *p;
+                }
+                break;
         }
     }
-
-    if (canon[0] == '\0') { canon[0] = '/'; canon[1] = '\0'; }
-
-    strncpy(out, canon, CWD_MAX - 1);
-    out[CWD_MAX - 1] = '\0';
+    buf[pos] = '\0';
 }
 
 static void out_prompt(void) {
-#ifndef PICO_RP2350A
+#if !defined(PICO_RP2350A) && !defined(PICO_RP2350)
     /* On Pico 1 (no core1), refresh status bar at each prompt */
     _draw_status_bar();
 #endif
+    char prompt[96];
+    render_prompt(prompt, sizeof prompt);
+
+    const char *fmt = var_lookup("PROMPT");
     uint32_t saved = lcd_get_fg();
-    lcd_set_fg(LCD_YELLOW);
-    out_fmt("PicoLair:%s> ", _cwd);
+    if (!fmt || !*fmt) {
+        if (_last_exit != 0) {
+            lcd_set_fg(ui_color(UI_ERROR));
+            out_str("! ");
+        }
+        lcd_set_fg(ui_color(UI_ACCENT));
+        out_str(*prompt ? prompt : "/");
+        lcd_set_fg(ui_color(UI_MUTED));
+        out_str(" > ");
+    } else {
+        lcd_set_fg(ui_color(UI_ACCENT));
+        out_str(prompt);
+    }
     lcd_set_fg(saved);
 }
 
@@ -349,7 +343,15 @@ static void cwd_restore(void) {
 }
 
 static void dispatch(char *line);
+static void dispatch_ex(char *line, bool record_history);
+static void dispatch_single(char *line);
+static void dispatch_single_no_glob(char *line);
 static void cmd_help(const char *arg);
+static void cmd_script(const char *arg);
+
+static void cmd_read(const char *arg);
+static void cmd_which(const char *arg);
+static void cmd_expr(const char *arg);
 
 /* Forward declarations for the command registry (defined in the tab-completion
    section further below, but used by cmd_help/_cmd_suggest earlier). */
@@ -851,28 +853,35 @@ static void cmd_help(const char *arg) {
 
     /* ---- Top-level overview ---- */
     if (!*topic) {
-        out_str("Mellivora OS " MELLIVORA_VERSION " — command overview\n");
-        out_str("Use  man TOPIC  for details on any command.\n\n");
+        out_role(UI_ACCENT, "Mellivora OS " MELLIVORA_VERSION);
+        out_str("  command overview\n");
+        out_role(UI_MUTED, "Use  man TOPIC  for details on any command.\n\n");
 
-        out_str("[system]  help man uname sysinfo uptime clear battery backlight\n");
+        out_role(UI_ACCENT, "[system]");
+        out_str("  help man uname sysinfo uptime clear battery backlight\n");
         out_str("          echo date reboot screenshot version lock sleep dmesg id\n\n");
 
-        out_str("[shell]   history alias unalias set unset env script\n\n");
+        out_role(UI_ACCENT, "[shell]");
+        out_str("   history alias unalias set unset env script read\n");
+        out_str("          which type expr\n\n");
 
-        out_str("[fs]      mount ls cd pwd cat touch write mkdir rm rename cp mv\n");
+        out_role(UI_ACCENT, "[fs]");
+        out_str("      mount ls cd pwd cat touch write mkdir rm rename cp mv\n");
         out_str("          stat tree du df edit hexedit browse sdinfo sdread\n\n");
 
-        out_str("[apps]    notes journal todo planner habits bookmarks\n");
+        out_role(UI_ACCENT, "[apps]");
+        out_str("    notes journal todo planner habits bookmarks\n");
         out_str("          calc basic tcc forth home dashboard sysmon samples\n");
-        out_str("          head tail grep sort wc cut rev find hexdump\n");
+        out_str("          head tail grep sort wc cut rev tr sed md find hexdump\n");
         out_str("          games snake tetris life piano mandelbrot paint sprite\n");
         out_str("          stopwatch pomodoro clock cal theme\n\n");
 
 #ifdef PICO_CYW43_SUPPORTED
-        out_str("[net]     wifi ping ifconfig ntp dns fetch wget weather irc telnet\n\n");
+        out_role(UI_ACCENT, "[net]");
+        out_str("     wifi ping ifconfig ntp dns fetch wget weather irc telnet\n\n");
 #endif
 
-        out_str("Keys: UP/DOWN=history  Tab=complete  Ctrl-U=clear  Ctrl-L=redraw\n");
+        out_role(UI_MUTED, "Keys: UP/DOWN=history  Tab=complete  Ctrl-U=clear  Ctrl-L=redraw\n");
         out_str("Tip:  append  | more  to long commands for paging.\n");
         return;
     }
@@ -883,7 +892,9 @@ static void cmd_help(const char *arg) {
         if (strcmp(c->group, topic) == 0) { found_group = true; break; }
     }
     if (found_group) {
-        out_fmt("[%s] commands:\n", topic);
+        out_role(UI_ACCENT, "[");
+        out_role(UI_ACCENT, topic);
+        out_str("] commands:\n");
         _help_print_group(topic);
         return;
     }
@@ -914,6 +925,9 @@ static void cmd_help(const char *arg) {
         out_str("  grep [-n] [-e] PATTERN <file>\n");
         out_str("  sort [-r] [-n] <file>     wc <file>    cut -dC -fN <file>\n");
         out_str("  rev <file>                hexdump/od <file>\n");
+        out_str("  tr [-d] SET1 [SET2] [FILE]   Translate or delete characters\n");
+        out_str("  sed s/OLD/NEW/[g] [FILE]    Literal substitution\n");
+        out_str("  md <FILE> / markdown        Render Markdown for the LCD\n");
         return;
     }
 
@@ -983,12 +997,19 @@ static void cmd_help(const char *arg) {
         out_str("  set NAME=VALUE         Set shell variable\n");
         out_str("  unset NAME             Remove variable\n");
         out_str("  env                    Show variables\n");
-        out_str("  script <file>          Run script file\n");
+        out_str("  read [-p TEXT] NAME... Read a line into variables\n");
+        out_str("  which / type CMD       Locate a command, alias, or file\n");
+        out_str("  expr EXPR              Evaluate an integer expression\n");
+        out_str("  script <file>          Run a script through the shell parser\n");
         out_str("  CMD > FILE             Redirect output\n");
         out_str("  CMD >> FILE            Append output\n");
-        out_str("  CMD ; CMD              Chain commands\n");
+        out_str("  CMD ; CMD              Chain commands (also && and ||)\n");
         out_str("  CMD | more             Page long output\n");
         out_str("  $NAME  ${NAME}         Variable expansion\n");
+        out_str("  $((EXPR))              Arithmetic expansion\n");
+        out_str("  *.TXT                  Wildcard expansion (one run per match)\n");
+        out_str("  PROMPT='%c> '          %c cwd, %t time, %b battery, %w WiFi\n");
+        out_str("  /PROFILE.CFG           Startup script for aliases and variables\n");
         return;
     }
 
@@ -1009,7 +1030,7 @@ static void cmd_uname(const char *arg) {
     bool all = (arg && (*arg == 'a' || strstr(arg, "-a")));
 #ifdef PICO_CYW43_SUPPORTED
     out_str("Mellivora OS v" MELLIVORA_VERSION " - PicoCalc target (RP2350 + CYW43 WiFi)\n");
-#elif defined(PICO_RP2350A)
+#elif defined(PICO_RP2350A) || defined(PICO_RP2350)
     out_str("Mellivora OS v" MELLIVORA_VERSION " - PicoCalc target (RP2350)\n");
 #else
     out_str("Mellivora OS v" MELLIVORA_VERSION " - PicoCalc target (RP2040)\n");
@@ -1158,7 +1179,7 @@ static void cmd_sysinfo(void) {
     out_str("  RAM:      520 KB SRAM\n");
     out_str("  Flash:    4 MB XIP\n");
     out_str("  WiFi:     CYW43439 802.11n 2.4 GHz\n");
-#elif defined(PICO_RP2350A)
+#elif defined(PICO_RP2350A) || defined(PICO_RP2350)
     out_str("  Platform: RP2350 (Pico 2)\n");
     out_str("  RAM:      520 KB SRAM\n");
     out_str("  Flash:    4 MB XIP\n");
@@ -1275,18 +1296,21 @@ static void _fmt_size(uint32_t bytes, char *out, size_t out_sz) {
     }
 }
 
-static void _ls_entry(const char *name, uint32_t size,
-                      bool is_dir, void *ctx) {
+static void _ls_entry_ex(const char *short_name, const char *long_name,
+                         uint32_t size, bool is_dir, void *ctx) {
     (void)ctx;
+    const char *name = long_name ? long_name : short_name;
     uint32_t saved_fg = lcd_get_fg();
     if (is_dir) {
-        lcd_set_fg(LCD_CYAN);
-        out_fmt("  %8s  %s/\n", "[DIR]", name);
+        lcd_set_fg(ui_color(UI_ACCENT));
+        out_fmt("  %s/\n", name);
     } else {
         char sz[16];
         _fmt_size(size, sz, sizeof sz);
-        lcd_set_fg(LCD_GREEN);
-        out_fmt("  %8s  %s\n", sz, name);
+        lcd_set_fg(ui_color(UI_MUTED));
+        out_fmt("  %8s  ", sz);
+        lcd_set_fg(ui_color(UI_TEXT));
+        out_fmt("%s\n", name);
     }
     lcd_set_fg(saved_fg);
 }
@@ -1297,7 +1321,7 @@ static void cmd_ls(const char *arg) {
     if (arg && *arg) resolve_abs(arg, abs);
     else             strncpy(abs, _cwd, CWD_MAX - 1);
     abs[CWD_MAX - 1] = '\0';
-    fat_result_t r = fat_ls(abs, _ls_entry, NULL);
+    fat_result_t r = fat_ls_ex(abs, _ls_entry_ex, NULL);
     if (r != FAT_OK) out_fmt("ls: %s\n", fat_result_str(r));
 }
 
@@ -1322,10 +1346,26 @@ static void cmd_pwd(void) {
 }
 
 static void cmd_cat(const char *arg) {
+    const char *path = skip_ws(arg ? arg : "");
+
+    if (pipe_input_active() && (!*path || (path[0] == '-' && path[1] == '\0'))) {
+        char pipe_buf[64];
+        int n;
+        while ((n = pipe_input_read(pipe_buf, sizeof pipe_buf)) > 0) {
+            for (int i = 0; i < n; i++) out_char(pipe_buf[i]);
+        }
+        out_char('\n');
+        return;
+    }
+    if (path[0] == '-' && path[1] == '\0') {
+        out_str("cat: no pipeline input\n");
+        return;
+    }
+
     if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
-    if (!arg || !*arg) { out_str("usage: cat <path>\n"); return; }
+    if (!*path) { out_str("usage: cat <path>\n"); return; }
     char abs[CWD_MAX];
-    resolve_abs(arg, abs);
+    resolve_abs(path, abs);
     fat_file_t f;
     fat_result_t r = fat_open(abs, &f);
     if (r != FAT_OK) { out_fmt("cat: %s: %s\n", abs, fat_result_str(r)); return; }
@@ -1618,24 +1658,6 @@ static char *split_arg(char *line) {
     return NULL;
 }
 
-static int parse_pipe_mode(char *line) {
-    char *pipe = strchr(line, '|');
-    if (!pipe) return 0;
-
-    *pipe++ = '\0';
-    trim_right(line);
-    pipe = skip_spaces(pipe);
-    trim_right(pipe);
-
-    if (!*pipe || strcmp(pipe, "more") == 0 || strcmp(pipe, "pager") == 0) {
-        return 1;
-    }
-
-    out_str("Only '| more' is supported right now.\n");
-    line[0] = '\0';
-    return -1;
-}
-
 /* ---- Output redirection: capture out_str/out_fmt into a buffer ---- */
 
 static char  *_redir_buf   = NULL;
@@ -1650,20 +1672,38 @@ static void redir_char(char c) {
     }
 }
 
+bool sys_output_capture_char(char c) {
+    if (_redir_active) {
+        redir_char(c);
+        return true;
+    }
+    if (pipe_capture_active()) {
+        pipe_capture_char(c);
+        return true;
+    }
+    return false;
+}
+
+bool sys_output_captured(void) {
+    return _redir_active || pipe_capture_active();
+}
+
 /* ---- Tab completion ---- */
 
 /* cmd_meta_t is forward-declared near the top of the file. */
 
 #define SHELL_COMMAND_LIST(X) \
     X("help", "system") X("man", "system") X("history", "shell") X("alias", "shell") \
-    X("unalias", "shell") X("uname", "system") X("uptime", "system") X("clear", "system") \
+    X("unalias", "shell") X("read", "shell") X("which", "shell") X("type", "shell") \
+    X("expr", "shell") X("uname", "system") X("uptime", "system") X("clear", "system") \
     X("battery", "system") X("backlight", "system") X("mount", "fs") X("ls", "fs") \
     X("dir", "fs") X("cd", "fs") X("pwd", "fs") X("cat", "fs") X("echo", "system") \
     X("touch", "fs") X("write", "fs") X("mkdir", "fs") X("rm", "fs") X("rename", "fs") \
     X("sdinfo", "fs") X("sdread", "fs") X("reboot", "system") X("date", "time") \
     X("dmesg", "system") X("hello", "apps") X("basename", "apps") X("dirname", "apps") \
     X("seq", "apps") X("head", "apps") X("tail", "apps") X("wc", "apps") X("cut", "apps") \
-    X("grep", "apps") X("find", "apps") X("tree", "apps") X("du", "apps") X("df", "apps") \
+    X("grep", "apps") X("tr", "apps") X("sed", "apps") X("md", "apps") X("markdown", "apps") \
+    X("find", "apps") X("tree", "apps") X("du", "apps") X("df", "apps") \
     X("disk", "apps") X("space", "apps") X("pager", "apps") X("more", "apps") X("rev", "apps") \
     X("sort", "apps") X("hexdump", "apps") X("od", "apps") X("hexedit", "apps") X("hex", "apps") \
     X("calc", "apps") X("cp", "apps") X("mv", "apps") X("stat", "apps") X("edit", "apps") \
@@ -1786,8 +1826,49 @@ static void _tab_file_cb(const char *name, uint32_t size, bool is_dir, void *ctx
     }
 }
 
+typedef struct {
+    bool active;
+    char base[LINE_BUF];
+    char last[LINE_BUF];
+    char matches[16][13];
+    bool is_dir[16];
+    int  count;
+    int  index;
+} _tab_cycle_t;
+
+static _tab_cycle_t _tab_cycle;
+
+static int _tab_apply(char *line, int *idx) {
+    for (int i = 0; i < *idx; i++) out_str("\b \b");
+
+    char completed[LINE_BUF];
+    size_t pos = 0;
+    for (const char *q = _tab_cycle.base; *q && pos < LINE_BUF - 2; q++)
+        completed[pos++] = *q;
+    for (const char *q = _tab_cycle.matches[_tab_cycle.index];
+         *q && pos < LINE_BUF - 2; q++)
+        completed[pos++] = (char)tolower((unsigned char)*q);
+    if (pos < LINE_BUF - 1)
+        completed[pos++] = _tab_cycle.is_dir[_tab_cycle.index] ? '/' : ' ';
+    completed[pos] = '\0';
+
+    memcpy(line, completed, pos + 1);
+    *idx = (int)pos;
+    out_str(line);
+    copy_cstr(_tab_cycle.last, sizeof _tab_cycle.last, line);
+    return *idx;
+}
+
 static int tab_complete(char *line, int idx) {
     if (idx == 0) return idx;
+
+    /* Tab again on the completed line advances to the next candidate. */
+    if (_tab_cycle.active && _tab_cycle.count > 1 &&
+        strcmp(_tab_cycle.last, line) == 0) {
+        _tab_cycle.index = (_tab_cycle.index + 1) % _tab_cycle.count;
+        return _tab_apply(line, &idx);
+    }
+    _tab_cycle.active = false;
 
     /* If there's a space, try file path completion on the last token */
     char *space = strchr(line, ' ');
@@ -1843,43 +1924,44 @@ static int tab_complete(char *line, int idx) {
         fat_ls(abs_dir, _tab_file_cb, &fc);
         if (fc.count <= 0) return idx;
 
-        if (fc.count == 1) {
-            /* Erase line on screen */
-            for (int i = 0; i < idx; i++) out_str("\b \b");
-            /* Rebuild: command + space + dir prefix + completed name */
-            size_t cmd_len = (size_t)(token - line);
-            char completed[LINE_BUF];
-            memcpy(completed, line, cmd_len);
-            size_t pos = cmd_len;
-            if (last_slash) {
-                size_t dlen = (size_t)(last_slash - token + 1);
-                memcpy(completed + pos, token, dlen);
-                pos += dlen;
-            }
-            /* Copy matched name (lowercase for display) */
-            for (const char *p = fc.matches[0]; *p && pos < LINE_BUF - 2; p++) {
-                completed[pos++] = (char)tolower((unsigned char)*p);
-            }
-            if (fc.is_dir[0] && pos < LINE_BUF - 1)
-                completed[pos++] = '/';
-            else if (pos < LINE_BUF - 1)
-                completed[pos++] = ' ';
-            completed[pos] = '\0';
-            memcpy(line, completed, pos + 1);
-            idx = (int)pos;
-            out_str(line);
-        } else {
-            out_char('\n');
-            for (int i = 0; i < fc.count; i++) {
-                for (const char *p = fc.matches[i]; *p; p++)
-                    out_char((char)tolower((unsigned char)*p));
-                if (fc.is_dir[i]) out_char('/');
-                out_str("  ");
-            }
-            out_char('\n');
-            out_prompt();
-            out_str(line);
+        /* Build the completion base: command text plus any directory part. */
+        size_t cmd_len = (size_t)(token - line);
+        size_t pos = 0;
+        if (cmd_len >= sizeof _tab_cycle.base) return idx;
+        memcpy(_tab_cycle.base, line, cmd_len);
+        pos = cmd_len;
+        if (last_slash) {
+            size_t dlen = (size_t)(last_slash - token + 1);
+            if (pos + dlen >= sizeof _tab_cycle.base) return idx;
+            memcpy(_tab_cycle.base + pos, token, dlen);
+            pos += dlen;
         }
+        _tab_cycle.base[pos] = '\0';
+        _tab_cycle.count = fc.count;
+        _tab_cycle.index = 0;
+        for (int i = 0; i < fc.count; i++) {
+            copy_cstr(_tab_cycle.matches[i], sizeof _tab_cycle.matches[i],
+                      fc.matches[i]);
+            _tab_cycle.is_dir[i] = fc.is_dir[i];
+        }
+
+        /* List the candidate set once, four per row, in muted text. */
+        if (fc.count > 1) {
+            out_char('\n');
+            uint32_t saved = lcd_get_fg();
+            lcd_set_fg(ui_color(UI_MUTED));
+            for (int i = 0; i < fc.count; i++) {
+                for (const char *q = fc.matches[i]; *q; q++)
+                    out_char((char)tolower((unsigned char)*q));
+                if (fc.is_dir[i]) out_char('/');
+                out_str((i % 4 == 3) ? "\n" : "  ");
+            }
+            if (fc.count % 4 != 0) out_char('\n');
+            lcd_set_fg(saved);
+        }
+
+        _tab_cycle.active = !fc.is_dir[0] && fc.count > 1;
+        return _tab_apply(line, &idx);
         return idx;
     }
 
@@ -1920,8 +2002,6 @@ static int tab_complete(char *line, int idx) {
     }
     return idx;
 }
-
-static void dispatch_single(char *line);
 
 static void cmd_time(const char *arg) {
     if (!arg || !*arg) { out_str("usage: time COMMAND\n"); return; }
@@ -2008,6 +2088,10 @@ static void cmd_printf(const char *arg) {
 }
 
 static void dispatch(char *line) {
+    dispatch_ex(line, true);
+}
+
+static void dispatch_ex(char *line, bool record_history) {
     /* Strip trailing whitespace */
     int len = (int)strlen(line);
     while (len > 0 && (line[len - 1] == '\r' || line[len - 1] == '\n' ||
@@ -2017,7 +2101,7 @@ static void dispatch(char *line) {
 
     if (len == 0) return;
 
-    if (history_expand_bang(line, LINE_BUF)) {
+    if (record_history && history_expand_bang(line, LINE_BUF)) {
         len = (int)strlen(line);
         if (len == 0) return;
     }
@@ -2025,89 +2109,472 @@ static void dispatch(char *line) {
     (void)alias_expand_safe(line, LINE_BUF);
     var_expand(line, LINE_BUF);
 
-    /* Save to history */
-    hist_push(line);
-    hist_save();
-
-    /* Split on ';', '&&', '||' for command chaining (outside quotes).
-       sep_kind[i] is the operator that precedes segment i:
-         0 = first / ';'  (always run)
-         1 = '&&'         (run only if prev succeeded)
-         2 = '||'         (run only if prev failed)        */
-    char *segments[16];
-    uint8_t sep_kind[16];
-    int nseg = 0;
-    char *p = line;
-    bool in_quotes = false;
-    segments[0] = p;
-    sep_kind[0] = 0;
-    nseg = 1;
-    while (*p) {
-        if (*p == '"') in_quotes = !in_quotes;
-        else if (!in_quotes && nseg < 16) {
-            if (p[0] == '&' && p[1] == '&') {
-                *p = '\0';
-                segments[nseg] = p + 2;
-                sep_kind[nseg] = 1;
-                nseg++;
-                p++;  /* consume second '&' */
-            } else if (p[0] == '|' && p[1] == '|') {
-                *p = '\0';
-                segments[nseg] = p + 2;
-                sep_kind[nseg] = 2;
-                nseg++;
-                p++;  /* consume second '|' */
-            } else if (*p == ';') {
-                *p = '\0';
-                segments[nseg] = p + 1;
-                sep_kind[nseg] = 0;
-                nseg++;
-            }
-        }
-        p++;
+    if (record_history) {
+        hist_push(line);
+        hist_save();
     }
+
+    /* Split on ';', '&&', '||' outside quotes. */
+    char *segments[SHELL_MAX_CHAIN];
+    unsigned char sep_kind[SHELL_MAX_CHAIN];
+    int nseg = shell_split_chain(line, segments, sep_kind, SHELL_MAX_CHAIN);
 
     for (int i = 0; i < nseg && !_interrupted; i++) {
         if (i > 0) {
-            if (sep_kind[i] == 1 && _last_exit != 0) continue;  /* && skip on fail */
-            if (sep_kind[i] == 2 && _last_exit == 0) continue;  /* || skip on success */
+            if (sep_kind[i] == SHELL_SEP_AND && _last_exit != 0) continue;
+            if (sep_kind[i] == SHELL_SEP_OR && _last_exit == 0) continue;
         }
         char *seg = skip_spaces(segments[i]);
         trim_right(seg);
         if (*seg) dispatch_single(seg);
     }
+
+    /* Scripts keep the interrupt flag so their line loop can stop; the
+       interactive shell clears it for the next prompt. */
+    if (record_history) _interrupted = false;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Wildcard expansion                                                   */
+/* ------------------------------------------------------------------ */
+
+#define GLOB_MAX_MATCHES 16
+
+typedef struct {
+    const char *pattern;
+    char names[GLOB_MAX_MATCHES][13];
+    int count;
+    bool overflow;
+} glob_ctx_t;
+
+static void glob_collect_cb(const char *name, uint32_t size, bool is_dir, void *ctx) {
+    (void)size;
+    (void)is_dir;
+    glob_ctx_t *g = (glob_ctx_t *)ctx;
+    if (!name || !*name) return;
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
+    if (!glob_match(g->pattern, name, true)) return;
+    if (g->count >= GLOB_MAX_MATCHES) {
+        g->overflow = true;
+        return;
+    }
+    copy_cstr(g->names[g->count], sizeof g->names[0], name);
+    g->count++;
+}
+
+static int glob_name_cmp(const void *a, const void *b) {
+    return strcmp((const char *)a, (const char *)b);
+}
+
+/*
+ * Expand the first unquoted wildcard argument. A single match is rewritten
+ * in place and normal dispatch continues. Multiple matches run the command
+ * once per match; a plain ">" becomes ">>" after the first run so combined
+ * output is preserved. Returns true when the original line was consumed.
+ */
+static bool dispatch_globbed(char *line) {
+    size_t start = 0, len = 0;
+    if (!_fat_mounted || !shell_find_glob_arg(line, &start, &len)) return false;
+
+    char token[LINE_BUF];
+    if (len >= sizeof token) return false;
+    memcpy(token, line + start, len);
+    token[len] = '\0';
+
+    const char *slash = strrchr(token, '/');
+    const char *base = slash ? slash + 1 : token;
+    size_t dir_prefix = slash ? (size_t)(slash - token + 1) : 0;
+
+    /* Only the basename may contain wildcards. */
+    for (const char *p = token; slash && p < slash; p++) {
+        if (*p == '*' || *p == '?' || *p == '[') return false;
+    }
+
+    char dir[LINE_BUF];
+    if (slash) {
+        size_t dlen = (size_t)(slash - token);
+        if (dlen == 0) {
+            copy_cstr(dir, sizeof dir, "/");
+        } else {
+            if (dlen >= sizeof dir) return false;
+            memcpy(dir, token, dlen);
+            dir[dlen] = '\0';
+        }
+    } else {
+        copy_cstr(dir, sizeof dir, ".");
+    }
+
+    char absdir[CWD_MAX];
+    resolve_abs(dir, absdir);
+
+    glob_ctx_t g = {.pattern = base, .count = 0, .overflow = false};
+    if (fat_ls(absdir, glob_collect_cb, &g) != FAT_OK || g.count == 0) return false;
+
+    qsort(g.names, (size_t)g.count, sizeof g.names[0], glob_name_cmp);
+
+    size_t suffix_off = start + len;
+
+    if (g.count == 1) {
+        char rebuilt[LINE_BUF];
+        int n = snprintf(rebuilt, sizeof rebuilt, "%.*s%.*s%s%s", (int)start, line,
+                         (int)dir_prefix, token, g.names[0], line + suffix_off);
+        if (n < 0 || n >= (int)sizeof rebuilt) return false;
+        dispatch_single_no_glob(rebuilt);
+        return true;
+    }
+
+    if (g.overflow) out_str("glob: showing first 16 matches\n");
+
+    for (int i = 0; i < g.count; i++) {
+        char rebuilt[LINE_BUF];
+        int n = snprintf(rebuilt, sizeof rebuilt, "%.*s%.*s%s%s", (int)start, line,
+                         (int)dir_prefix, token, g.names[i], line + suffix_off);
+        if (n < 0 || n >= (int)sizeof rebuilt) continue;
+
+        if (i > 0) {
+            char *gt = strchr(rebuilt, '>');
+            if (gt && gt[1] != '>') {
+                size_t used = strlen(rebuilt);
+                size_t tail = used - (size_t)(gt - rebuilt);
+                if (used + 1 < sizeof rebuilt) {
+                    memmove(gt + 2, gt + 1, tail + 1);
+                    gt[1] = '>';
+                }
+            }
+        }
+
+        dispatch_single_no_glob(rebuilt);
+        if (_interrupted) break;
+    }
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Scripts                                                              */
+/* ------------------------------------------------------------------ */
+
+#define SCRIPT_MAX_DEPTH 4
+static int _script_depth = 0;
+
+static bool script_exec_line(char *line) {
+    trim_right(line);
+    char *s = skip_spaces(line);
+    if (!*s || *s == '#') return true;
+    dispatch_ex(line, false);
+    return _last_exit == 0;
+}
+
+bool shell_run_script(const char *path, bool quiet) {
+    if (!path || !*path) return false;
+    if (!_fat_mounted) {
+        if (!quiet) out_str("script: SD card not mounted\n");
+        return false;
+    }
+    if (_script_depth >= SCRIPT_MAX_DEPTH) {
+        if (!quiet) out_str("script: nesting too deep\n");
+        return false;
+    }
+
+    char abs[APP_TOKEN_MAX];
+    resolve_abs(path, abs);
+
+    fat_file_t f;
+    fat_result_t r = fat_open(abs, &f);
+    if (r != FAT_OK) {
+        if (!quiet) out_fmt("script: cannot open %s (%s)\n", abs, fat_result_str(r));
+        return false;
+    }
+
+    _script_depth++;
+    char line_buf[LINE_BUF];
+    uint8_t chunk[512];
+    size_t n = 0;
+    bool ok = true;
+    int32_t got;
+
+    while ((got = fat_read(&f, chunk, sizeof chunk)) > 0) {
+        for (int32_t i = 0; i < got; i++) {
+            char ch = (char)chunk[i];
+            if (ch == '\n') {
+                line_buf[n] = '\0';
+                if (!script_exec_line(line_buf)) ok = false;
+                n = 0;
+            } else if (ch != '\r' && n + 1 < sizeof line_buf) {
+                line_buf[n++] = ch;
+            }
+            if (_interrupted) break;
+        }
+        if (_interrupted) break;
+    }
+
+    if (got < 0 && got != FAT_ERR_EOF) {
+        if (!quiet) out_str("script: read error\n");
+        ok = false;
+    }
+
+    if (n > 0 && !_interrupted) {
+        line_buf[n] = '\0';
+        if (!script_exec_line(line_buf)) ok = false;
+    }
+
+    _script_depth--;
     _interrupted = false;
+    return ok;
+}
+
+static void cmd_script(const char *arg) {
+    char tmp[LINE_BUF];
+    copy_cstr(tmp, sizeof tmp, arg ? arg : "");
+
+    shell_argv_t av;
+    if (shell_tokenize(tmp, &av) < 1 || !av.argv[0][0]) {
+        out_str("usage: script FILE\n");
+        _last_exit = 1;
+        return;
+    }
+
+    if (!shell_run_script(av.argv[0], false)) _last_exit = 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* read / which / expr                                                  */
+/* ------------------------------------------------------------------ */
+
+static bool valid_var_name(const char *name) {
+    if (!name || !*name) return false;
+    if (strlen(name) >= ALIAS_NAME_SZ) return false;
+    if (!isalpha((unsigned char)name[0]) && name[0] != '_') return false;
+    for (const char *p = name + 1; *p; p++) {
+        if (!isalnum((unsigned char)*p) && *p != '_') return false;
+    }
+    return true;
+}
+
+static void cmd_read(const char *arg) {
+    char tmp[LINE_BUF];
+    copy_cstr(tmp, sizeof tmp, arg ? arg : "");
+
+    shell_argv_t av;
+    int argc = shell_tokenize(tmp, &av);
+
+    const char *prompt = NULL;
+    int first = 0;
+    if (argc >= 2 && strcmp(av.argv[0], "-p") == 0) {
+        prompt = av.argv[1];
+        first = 2;
+    }
+    if (argc <= first) {
+        out_str("usage: read [-p PROMPT] NAME...\n");
+        _last_exit = 1;
+        return;
+    }
+
+    char line_buf[LINE_BUF];
+    if (app_read_line(prompt ? prompt : "", line_buf, sizeof line_buf) < 0) {
+        _last_exit = 1;
+        return;
+    }
+    trim_right(line_buf);
+
+    int nvars = argc - first;
+    if (nvars == 1) {
+        const char *name = av.argv[first];
+        if (!valid_var_name(name) || !var_set(name, line_buf)) {
+            out_str("read: invalid variable name\n");
+            _last_exit = 1;
+            return;
+        }
+        _last_exit = 0;
+        return;
+    }
+
+    shell_argv_t vals;
+    int nvals = shell_tokenize(line_buf, &vals);
+
+    for (int i = 0; i < nvars; i++) {
+        const char *name = av.argv[first + i];
+        char value[LINE_BUF];
+        value[0] = '\0';
+
+        if (i < nvals) {
+            if (i == nvars - 1) {
+                size_t pos = 0;
+                for (int k = i; k < nvals; k++) {
+                    if (k > i && pos + 1 < sizeof value) value[pos++] = ' ';
+                    size_t l = strlen(vals.argv[k]);
+                    if (pos + l >= sizeof value) l = sizeof value - 1 - pos;
+                    memcpy(value + pos, vals.argv[k], l);
+                    pos += l;
+                }
+                value[pos] = '\0';
+            } else {
+                copy_cstr(value, sizeof value, vals.argv[i]);
+            }
+        }
+
+        if (!valid_var_name(name) || !var_set(name, value)) {
+            out_str("read: invalid variable name\n");
+            _last_exit = 1;
+            return;
+        }
+    }
+    _last_exit = 0;
+}
+
+static const cmd_meta_t *cmd_find(const char *name) {
+    for (const cmd_meta_t *c = _cmd_registry; c->name; c++) {
+        if (strcmp(c->name, name) == 0) return c;
+    }
+    return NULL;
+}
+
+static void cmd_which(const char *arg) {
+    char tmp[LINE_BUF];
+    copy_cstr(tmp, sizeof tmp, arg ? arg : "");
+
+    shell_argv_t av;
+    int argc = shell_tokenize(tmp, &av);
+    if (argc == 0) {
+        out_str("usage: which COMMAND...\n");
+        _last_exit = 1;
+        return;
+    }
+
+    bool missing = false;
+    for (int i = 0; i < argc; i++) {
+        const char *name = av.argv[i];
+
+        int slot = alias_find_slot(name);
+        if (slot >= 0) {
+            out_fmt("%s: aliased to %s\n", name, _aliases[slot].value);
+            continue;
+        }
+
+        const cmd_meta_t *c = cmd_find(name);
+        if (c) {
+            out_fmt("%s: %s command\n", name, c->group);
+            continue;
+        }
+
+        if (_fat_mounted) {
+            char abs[APP_TOKEN_MAX];
+            resolve_abs(name, abs);
+            fat_file_t f;
+            if (fat_open(abs, &f) == FAT_OK) {
+                out_fmt("%s: %s\n", name, abs);
+                continue;
+            }
+        }
+
+        out_fmt("%s: not found\n", name);
+        missing = true;
+    }
+    _last_exit = missing ? 1 : 0;
+}
+
+static void cmd_expr(const char *arg) {
+    const char *s = skip_ws(arg ? arg : "");
+    if (!*s) {
+        out_str("usage: expr EXPR\n");
+        _last_exit = 1;
+        return;
+    }
+
+    bool ok = false;
+    int value = expr_eval(s, NULL, NULL, &ok);
+    if (!ok) {
+        out_str("expr: bad expression\n");
+        _last_exit = 1;
+        return;
+    }
+    out_fmt("%d\n", value);
+}
+
+#define PIPE_BUF_MAX 4096
+static char _pipe_buf[2][PIPE_BUF_MAX];
+
+/*
+ * Execute a pipeline. Intermediate stages exchange data through two bounded
+ * RAM buffers. `cmd | more` / `cmd | pager` keep the historical streaming
+ * pager path so large outputs are not limited by the buffer.
+ */
+static bool run_pipeline(char *line) {
+    char *stages[SHELL_MAX_PIPE];
+    int n = shell_split_pipeline(line, stages, SHELL_MAX_PIPE);
+    if (n <= 1) return false;
+
+    for (int i = 0; i < n; i++) {
+        stages[i] = skip_spaces(stages[i]);
+        trim_right(stages[i]);
+    }
+
+    if (!*stages[0]) {
+        out_str("pipe: empty command\n");
+        _last_exit = 1;
+        return true;
+    }
+
+    char more_cmd[] = "more";
+    if (n == 2) {
+        if (!*stages[1]) stages[1] = more_cmd;
+        if (strcmp(stages[1], "more") == 0 || strcmp(stages[1], "pager") == 0) {
+            sys_more_set(true);
+            if (!dispatch_globbed(stages[0])) dispatch_single_no_glob(stages[0]);
+            bool aborted = _sys_more_abort;
+            sys_more_set(false);
+            if (aborted) out_char('\n');
+            return true;
+        }
+    }
+
+    char *prev = NULL;
+    size_t prev_len = 0;
+
+    for (int i = 0; i < n; i++) {
+        bool last = (i == n - 1);
+        if (i > 0) pipe_input_set(prev, prev_len);
+
+        char *cap = NULL;
+        if (!last) {
+            cap = _pipe_buf[i % 2];
+            pipe_capture_begin(cap, PIPE_BUF_MAX);
+        }
+
+        if (!dispatch_globbed(stages[i])) dispatch_single_no_glob(stages[i]);
+
+        if (!last) {
+            bool overflow = pipe_capture_overflowed();
+            prev_len = pipe_capture_end();
+            prev = cap;
+            if (overflow) out_str("pipe: output truncated\n");
+        }
+
+        if (_interrupted) break;
+    }
+
+    pipe_input_clear();
+    return true;
 }
 
 static void dispatch_single(char *line) {
+    /* Split pipelines first so globs and redirection apply per stage. */
+    if (run_pipeline(line)) return;
+
+    /* Expand the first wildcard argument before redirection parsing.
+       Multiple matches run the command once per match. */
+    if (dispatch_globbed(line)) return;
+    dispatch_single_no_glob(line);
+}
+
+static void dispatch_single_no_glob(char *line) {
 
     /* ---- Parse output redirection (>> or >) ---- */
     char *redir_file = NULL;
     bool  redir_append = false;
-    {
-        /* Scan for unquoted > or >> */
-        bool inq = false;
-        for (char *p = line; *p; p++) {
-            if (*p == '"') inq = !inq;
-            else if (!inq && p[0] == '>' && p[1] == '>') {
-                *p = '\0';
-                redir_file = skip_spaces(p + 2);
-                redir_append = true;
-                break;
-            } else if (!inq && *p == '>') {
-                *p = '\0';
-                redir_file = skip_spaces(p + 1);
-                redir_append = false;
-                break;
-            }
-        }
-        if (redir_file) trim_right(redir_file);
-        trim_right(line);
-    }
+    (void)shell_parse_redir(line, &redir_file, &redir_append);
 
-    bool use_more = parse_pipe_mode(line) > 0;
     if (line[0] == '\0') return;
-    if (use_more) sys_more_set(true);
 
     /* Set up redirection capture buffer if needed */
     static char redir_static_buf[APP_REDIR_MAX];
@@ -2129,7 +2596,10 @@ static void dispatch_single(char *line) {
 
     if      (!strcmp(line, "help"))      cmd_help(arg);
     else if (!strcmp(line, "man"))       cmd_man(arg);
-    else if (!strcmp(line, "."))         app_run("script", arg);  /* dot-source */
+    else if (!strcmp(line, ".") || !strcmp(line, "script")) cmd_script(arg);
+    else if (!strcmp(line, "read"))      cmd_read(arg);
+    else if (!strcmp(line, "which") || !strcmp(line, "type")) cmd_which(arg);
+    else if (!strcmp(line, "expr"))      cmd_expr(arg);
     else if (!strcmp(line, "history"))   cmd_history(arg);
     else if (!strcmp(line, "alias"))     cmd_alias(arg);
     else if (!strcmp(line, "unalias"))   cmd_unalias(arg);
@@ -2193,18 +2663,13 @@ static void dispatch_single(char *line) {
     }
     else {
         uint32_t sf = lcd_get_fg();
-        lcd_set_fg(LCD_RED);
+        lcd_set_fg(ui_color(UI_ERROR));
         out_fmt("unknown: %s\n", line);
-        lcd_set_fg(sf);
+        lcd_set_fg(ui_color(UI_MUTED));
         _cmd_suggest(line);
         out_str("  Type  help  to list all commands.\n");
+        lcd_set_fg(sf);
         _last_exit = 127;
-    }
-
-    if (use_more) {
-        bool aborted = _sys_more_abort;
-        sys_more_set(false);
-        if (aborted) out_char('\n');
     }
 
     /* Finalize output redirection */
@@ -2285,6 +2750,7 @@ static bool parse_force_flag(const char **arg) {
 /* ------------------------------------------------------------------ */
 static void _draw_status_bar(void) {
     if (!_lcd_ready || !_statusbar_enabled || _screensaver_active) return;
+    if (ui_fullscreen()) return;
 
     /* Throttle redraws — the bar shows uptime in seconds, so refreshing more
        than once per second is wasted work and visible flicker. The two real
@@ -2317,54 +2783,47 @@ static void _draw_status_bar(void) {
     lcd_set_fg(LCD_BLACK);
     lcd_set_bg(LCD_GREY);
 
-    /* Build status line: "[SD][W][BAT%] CWD          HH:MM" */
-    char bar[41];
-    memset(bar, ' ', 40);
-    bar[40] = '\0';
+    /* Status bar: left = devices + battery, middle = cwd or notice, right = clock. */
+    char bar[LCD_COLS + 1];
+    memset(bar, ' ', LCD_COLS);
+    bar[LCD_COLS] = '\0';
 
-    /* Visual warning for very low battery */
-    uint32_t bar_bg = LCD_GREY;
-    if (bat >= 0 && bat < 15 && !charging) bar_bg = LCD_RED;
-    lcd_set_bg(bar_bg);
-
-    int pos = 0;
-    if (_fat_mounted) {
-        memcpy(bar + pos, "[SD]", 4); pos += 4;
+    uint32_t bar_bg = ui_color(UI_STATUS_BG);
+    uint32_t bar_fg = ui_color(UI_STATUS_TEXT);
+    if (bat >= 0 && bat < 15 && !charging) {
+        bar_bg = ui_color(UI_ERROR);
+        bar_fg = ui_color(UI_SELECT_TEXT);
+    } else if (charging) {
+        bar_fg = ui_color(UI_SUCCESS);
     }
+
+    const char *notice = ui_notice();
+    int pos = 1;
+
+    memcpy(bar + pos, _fat_mounted ? "SD" : "--", 2);
+    pos += 2;
+    bar[pos++] = ' ';
+
 #ifdef PICO_CYW43_SUPPORTED
-    if (net_is_connected()) {
-        memcpy(bar + pos, "[W]", 3); pos += 3;
-    }
+    memcpy(bar + pos, net_is_connected() ? "WIFI" : "----", 4);
+    pos += 4;
+    bar[pos++] = ' ';
 #endif
 
-    char lft[24];
-    if (charging)
-        snprintf(lft, sizeof lft, "[%d%%+]", bat);
-    else if (bat >= 0 && bat < 15)
-        snprintf(lft, sizeof lft, "[BAT %d%%!]", bat);
-    else
-        snprintf(lft, sizeof lft, "[%d%%]", bat);
-    int lft_len = (int)strlen(lft);
-    memcpy(bar + pos, lft, (size_t)lft_len);
-    pos += lft_len;
-
-    /* CWD in the middle */
-    int cwd_start = pos + 1;
-    int time_w = sys_rtc_is_set() ? 6 : 9; /* "HH:MM" or "H:MM:SS" */
-    int cwd_avail = 40 - cwd_start - time_w;
-    if (cwd_avail > 0) {
-        int clen = (int)strlen(_cwd);
-        if (clen <= cwd_avail) {
-            memcpy(bar + cwd_start, _cwd, (size_t)clen);
-        } else {
-            bar[cwd_start] = '.';
-            bar[cwd_start + 1] = '.';
-            memcpy(bar + cwd_start + 2, _cwd + clen - (cwd_avail - 2),
-                   (size_t)(cwd_avail - 2));
-        }
+    int cells = (bat < 0) ? 0 : (bat * 8 + 50) / 100;
+    bar[pos++] = '[';
+    for (int i = 0; i < 8; i++) bar[pos++] = (i < cells) ? '#' : '-';
+    bar[pos++] = ']';
+    if (charging) bar[pos++] = '+';
+    if (bat >= 0) {
+        char pct[8];
+        int pbat = bat > 100 ? 100 : bat;
+        snprintf(pct, sizeof pct, " %3d%%", pbat);
+        memcpy(bar + pos, pct, 5);
+        pos += 5;
     }
 
-    /* Clock or uptime on the right */
+    /* Clock on the right */
     char rt[16];
     if (sys_rtc_is_set()) {
         int64_t epoch = sys_now_epoch_ms();
@@ -2378,12 +2837,30 @@ static void _draw_status_bar(void) {
                  (unsigned long)m, (unsigned long)s);
     }
     int rlen = (int)strlen(rt);
-    memcpy(bar + 40 - rlen - 1, rt, (size_t)rlen);
+    memcpy(bar + LCD_COLS - rlen - 1, rt, (size_t)rlen);
 
-    /* Render into last text row (row 19) */
-    lcd_set_cursor(0, 19);
-    for (int i = 0; i < 40; i++)
-        lcd_draw_cell(i, 19, (char)bar[i], LCD_BLACK, bar_bg);
+    /* Middle: transient notice, otherwise the working directory. */
+    int mid_end = LCD_COLS - rlen - 2;
+    int mid_start = pos + 1;
+    const char *mid = notice ? notice : _cwd;
+    if (mid && *mid && mid_start < mid_end) {
+        int avail = mid_end - mid_start;
+        int len = (int)strlen(mid);
+        if (len <= avail) {
+            memcpy(bar + mid_start, mid, (size_t)len);
+        } else if (avail > 2) {
+            bar[mid_start] = '.';
+            bar[mid_start + 1] = '.';
+            memcpy(bar + mid_start + 2, mid + len - (avail - 2), (size_t)(avail - 2));
+        }
+    }
+
+    /* Render into the last text row. */
+    lcd_lock();
+    for (int i = 0; i < LCD_COLS; i++) {
+        lcd_draw_cell(i, LCD_ROWS - 1, bar[i], bar_fg, bar_bg);
+    }
+    lcd_unlock();
 
     /* Restore state */
     lcd_set_fg(save_fg);
@@ -2435,7 +2912,7 @@ static void _run_screensaver(void) {
     _screensaver_active = false;
 }
 
-#ifdef PICO_RP2350A
+#if defined(PICO_RP2350A) || defined(PICO_RP2350)
 /* Core1 entry: periodically refresh the status bar */
 static void _core1_entry(void) {
     for (;;) {
@@ -2454,7 +2931,7 @@ int main(void) {
     int idx = 0;
 
     /* RP2350 can safely run faster than RP2040 */
-#ifdef PICO_RP2350A
+#if defined(PICO_RP2350A) || defined(PICO_RP2350)
     set_sys_clock_khz(150000, true);
 #else
     set_sys_clock_khz(133000, true);
@@ -2485,7 +2962,7 @@ int main(void) {
     const char *target_name =
 #ifdef PICO_CYW43_SUPPORTED
         "Pico 2W";
-#elif defined(PICO_RP2350A)
+#elif defined(PICO_RP2350A) || defined(PICO_RP2350)
         "Pico 2";
 #else
         "Pico";
@@ -2534,6 +3011,9 @@ int main(void) {
     out_str("\x1b[2J\x1b[H");
     out_str(BANNER);
 
+    /* Optional startup profile: aliases, variables, prompt, startup commands. */
+    if (_fat_mounted) shell_run_script("/PROFILE.CFG", true);
+
 #ifdef PICO_CYW43_SUPPORTED
     /* Boot-time WiFi auto-connect + NTP sync (best-effort, fire-and-forget).
      * Bounded by the connect/sync timeouts inside; total ~12s worst case. */
@@ -2560,7 +3040,7 @@ int main(void) {
     _statusbar_enabled = true;
     _draw_status_bar();
 
-#ifdef PICO_RP2350A
+#if defined(PICO_RP2350A) || defined(PICO_RP2350)
     /* Pico 2: launch core1 for background status bar refresh */
     multicore_launch_core1(_core1_entry);
 #endif

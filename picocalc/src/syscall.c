@@ -19,6 +19,7 @@ static bool _sys_lcd_in_csi  = false; /* inside ESC [ ... sequence */
 static int _sys_more_lines = 0;
 
 static void sys_console_write_raw_char(char c) {
+    if (sys_output_capture_char(c)) return;
     putchar_raw(c);
 
     if (_sys_lcd_in_csi) {

@@ -4,8 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* RP2350 (Pico 2) has 520 KB RAM — use larger buffers */
-#ifdef PICO_RP2350A
+/* RP2350 (Pico 2 / 2W) has 520 KB RAM — use larger buffers.
+ * PICO_RP2350 comes from the build flags, so it is visible here even
+ * though this header is included before the SDK board header. */
+#if defined(PICO_RP2350A) || defined(PICO_RP2350)
 #  define APP_TOKEN_MAX    512
 #  define APP_READ_MAX     8192
 #  define BASIC_LINE_MAX   256
@@ -29,6 +31,10 @@
 #define BROWSE_ITEMS_MAX   64
 #define BROWSE_NAME_MAX    32
 #define HEXEDIT_BYTES_MAX  APP_READ_MAX
+
+/* Shared scratch for mutually exclusive one-shot file commands.
+   Commands must finish using it before dispatching another command. */
+extern uint8_t g_app_io_buf[APP_READ_MAX + 1];
 
 /* Sub-module headers */
 #include "apps/app_shared.h"

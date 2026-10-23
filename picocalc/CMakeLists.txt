@@ -9,35 +9,59 @@ set(CMAKE_CXX_STANDARD 17)
 
 pico_sdk_init()
 
-add_executable(mellivora_picocalc
+option(MELLIVORA_WERROR "Treat compiler warnings as errors" ON)
+
+set(MELLIVORA_SOURCES
     src/main.c
     src/lcd.c
     src/kbd.c
     src/sd.c
     src/fat.c
-    src/core/fatname.c
-    src/core/lfn.c
     src/syscall.c
+    src/console.c
+    src/audio.c
+    src/pipe.c
     src/apps.c
+    src/ui/ui.c
     src/apps/app_shared.c
+    src/apps/app_util.c
+    src/apps/app_settings.c
+    src/apps/app_editor.c
+    src/apps/app_langs.c
+    src/apps/app_productivity.c
+    src/apps/app_games.c
+    src/apps/app_system.c
+    src/apps/app_builtins.c
+    src/apps/app_tools.c
     src/apps/text.c
     src/apps/hex.c
     src/apps/fs.c
+    src/core/expr.c
+    src/core/shell_parse.c
+    src/core/path_util.c
+    src/core/fatname.c
+    src/core/simple_re.c
+    src/core/glob.c
+    src/core/textutil.c
+    src/core/lfn.c
     src/net.c
     src/netapps.c
     src/hal/hal_pico.c
 )
 
+add_executable(mellivora_picocalc ${MELLIVORA_SOURCES})
+
 target_include_directories(mellivora_picocalc PRIVATE src)
 
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(mellivora_picocalc PRIVATE
-        -Wall
-        -Wextra
-        -Wshadow
-        -Wundef
-        -Wno-unused-parameter
-    )
+    # Scope the strict flags to Mellivora sources: the Pico SDK is not
+    # warning-clean under -Wundef/-Werror.
+    set(MELLIVORA_WARNINGS -Wall -Wextra -Wshadow -Wundef -Wno-unused-parameter)
+    if (MELLIVORA_WERROR)
+        list(APPEND MELLIVORA_WARNINGS -Werror)
+    endif()
+    set_source_files_properties(${MELLIVORA_SOURCES}
+        PROPERTIES COMPILE_OPTIONS "${MELLIVORA_WARNINGS}")
 endif()
 
 target_compile_definitions(mellivora_picocalc PRIVATE

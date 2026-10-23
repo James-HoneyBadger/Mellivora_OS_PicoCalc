@@ -2,8 +2,9 @@
  * hal_pico.c — Production HAL implementation for Mellivora PicoCalc.
  *
  * Wires the abstract hal_ops_t table to the concrete Pico SDK drivers
- * (lcd.c, kbd.c, fat.c, syscall.c). This file is the only place that
- * should know about hardware details; apps use hal_* wrappers.
+ * (lcd.c, kbd.c, fat.c, syscall.c, console.c, audio.c). This file is the
+ * only place that should know about hardware details. New code should use
+ * the hal_* wrappers; existing code still calls sys_* directly.
  */
 
 #include "hal/hal.h"
@@ -12,6 +13,8 @@
 #include "hardware/watchdog.h"
 
 #include "syscall.h"
+#include "audio.h"
+#include "console.h"
 #include "lcd.h"
 #include "kbd.h"
 #include "fat.h"
@@ -36,6 +39,9 @@ static int  _hal_pico_get_cursor_y(void) { return lcd_get_row(); }
 /* ------------------------------------------------------------------ */
 
 static int _hal_pico_read_key(void) { return sys_read_key(); }
+static int _hal_pico_read_line(const char *prompt, char *buf, size_t sz) {
+    return console_read_line(prompt, buf, sz);
+}
 
 /* ------------------------------------------------------------------ */
 /* Filesystem adapters (direct FAT; no fd table)                        */
@@ -73,6 +79,14 @@ static void     _hal_pico_set_epoch_ms(int64_t ms) { sys_set_epoch_ms(ms); }
 static void     _hal_pico_sleep_ms(uint32_t ms) { sys_sleep(ms); }
 
 /* ------------------------------------------------------------------ */
+/* Audio adapter                                                        */
+/* ------------------------------------------------------------------ */
+
+static void _hal_pico_beep(int freq_hz, int duration_ms) {
+    audio_beep(freq_hz, duration_ms);
+}
+
+/* ------------------------------------------------------------------ */
 /* Power adapters                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -92,7 +106,7 @@ static hal_ops_t _hal_pico_ops = {
     .get_cursor_x    = _hal_pico_get_cursor_x,
     .get_cursor_y    = _hal_pico_get_cursor_y,
     .read_key        = _hal_pico_read_key,
-    .read_line       = NULL,     /* TODO: wire app_read_line or similar */
+    .read_line       = _hal_pico_read_line,
     .fat_mount       = _hal_pico_fat_mount,
     .fat_ls          = _hal_pico_fat_ls,
     .fat_open        = _hal_pico_fat_open,
@@ -106,7 +120,7 @@ static hal_ops_t _hal_pico_ops = {
     .epoch_ms        = _hal_pico_epoch_ms,
     .set_epoch_ms    = _hal_pico_set_epoch_ms,
     .sleep_ms        = _hal_pico_sleep_ms,
-    .beep            = NULL,     /* TODO: wire PWM beep when available */
+    .beep            = _hal_pico_beep,
     .watchdog_update = _hal_pico_watchdog_update,
     .reboot          = _hal_pico_reboot,
 };

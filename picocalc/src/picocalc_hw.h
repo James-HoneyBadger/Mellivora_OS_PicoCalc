@@ -10,8 +10,9 @@
 /* ----- Display: ILI9488 320x320 IPS, SPI1 ----- */
 #define LCD_SPI_PORT    spi1
 /* Match the official Clockwork PicoCalc LCD driver. */
-/* RP2350 can drive SPI faster thanks to improved IO */
-#ifdef PICO_RP2350A
+/* RP2350 can drive SPI faster thanks to improved IO.
+ * The platform define is available before the board header is included. */
+#if defined(PICO_RP2350A) || defined(PICO_RP2350)
 #define LCD_SPI_SPEED   40000000U
 #else
 #define LCD_SPI_SPEED   25000000U

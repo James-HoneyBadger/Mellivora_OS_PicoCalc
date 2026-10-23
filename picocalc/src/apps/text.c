@@ -6,34 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include "core/shell_parse.h"
+#include "core/simple_re.h"
+#include "core/textutil.h"
+#include "pipe.h"
 #include "syscall.h"
-
-/* Simple regex: '.' matches any char, '*' matches zero-or-more of preceding */
-static bool match_re_here(const char *re, const char *text);
-
-static bool match_re_star(char c, const char *re, const char *text) {
-    do {
-        if (match_re_here(re, text)) return true;
-    } while (*text != '\0' && (c == '.' || tolower((unsigned char)*text) == tolower((unsigned char)c)) && text++);
-    return false;
-}
-
-static bool match_re_here(const char *re, const char *text) {
-    if (re[0] == '\0') return true;
-    if (re[1] == '*') return match_re_star(re[0], re + 2, text);
-    if (re[0] == '.' && *text != '\0') return match_re_here(re + 1, text + 1);
-    if (*text != '\0' && tolower((unsigned char)re[0]) == tolower((unsigned char)*text))
-        return match_re_here(re + 1, text + 1);
-    return false;
-}
-
-bool match_simple_re(const char *re, const char *text) {
-    if (re[0] == '^') return match_re_here(re + 1, text);
-    do {
-        if (match_re_here(re, text)) return true;
-    } while (*text++ != '\0');
-    return false;
-}
 
 void app_head(const char *arg) {
     const char *s = skip_ws(arg);
@@ -51,25 +28,16 @@ void app_head(const char *arg) {
         s = skip_ws(endptr);
     }
 
-    if (!*s) {
+    char path[APP_TOKEN_MAX];
+    next_token(s, path, sizeof path);
+    if (!*path && !pipe_input_active()) {
         print_line("usage: head [-n NUM] FILE");
         return;
     }
 
-    char path[256];
-    size_t i = 0;
-    while (*s && !isspace((unsigned char)*s) && i < sizeof path - 1) {
-        path[i++] = *s++;
-    }
-    path[i] = '\0';
-
     char buf[2048 + 1];
-    int n = sys_fread(path, buf, 2048);
-    if (n < 0) {
-        print_line("head: cannot open file");
-        return;
-    }
-    buf[n] = '\0';
+    int n = read_text_file(path, buf, sizeof buf, "head");
+    if (n < 0) return;
 
     long seen = 0;
     for (int j = 0; j < n; j++) {
@@ -100,18 +68,14 @@ void app_grep(const char *arg) {
         print_line("usage: grep [-n] [-e] PATTERN FILE");
         return;
     }
-    if (!*path) {
-        print_line("grep: stdin mode not implemented on PicoCalc yet");
+    if (!*path && !pipe_input_active()) {
+        print_line("usage: grep [-n] [-e] PATTERN FILE");
         return;
     }
 
     char file_buf[APP_READ_MAX + 1];
-    int n = sys_fread(path, file_buf, APP_READ_MAX);
-    if (n < 0) {
-        print_line("grep: cannot open file");
-        return;
-    }
-    file_buf[n] = '\0';
+    int n = read_text_file(path, file_buf, sizeof file_buf, "grep");
+    if (n < 0) return;
 
     /* Auto-detect regex if pattern contains . or * */
     if (!use_regex) {
@@ -153,7 +117,7 @@ void app_grep(const char *arg) {
         line++;
     }
 
-    {
+    if (!sys_output_captured() && !pipe_input_active()) {
         char sum[48];
         snprintf(sum, sizeof sum, "matches: %d", matches);
         print_line(sum);
@@ -163,18 +127,14 @@ void app_grep(const char *arg) {
 void app_pager(const char *arg) {
     char path[APP_TOKEN_MAX];
     next_token(arg, path, sizeof path);
-    if (!*path) {
+    if (!*path && !pipe_input_active()) {
         print_line("usage: pager FILE");
         return;
     }
 
     char file_buf[APP_READ_MAX + 1];
-    int n = sys_fread(path, file_buf, APP_READ_MAX);
-    if (n < 0) {
-        print_line("pager: cannot open file");
-        return;
-    }
-    file_buf[n] = '\0';
+    int n = read_text_file(path, file_buf, sizeof file_buf, "pager");
+    if (n < 0) return;
 
     int line_count = 0;
     for (int i = 0; i < n; i++) {
@@ -200,18 +160,14 @@ void app_pager(const char *arg) {
 void app_rev(const char *arg) {
     char path[APP_TOKEN_MAX];
     next_token(arg, path, sizeof path);
-    if (!*path) {
+    if (!*path && !pipe_input_active()) {
         print_line("usage: rev FILE");
         return;
     }
 
     char file_buf[APP_READ_MAX + 1];
-    int n = sys_fread(path, file_buf, APP_READ_MAX);
-    if (n < 0) {
-        print_line("rev: cannot open file");
-        return;
-    }
-    file_buf[n] = '\0';
+    int n = read_text_file(path, file_buf, sizeof file_buf, "rev");
+    if (n < 0) return;
 
     const char *p = file_buf;
     while (*p) {
@@ -239,18 +195,14 @@ void app_sort(const char *arg) {
 
     char path[APP_TOKEN_MAX];
     next_token(s, path, sizeof path);
-    if (!*path) {
+    if (!*path && !pipe_input_active()) {
         print_line("usage: sort [-r] [-n] FILE");
         return;
     }
 
     char file_buf[APP_READ_MAX + 1];
-    int n = sys_fread(path, file_buf, APP_READ_MAX);
-    if (n < 0) {
-        print_line("sort: cannot open file");
-        return;
-    }
-    file_buf[n] = '\0';
+    int n = read_text_file(path, file_buf, sizeof file_buf, "sort");
+    if (n < 0) return;
 
     char *lines[128];
     int line_count = 0;
@@ -307,7 +259,7 @@ void app_tail(const char *arg) {
 
     char path[APP_TOKEN_MAX];
     next_token(s, path, sizeof path);
-    if (!*path) {
+    if (!*path && !pipe_input_active()) {
         print_line("usage: tail [-n NUM] FILE");
         return;
     }
@@ -335,7 +287,7 @@ void app_tail(const char *arg) {
 void app_wc(const char *arg) {
     char path[APP_TOKEN_MAX];
     next_token(arg, path, sizeof path);
-    if (!*path) {
+    if (!*path && !pipe_input_active()) {
         print_line("usage: wc FILE");
         return;
     }
@@ -399,7 +351,7 @@ void app_cut(const char *arg) {
         }
     }
 
-    if (!*path) {
+    if (!*path && !pipe_input_active()) {
         print_line("usage: cut [-d CHAR] [-f NUM] FILE");
         return;
     }
@@ -456,7 +408,7 @@ void app_uniq(const char *arg) {
 
     char path[APP_TOKEN_MAX];
     next_token(s, path, sizeof path);
-    if (!*path) { print_line("usage: uniq [-c] [-d] [-u] FILE"); return; }
+    if (!*path && !pipe_input_active()) { print_line("usage: uniq [-c] [-d] [-u] FILE"); return; }
 
     char buf[APP_READ_MAX + 1];
     int n = read_text_file(path, buf, sizeof buf, "uniq");
@@ -511,5 +463,246 @@ void app_uniq(const char *arg) {
                 print_line(prev);
             }
         }
+    }
+}
+
+void app_tr(const char *arg) {
+    char tmp[APP_TOKEN_MAX * 2];
+    copy_cstr(tmp, sizeof tmp, arg ? arg : "");
+
+    shell_argv_t av;
+    int argc = shell_tokenize(tmp, &av);
+
+    int i = 0;
+    bool delete_mode = false;
+    if (i < argc && strcmp(av.argv[i], "-d") == 0) {
+        delete_mode = true;
+        i++;
+    }
+    if (i >= argc) {
+        print_line("usage: tr [-d] SET1 [SET2] [FILE]");
+        return;
+    }
+
+    const char *set1_spec = av.argv[i++];
+    const char *set2_spec = NULL;
+    if (!delete_mode) {
+        if (i >= argc) {
+            print_line("usage: tr [-d] SET1 SET2 [FILE]");
+            return;
+        }
+        set2_spec = av.argv[i++];
+    }
+
+    const char *path = (i < argc) ? av.argv[i] : "";
+    if (!*path && !pipe_input_active()) {
+        print_line("usage: tr [-d] SET1 [SET2] [FILE]");
+        return;
+    }
+
+    char set1[128];
+    char set2[128];
+    size_t len1 = charset_expand(set1_spec, set1, sizeof set1);
+    size_t len2 = delete_mode ? 0 : charset_expand(set2_spec, set2, sizeof set2);
+
+    char *buf = (char *)g_app_io_buf;
+    int n = read_text_file(path, buf, APP_READ_MAX, "tr");
+    if (n < 0) return;
+
+    for (int k = 0; k < n; k++) {
+        char c = buf[k];
+        if (delete_mode) {
+            if (memchr(set1, c, len1)) continue;
+            sys_putchar(c);
+        } else {
+            sys_putchar(charset_translate(set1, len1, set2, len2, c));
+        }
+    }
+}
+
+void app_sed(const char *arg) {
+    char tmp[APP_TOKEN_MAX * 2];
+    copy_cstr(tmp, sizeof tmp, arg ? arg : "");
+
+    shell_argv_t av;
+    int argc = shell_tokenize(tmp, &av);
+    if (argc < 1) {
+        print_line("usage: sed 's/OLD/NEW/[g]' [FILE]");
+        return;
+    }
+
+    const char *script = av.argv[0];
+    const char *path = (argc >= 2) ? av.argv[1] : "";
+    if (!*path && !pipe_input_active()) {
+        print_line("usage: sed 's/OLD/NEW/[g]' [FILE]");
+        return;
+    }
+
+    if (script[0] != 's' || script[1] == '\0') {
+        print_line("sed: only s/OLD/NEW/[g] is supported");
+        return;
+    }
+
+    char delim = script[1];
+    const char *p = script + 2;
+
+    const char *old_start = p;
+    while (*p && *p != delim) {
+        if (*p == '\\' && p[1]) p++;
+        p++;
+    }
+    if (*p != delim) {
+        print_line("sed: missing pattern delimiter");
+        return;
+    }
+    size_t old_raw_len = (size_t)(p - old_start);
+    p++;
+
+    const char *new_start = p;
+    while (*p && *p != delim) {
+        if (*p == '\\' && p[1]) p++;
+        p++;
+    }
+    if (*p != delim) {
+        print_line("sed: missing replacement delimiter");
+        return;
+    }
+    size_t new_raw_len = (size_t)(p - new_start);
+    p++;
+
+    bool global = (*p == 'g');
+
+    char old_raw[APP_TOKEN_MAX];
+    char new_raw[APP_TOKEN_MAX];
+    if (old_raw_len >= sizeof old_raw) old_raw_len = sizeof old_raw - 1;
+    memcpy(old_raw, old_start, old_raw_len);
+    old_raw[old_raw_len] = '\0';
+    if (new_raw_len >= sizeof new_raw) new_raw_len = sizeof new_raw - 1;
+    memcpy(new_raw, new_start, new_raw_len);
+    new_raw[new_raw_len] = '\0';
+
+    char old[APP_TOKEN_MAX];
+    char new_text[APP_TOKEN_MAX];
+    text_unescape(old_raw, old, sizeof old);
+    text_unescape(new_raw, new_text, sizeof new_text);
+
+    char *buf = (char *)g_app_io_buf;
+    static char line_out[APP_TOKEN_MAX * 4];
+    int n = read_text_file(path, buf, APP_READ_MAX, "sed");
+    if (n < 0) return;
+
+    const char *line = buf;
+    const char *end = buf + n;
+    while (line < end) {
+        const char *nl = memchr(line, '\n', (size_t)(end - line));
+        size_t len = nl ? (size_t)(nl - line) : (size_t)(end - line);
+
+        size_t used = text_replace(line, len, old, new_text, global, line_out, sizeof line_out);
+        if (used == (size_t)-1) {
+            print_line("sed: output too large");
+            return;
+        }
+
+        for (size_t k = 0; k < used; k++) sys_putchar(line_out[k]);
+        if (nl) sys_putchar('\n');
+
+        line = nl ? nl + 1 : end;
+    }
+}
+
+static void md_inline(const char *in, char *out, size_t cap) {
+    size_t o = 0;
+    const char *p = in;
+
+    while (*p && o + 1 < cap) {
+        if (*p == '[') {
+            const char *close = strchr(p + 1, ']');
+            if (close && close[1] == '(') {
+                const char *end = strchr(close + 2, ')');
+                if (end) {
+                    for (const char *q = p + 1; q < close && o + 1 < cap; q++) out[o++] = *q;
+                    if (o + 2 < cap) {
+                        out[o++] = ' ';
+                        out[o++] = '(';
+                    }
+                    for (const char *q = close + 2; q < end && o + 1 < cap; q++) out[o++] = *q;
+                    if (o + 1 < cap) out[o++] = ')';
+                    p = end + 1;
+                    continue;
+                }
+            }
+        }
+
+        if (*p == '*' || *p == '_' || *p == '`') {
+            p++;
+            continue;
+        }
+
+        out[o++] = *p++;
+    }
+    out[o] = '\0';
+}
+
+void app_md(const char *arg) {
+    const char *path = skip_ws(arg ? arg : "");
+    if (!*path && !pipe_input_active()) {
+        print_line("usage: md FILE");
+        return;
+    }
+
+    char *buf = (char *)g_app_io_buf;
+    int n = read_text_file(path, buf, APP_READ_MAX, "md");
+    if (n < 0) return;
+
+    bool in_code = false;
+    const char *p = buf;
+    const char *end = buf + n;
+
+    while (p < end) {
+        const char *nl = memchr(p, '\n', (size_t)(end - p));
+        size_t len = nl ? (size_t)(nl - p) : (size_t)(end - p);
+        if (len > 0 && p[len - 1] == '\r') len--;
+
+        char line[APP_TOKEN_MAX];
+        if (len >= sizeof line) len = sizeof line - 1;
+        memcpy(line, p, len);
+        line[len] = '\0';
+
+        if (strncmp(line, "```", 3) == 0) {
+            in_code = !in_code;
+            print_line(in_code ? "--- code ---" : "------------");
+        } else if (in_code) {
+            sys_print("  ");
+            print_line(line);
+        } else {
+            const char *s = line;
+            while (*s == ' ') s++;
+
+            int heading = 0;
+            while (s[heading] == '#') heading++;
+
+            char rendered[APP_TOKEN_MAX];
+            if (heading > 0 && s[heading] == ' ') {
+                if (heading == 1) print_line("==========");
+                md_inline(s + heading + 1, rendered, sizeof rendered);
+                print_line(rendered);
+                if (heading == 1) print_line("==========");
+            } else if (strncmp(s, "- ", 2) == 0 || strncmp(s, "* ", 2) == 0) {
+                md_inline(s + 2, rendered, sizeof rendered);
+                sys_print("  * ");
+                print_line(rendered);
+            } else if (strncmp(s, "> ", 2) == 0) {
+                md_inline(s + 2, rendered, sizeof rendered);
+                sys_print("  | ");
+                print_line(rendered);
+            } else if (strcmp(s, "---") == 0 || strcmp(s, "***") == 0) {
+                print_line("----------------------------------------");
+            } else {
+                md_inline(s, rendered, sizeof rendered);
+                print_line(rendered);
+            }
+        }
+
+        p = nl ? nl + 1 : end;
     }
 }

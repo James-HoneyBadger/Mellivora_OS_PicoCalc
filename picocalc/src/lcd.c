@@ -886,7 +886,8 @@ void lcd_draw_cell(int col, int row, char c, uint32_t fg, uint32_t bg) {
     if (col < 0 || col >= LCD_COLS || row < 0 || row >= LCD_ROWS) return;
     if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) c = ' ';
     _lcd_lock();
-    _text_buf[row][col] = c;
+    _text_buf[row][col]  = c;
+    _color_buf[row][col] = fg;
     lcd_draw_char((uint16_t)(col * LCD_CHAR_W), (uint16_t)(row * LCD_CHAR_H), c, fg, bg);
     _lcd_unlock();
 }

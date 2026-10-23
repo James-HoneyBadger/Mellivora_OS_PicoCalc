@@ -7,12 +7,16 @@ on:
       - 'picocalc/src/**'
       - 'picocalc/CMakeLists.txt'
       - 'Makefile'
+      - 'tools/quality/size_gate.sh'
+      - 'reports/size-baseline-*.txt'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
       - 'picocalc/src/**'
       - 'picocalc/CMakeLists.txt'
       - 'Makefile'
+      - 'tools/quality/size_gate.sh'
+      - 'reports/size-baseline-*.txt'
       - '.github/workflows/build.yml'
   workflow_dispatch:
 
@@ -51,6 +55,11 @@ jobs:
           echo "uf2=$UF2" >> $GITHUB_OUTPUT
           echo "Built: $UF2"
           ls -la "$UF2"
+
+      - name: Size gate (${{ matrix.target }})
+        run: |
+          chmod +x tools/quality/size_gate.sh
+          tools/quality/size_gate.sh ${{ matrix.target }}
 
       - name: Upload UF2 artifact
         uses: actions/upload-artifact@v4

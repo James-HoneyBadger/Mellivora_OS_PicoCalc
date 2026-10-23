@@ -7,20 +7,21 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdint.h>
+#include "pipe.h"
 #include "syscall.h"
 
 static void app_hexdump_core(const char *arg, const char *label) {
     char path[APP_TOKEN_MAX];
     next_token(arg, path, sizeof path);
-    if (!*path) {
+    if (!*path && !pipe_input_active()) {
         sys_print("usage: ");
         sys_print(label);
         sys_print(" FILE\n");
         return;
     }
 
-    char buf[APP_READ_MAX + 1];
-    int n = read_text_file(path, buf, sizeof buf, label);
+    char *buf = (char *)g_app_io_buf;
+    int n = read_text_file(path, buf, APP_READ_MAX, label);
     if (n < 0) return;
 
     for (int offset = 0; offset < n; offset += 16) {

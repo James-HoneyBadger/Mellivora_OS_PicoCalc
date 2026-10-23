@@ -29,3 +29,23 @@ jobs:
             reports/size-baseline-latest.md
             docs/COMMANDS.generated.md
           if-no-files-found: error
+
+  analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host analysis tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-format clang-tidy build-essential
+
+      - name: Host unit tests
+        run: make test
+
+      - name: Formatting
+        run: make format-check
+
+      - name: Static analysis
+        run: make lint

@@ -119,6 +119,13 @@ void sys_more_set(bool enabled);
 void sys_more_reset(void);
 int sys_console_write_char(char c);
 
+/* Implemented by the shell. Return true when the character was consumed by
+   output redirection or a pipeline capture buffer. */
+bool sys_output_capture_char(char c);
+
+/* True while shell output is being redirected or captured by a pipeline. */
+bool sys_output_captured(void);
+
 /* ------------------------------------------------------------------ */
 /* Syscall wrappers                                                     */
 /* ------------------------------------------------------------------ */
