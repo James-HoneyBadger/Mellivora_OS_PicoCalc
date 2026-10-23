@@ -191,6 +191,15 @@ static void test_chain(void) {
     CHECK_EQ(n, 1);
     CHECK_STR_EQ(segs[0], "one");
 
+    strcpy(line, "echo 'a;b'");
+    n = shell_split_chain(line, segs, kinds, SHELL_MAX_CHAIN);
+    CHECK_EQ(n, 1);
+    CHECK_STR_EQ(segs[0], "echo 'a;b'");
+
+    strcpy(line, "echo 'a && b'");
+    n = shell_split_chain(line, segs, kinds, SHELL_MAX_CHAIN);
+    CHECK_EQ(n, 1);
+
     CHECK_EQ(shell_split_chain(NULL, segs, kinds, SHELL_MAX_CHAIN), 0);
     CHECK_EQ(shell_split_chain(line, NULL, kinds, SHELL_MAX_CHAIN), 0);
     CHECK_EQ(shell_split_chain(line, segs, NULL, SHELL_MAX_CHAIN), 0);
@@ -217,6 +226,10 @@ static void test_redir(void) {
     strcpy(line, "echo \"a > b\"");
     CHECK(!shell_parse_redir(line, &file, &append));
     CHECK_STR_EQ(line, "echo \"a > b\"");
+
+    strcpy(line, "echo 'a > b'");
+    CHECK(!shell_parse_redir(line, &file, &append));
+    CHECK_STR_EQ(line, "echo 'a > b'");
 
     strcpy(line, "ls >");
     CHECK(shell_parse_redir(line, &file, &append));

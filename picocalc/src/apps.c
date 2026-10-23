@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "apps/app_internal.h"
+#include "ui/ui.h"
 
 void app_init(void) {
     app_settings_init();
@@ -27,7 +28,8 @@ void app_boot(void) {
         char out[96];
         snprintf(out, sizeof out, "Opening startup app: %.48s", st->startup_app);
         print_line(out);
-        (void)app_dispatch_named(st->startup_app, "");
+        if (!app_dispatch_named(st->startup_app, ""))
+            ui_error("startup", "saved startup app is not available");
     }
 }
 
@@ -40,10 +42,8 @@ static int _app_cmp(const void *a, const void *b) {
                   ((const app_cmd_entry_t *)b)->name);
 }
 
-bool app_dispatch_named(const char *cmd, const char *arg) {
-    /* Table is sorted lazily on first call so future maintainers can append
-       entries in any order. After sorting we binary-search every dispatch,
-       turning a ~110-strcmp linear scan into ~7 comparisons. */
+static app_cmd_entry_t *app_table(size_t *out_count) {
+    /* Sorted lazily so entries can be appended in any order. */
     static app_cmd_entry_t table[] = {
         {"hello", app_hello}, {"basename", app_basename}, {"dirname", app_dirname},
         {"seq", app_seq}, {"head", app_head}, {"tail", app_tail},
@@ -79,19 +79,16 @@ bool app_dispatch_named(const char *cmd, const char *arg) {
         {"id", app_id}, {"true", app_noop}, {"false", app_noop},
         {"stopwatch", app_stopwatch}, {"timer", app_stopwatch},
         {"pomodoro", app_pomodoro},
-        /* New utilities */
         {"watch", app_watch}, {"diff", app_diff}, {"env", app_env},
         {"lock", app_lock}, {"xxd", app_xxd}, {"strings", app_strings},
         {"yes", app_yes}, {"tee", app_tee},
         {"base64", app_base64}, {"crc32", app_crc32},
         {"units", app_units}, {"pass", app_pass}, {"password", app_pass},
-        /* New programs */
         {"life", app_life}, {"tetris", app_tetris},
         {"mandelbrot", app_mandelbrot}, {"fractal", app_mandelbrot},
         {"piano", app_piano}, {"forth", app_forth},
         {"minesweeper", app_minesweeper}, {"mines", app_minesweeper},
         {"2048", app_2048},
-        /* System */
         {"xmodem", app_xmodem}, {"theme", app_theme},
     };
     static const size_t n = sizeof table / sizeof table[0];
@@ -100,9 +97,24 @@ bool app_dispatch_named(const char *cmd, const char *arg) {
         qsort(table, n, sizeof table[0], _app_cmp);
         sorted = true;
     }
+    if (out_count) *out_count = n;
+    return table;
+}
 
+static app_cmd_entry_t *app_lookup(const char *cmd) {
+    if (!cmd || !*cmd) return NULL;
+    size_t n = 0;
+    app_cmd_entry_t *table = app_table(&n);
     app_cmd_entry_t key = { cmd, NULL };
-    app_cmd_entry_t *hit = bsearch(&key, table, n, sizeof table[0], _app_cmp);
+    return bsearch(&key, table, n, sizeof table[0], _app_cmp);
+}
+
+bool app_known(const char *cmd) {
+    return app_lookup(cmd) != NULL;
+}
+
+bool app_dispatch_named(const char *cmd, const char *arg) {
+    app_cmd_entry_t *hit = app_lookup(cmd);
     if (hit) { hit->handler(arg); return true; }
     return false;
 }

@@ -13,7 +13,10 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 - `ls` and `browse` show VFAT long names when present; paths may use them
 - `$NAME`, `${NAME}`, `$?`, and `$((EXPR))` are expanded before dispatch
 - Unquoted wildcards (`*`, `?`, `[abc]`) run the command once per match
-- Pipelines (`cmd1 | cmd2 | cmd3`) are buffered in RAM; `-` or no file reads the upstream stage
+- Pipelines (`cmd1 | cmd2 | cmd3`) are buffered in RAM; `-` or no file reads the upstream stage.
+  Up to 4 stages are supported and each intermediate result is capped at 4 KiB;
+  longer output prints `pipe: output truncated`
+- Unquoted wildcards match 8.3 short names only; long names can be typed directly
 - `/PROFILE.CFG` runs at boot; use it for aliases, variables, and `PROMPT`
 - `Ctrl-C` cancels long-running commands
 - `Ctrl-R` searches command history
@@ -36,7 +39,7 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `echo TEXT`                | Print text                                             |
 | `id`                       | Always prints `mellivora`                              |
 | `true` / `false`           | Exit status helpers (for scripts)                      |
-| `lock`                     | Lock the device with a PIN                             |
+| `lock`                     | Screen lock with a 4-digit PIN (not encryption)         |
 | `screenshot [file]`        | Save current LCD text cells to a file                  |
 | `cursor [STYLE]`           | Configure shell cursor (`on off block underscore`)   |
 
@@ -53,7 +56,8 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `mkdir <path>`               | Create directory                                     |
 | `rm [-rRf] <path>`           | Remove file (or recursively for directories)         |
 | `cp [-r] <src> <dst>`        | Copy file or directory                               |
-| `mv <src> <dst>` / `rename`  | Rename / move                                        |
+| `mv <src> <dst>`             | Move a file (streams across directories)             |
+| `rename <old> <new>`         | Rename within the same directory                     |
 | `cat <file>`                 | Display file contents                                |
 | `sdinfo`                     | Show SD-card status and geometry                     |
 | `sdread LBA`                 | Read and inspect a raw SD block                      |
@@ -77,14 +81,14 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `disk` / `space`             | Aliases for `df`                                     |
 | `stat <file>`                | File metadata                                        |
 | `hexdump` / `xxd` / `od`     | Binary dump                                          |
-| `hexedit` / `hex`            | Interactive hex editor                               |
+| `hexedit` / `hex`            | Hex editor (files larger than the buffer open view-only) |
 | `strings <file>`             | Printable ASCII runs                                 |
 | `diff <a> <b>`               | Line-based diff                                      |
 | `base64 [-d] [-o OUT] <file>`| Encode (default) or decode (`-d`) a file; never overwrites input |
 | `crc32 <file>`               | CRC-32 (ISO-HDLC) checksum of a file                 |
 | `tee <file>`                 | Tee stdin to file (and stdout)                       |
 | `write <file>`               | Read stdin until `.` line, write to file             |
-| `edit <file>` / `bedit`      | Line editor / block editor                           |
+| `edit <file>` / `bedit`      | Line editor (files up to the RAM buffer; long lines refused) |
 | `browse` / `files`           | Visual file browser                                  |
 
 ## Shell
@@ -102,7 +106,7 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `which CMD...` / `type` | Locate a command, alias, or file                         |
 | `expr EXPR`             | Evaluate an integer expression                           |
 | `script <file>`         | Run a script through the full shell parser (also `. FILE`) |
-| `watch CMD`             | Re-run CMD every 2s until any key                        |
+| `watch CMD [SEC]`       | Re-run a shell command every SEC (default 2) until any key |
 | `yes [STRING]`          | Repeatedly print STRING                                  |
 | `seq N` / `seq A B`     | Numeric sequence                                         |
 | `hello`                 | Greeting (sample command)                                |

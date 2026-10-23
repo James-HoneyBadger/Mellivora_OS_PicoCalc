@@ -19,16 +19,23 @@ Whenever possible, features should feel natural in a handheld shell rather than 
 Important files and responsibilities:
 
 - `picocalc/src/main.c` — boot path, shell loop, built-in command handlers, help, history, aliasing
-- `picocalc/src/apps.c` — most user-facing apps and utility ports
+- `picocalc/src/apps.c` — app registry (name table, dispatch, startup hooks)
+- `picocalc/src/apps/app_*.c` — command modules: `util`, `settings`, `editor`,
+  `langs`, `productivity`, `games`, `system`, `builtins`, `tools`, wired
+  through the private `apps/app_internal.h`
+- `picocalc/src/apps/text.c`, `hex.c`, `fs.c` — text, hex, and filesystem utilities
+- `picocalc/src/ui/` — semantic colour roles, palettes, headers/footers, menus
 - `picocalc/src/core/` — hardware-independent logic with host tests: expression
   evaluation (`expr`), shell parsing (`shell_parse`), path handling
-  (`path_util`), FAT 8.3 names (`fatname`), the simple regex matcher
-  (`simple_re`), wildcard matching (`glob`), and `tr`/`sed` helpers
-  (`textutil`)
+  (`path_util`), FAT 8.3 names (`fatname`), VFAT long names (`lfn`), the
+  simple regex matcher (`simple_re`), wildcard matching (`glob`), and
+  `tr`/`sed` helpers (`textutil`)
 - `picocalc/src/console.c` — shared blocking line input
 - `picocalc/src/audio.c` — PWM tone output
 - `picocalc/src/pipe.c` — bounded in-RAM pipeline buffers
-- `picocalc/src/fat.c` and `fat.h` — FAT-backed filesystem logic
+- `picocalc/src/shell.h` — script and command-line entry points implemented by `main.c`
+- `picocalc/src/fat.c` and `fat.h` — FAT-backed filesystem logic, including
+  read-only VFAT long-name lookup
 - `picocalc/src/syscall.c` and related headers — app-facing helper surface
 - `picocalc/src/sd.c` — low-level SD card block I/O
 - `picocalc/src/lcd.c` — display handling
@@ -198,7 +205,6 @@ Before considering a change complete:
 
 As the system grows, the biggest architectural payoff will likely come from:
 
-- splitting `apps.c` into themed modules
 - improving automated command documentation generation
 - expanding the sample library
 - widening interpreter coverage while staying within RP2040 limits

@@ -4,9 +4,29 @@ All notable changes to **Mellivora OS for PicoCalc** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 2.4.0 development
+## [Unreleased] — 2.5.0 development
 
-### Added (2.4.0-dev)
+### Fixed (2.5.0-dev)
+
+- **No more silent truncation in editors and copies.** `edit` refuses files
+  larger than its buffer or with over-long lines; `hexedit` opens oversized
+  files view-only and disables saving; `cp`, `cp -r`, and `mv` stream in
+  512-byte chunks instead of copying at most one buffer.
+- **`mv` now moves across directories** by streaming a copy and removing
+  the source, instead of failing in `rename`.
+- **Failures set `$?`** for the common filesystem commands (`mount`, `ls`,
+  `cd`, `cat`, `touch`, `write`, `mkdir`, `rm`, `rename`), so `&&`, `||`,
+  and the prompt error marker behave correctly.
+- **`watch` accepts `watch CMD [SECONDS]`** as documented and can run shell
+  builtins, not just app-table commands.
+- **XMODEM aborts instead of silently dropping data** when the receive
+  buffer is full.
+- **`cat` no longer appends a blank line** to files that already end with a
+  newline; `screenshot` uses the live screen geometry.
+- **`ui_header` keeps the title readable** when the right-hand label is
+  long, and `ui_notify` writes its message under the LCD lock.
+
+### Added (2.5.0-dev)
 
 - **Tiny C loops and loop control** — `for (init; cond; step)` joins
   `while`, with `break` and `continue` honoured by both.
@@ -16,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one uppercase, lowercase, digit, and symbol, avoid modulo bias, and are
   shuffled so the required classes are not always in the same position.
 
-### Changed (2.4.0-dev)
+### Changed (2.5.0-dev)
 
 - **Unified visual language** — new `ui/` module provides semantic colour
   roles (text, muted, accent, success, warning, error, border, panel,
@@ -37,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drops unused handlers per object file, shrinking firmware by ~3.5 KB.
 
 
-### Added (2.4.0-dev)
+### Added (2.5.0-dev)
 
 - **`uniq` command** — filter adjacent duplicate lines from a file.
   Supports `-c` (count), `-d` (only duplicates), `-u` (only unique).
@@ -111,7 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`make size-baseline` / `make size-gate`** — reproducible size
   baselines and an enforceable regression gate.
 
-### Changed (2.4.0-dev)
+### Changed (2.5.0-dev)
 
 - **Testable core modules** — extracted the expression evaluator, shell
   line parsing (`$VAR`, `;`/`&&`/`||`, redirection, pager pipes), path
@@ -126,7 +146,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Real size gate** — CI checks flash and RAM budgets for each target
   and fails on growth beyond the committed baselines.
 
-### Fixed (2.4.0-dev)
+### Fixed (2.5.0-dev)
 
 - **Redirection captures app output** — output written through
   `sys_print`/`sys_putchar` is now routed through the shell capture hook,

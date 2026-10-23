@@ -201,6 +201,25 @@ static void _cp_collect_cb(const char *name, uint32_t size, bool is_dir, void *c
     b->n++;
 }
 
+/* Stream a file in 512-byte chunks so copies are not limited by RAM. */
+static bool copy_file_stream(const char *src, const char *dst) {
+    fat_file_t in;
+    if (fat_open(src, &in) != FAT_OK) return false;
+
+    uint8_t chunk[512];
+    bool first = true;
+    int32_t rd;
+    while ((rd = fat_read(&in, chunk, sizeof chunk)) > 0) {
+        fat_result_t r = first ? fat_create(dst, chunk, (uint32_t)rd)
+                               : fat_append(dst, chunk, (uint32_t)rd);
+        if (r != FAT_OK) return false;
+        first = false;
+    }
+    if (rd < 0 && rd != FAT_ERR_EOF) return false;
+    if (first) return fat_create(dst, chunk, 0) == FAT_OK;
+    return true;
+}
+
 static void cp_recurse(const char *src_dir, const char *dst_dir, _cp_dir_ctx_t *cpctx) {
     if (sys_interrupted()) {
         cpctx->err = true;
@@ -229,21 +248,10 @@ static void cp_recurse(const char *src_dir, const char *dst_dir, _cp_dir_ctx_t *
             } else {
                 cpctx->err = true;
             }
+        } else if (copy_file_stream(fsrc, fdst)) {
+            cpctx->count++;
         } else {
-            uint8_t buf[APP_READ_MAX];
-            fat_file_t f;
-            if (fat_open(fsrc, &f) != FAT_OK) {
-                cpctx->err = true;
-                continue;
-            }
-            int32_t rd = fat_read(&f, buf, sizeof buf);
-            if (rd < 0) {
-                cpctx->err = true;
-                continue;
-            }
-            if (fat_create(fdst, buf, (uint32_t)rd) == FAT_OK) cpctx->count++;
-            else
-                cpctx->err = true;
+            cpctx->err = true;
         }
     }
 }
@@ -285,17 +293,11 @@ void app_cp(const char *arg) {
         return;
     }
 
-    uint8_t buf[APP_READ_MAX];
-    uint32_t n = 0;
-    if (load_file_bytes(src, buf, sizeof buf, &n, "cp") < 0) return;
-    if (sys_fwrite(dst, buf, n) < 0) {
-        print_line("cp: write failed");
+    if (!copy_file_stream(abs_src, abs_dst)) {
+        ui_error("cp", "copy failed");
         return;
     }
-
-    char out[64];
-    snprintf(out, sizeof out, "copied %lu bytes", (unsigned long)n);
-    print_line(out);
+    ui_ok("copied");
 }
 
 void app_mv(const char *arg) {
@@ -321,21 +323,15 @@ void app_mv(const char *arg) {
         return;
     }
 
-    uint8_t buf[APP_READ_MAX];
-    uint32_t n = 0;
-    if (load_file_bytes(src, buf, sizeof buf, &n, "mv") < 0) return;
-    if (sys_fwrite(dst, buf, n) < 0) {
-        print_line("mv: write failed");
+    if (!copy_file_stream(abs_src, abs_dst)) {
+        ui_error("mv", "copy failed");
         return;
     }
-    if (sys_unlink(src) < 0) {
-        print_line("mv: destination written but source removal failed");
+    if (fat_unlink(abs_src) != FAT_OK) {
+        ui_error("mv", "copied but source could not be removed");
         return;
     }
-
-    char out[64];
-    snprintf(out, sizeof out, "moved %lu bytes", (unsigned long)n);
-    print_line(out);
+    ui_ok("moved");
 }
 
 /* --------------------------------------------------------------------------

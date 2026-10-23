@@ -200,12 +200,14 @@ int shell_split_chain(char *line, char *segments[], unsigned char sep_kind[], in
     segments[0] = line;
     sep_kind[0] = SHELL_SEP_ALWAYS;
 
-    bool in_quotes = false;
+    char quote = '\0';
     char *p = line;
     while (*p) {
-        if (*p == '"') {
-            in_quotes = !in_quotes;
-        } else if (!in_quotes && nseg < max_segments) {
+        if (quote) {
+            if (*p == quote) quote = '\0';
+        } else if (*p == '"' || *p == '\'') {
+            quote = *p;
+        } else if (nseg < max_segments) {
             if (p[0] == '&' && p[1] == '&') {
                 *p = '\0';
                 segments[nseg] = p + 2;
@@ -234,16 +236,18 @@ bool shell_parse_redir(char *line, char **file, bool *append) {
     char *redir_file = NULL;
     bool redir_append = false;
 
-    bool inq = false;
+    char quote = '\0';
     for (char *p = line; *p; p++) {
-        if (*p == '"') {
-            inq = !inq;
-        } else if (!inq && p[0] == '>' && p[1] == '>') {
+        if (quote) {
+            if (*p == quote) quote = '\0';
+        } else if (*p == '"' || *p == '\'') {
+            quote = *p;
+        } else if (p[0] == '>' && p[1] == '>') {
             *p = '\0';
             redir_file = skip_spaces(p + 2);
             redir_append = true;
             break;
-        } else if (!inq && p[0] == '>') {
+        } else if (p[0] == '>') {
             *p = '\0';
             redir_file = skip_spaces(p + 1);
             redir_append = false;

@@ -1273,10 +1273,11 @@ static void cmd_mount(void) {
     fat_result_t r = fat_mount();
     _fat_mounted = (r == FAT_OK);
     out_fmt("mount: %s\n", fat_result_str(r));
+    _last_exit = (r == FAT_OK) ? 0 : 1;
 }
 
 static void cmd_umount(void) {
-    if (!_fat_mounted) { out_str("umount: not mounted\n"); return; }
+    if (!_fat_mounted) { out_str("umount: not mounted\n"); _last_exit = 1; return; }
     _fat_mounted = false;
     out_str("umount: SD card unmounted\n");
 }
@@ -1316,23 +1317,23 @@ static void _ls_entry_ex(const char *short_name, const char *long_name,
 }
 
 static void cmd_ls(const char *arg) {
-    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
+    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); _last_exit = 1; return; }
     char abs[CWD_MAX];
     if (arg && *arg) resolve_abs(arg, abs);
     else             strncpy(abs, _cwd, CWD_MAX - 1);
     abs[CWD_MAX - 1] = '\0';
     fat_result_t r = fat_ls_ex(abs, _ls_entry_ex, NULL);
-    if (r != FAT_OK) out_fmt("ls: %s\n", fat_result_str(r));
+    if (r != FAT_OK) { out_fmt("ls: %s\n", fat_result_str(r)); _last_exit = 1; }
 }
 
 static void cmd_cd(const char *arg) {
-    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
+    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); _last_exit = 1; return; }
     char abs[CWD_MAX];
     resolve_abs((arg && *arg) ? arg : "/", abs);
 
     /* Validate: must be a directory */
     fat_result_t r = fat_is_dir(abs);
-    if (r != FAT_OK) { out_fmt("cd: %s: %s\n", abs, fat_result_str(r)); return; }
+    if (r != FAT_OK) { out_fmt("cd: %s: %s\n", abs, fat_result_str(r)); _last_exit = 1; return; }
 
     strncpy(_cwd, abs, CWD_MAX - 1);
     _cwd[CWD_MAX - 1] = '\0';
@@ -1350,11 +1351,15 @@ static void cmd_cat(const char *arg) {
 
     if (pipe_input_active() && (!*path || (path[0] == '-' && path[1] == '\0'))) {
         char pipe_buf[64];
+        char last = '\n';
         int n;
         while ((n = pipe_input_read(pipe_buf, sizeof pipe_buf)) > 0) {
-            for (int i = 0; i < n; i++) out_char(pipe_buf[i]);
+            for (int i = 0; i < n; i++) {
+                out_char(pipe_buf[i]);
+                last = pipe_buf[i];
+            }
         }
-        out_char('\n');
+        if (last != '\n') out_char('\n');
         return;
     }
     if (path[0] == '-' && path[1] == '\0') {
@@ -1362,23 +1367,29 @@ static void cmd_cat(const char *arg) {
         return;
     }
 
-    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
+    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); _last_exit = 1; return; }
     if (!*path) { out_str("usage: cat <path>\n"); return; }
     char abs[CWD_MAX];
     resolve_abs(path, abs);
     fat_file_t f;
     fat_result_t r = fat_open(abs, &f);
-    if (r != FAT_OK) { out_fmt("cat: %s: %s\n", abs, fat_result_str(r)); return; }
+    if (r != FAT_OK) { out_fmt("cat: %s: %s\n", abs, fat_result_str(r)); _last_exit = 1; return; }
     uint8_t buf[64];
+    char last = '\n';
     int32_t n;
     while ((n = fat_read(&f, buf, sizeof buf)) > 0) {
-        for (int32_t i = 0; i < n; i++) out_char((char)buf[i]);
+        for (int32_t i = 0; i < n; i++) {
+            out_char((char)buf[i]);
+            last = (char)buf[i];
+        }
     }
     /* Report a real I/O error; EOF is normal. */
-    if (n < 0 && n != FAT_ERR_EOF)
+    if (n < 0 && n != FAT_ERR_EOF) {
         out_fmt("\ncat: %s: %s\n", abs, fat_result_str((fat_result_t)n));
-    else
+        _last_exit = 1;
+    } else if (last != '\n') {
         out_char('\n');
+    }
 }
 
 static void cmd_echo(const char *arg) {
@@ -1387,17 +1398,17 @@ static void cmd_echo(const char *arg) {
 }
 
 static void cmd_touch(const char *arg) {
-    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
+    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); _last_exit = 1; return; }
     if (!arg || !*arg) { out_str("usage: touch <path>\n"); return; }
     char abs[CWD_MAX];
     resolve_abs(arg, abs);
     fat_result_t r = fat_create(abs, NULL, 0);
     if (r == FAT_ERR_EXISTS) return;
-    if (r != FAT_OK) out_fmt("touch: %s: %s\n", abs, fat_result_str(r));
+    if (r != FAT_OK) { out_fmt("touch: %s: %s\n", abs, fat_result_str(r)); _last_exit = 1; }
 }
 
 static void cmd_write(const char *arg) {
-    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
+    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); _last_exit = 1; return; }
     bool force = parse_force_flag(&arg);
     if (!arg || !*arg) { out_str("usage: write [-f] <path> <text>\n"); return; }
 
@@ -1424,16 +1435,16 @@ static void cmd_write(const char *arg) {
     }
     fat_unlink(abs);
     fat_result_t r = fat_create(abs, (const uint8_t *)text, (uint32_t)strlen(text));
-    if (r != FAT_OK) out_fmt("write: %s: %s\n", abs, fat_result_str(r));
+    if (r != FAT_OK) { out_fmt("write: %s: %s\n", abs, fat_result_str(r)); _last_exit = 1; }
 }
 
 static void cmd_mkdir(const char *arg) {
-    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
+    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); _last_exit = 1; return; }
     if (!arg || !*arg) { out_str("usage: mkdir <path>\n"); return; }
     char abs[CWD_MAX];
     resolve_abs(arg, abs);
     fat_result_t r = fat_mkdir(abs);
-    if (r != FAT_OK) out_fmt("mkdir: %s: %s\n", abs, fat_result_str(r));
+    if (r != FAT_OK) { out_fmt("mkdir: %s: %s\n", abs, fat_result_str(r)); _last_exit = 1; }
 }
 
 /* Recursive directory removal — uses a 32-entry batch buffer to avoid
@@ -1487,7 +1498,7 @@ static void rm_recurse(const char *path) {
 }
 
 static void cmd_rm(const char *arg) {
-    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
+    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); _last_exit = 1; return; }
     bool force = parse_force_flag(&arg);
     /* Parse optional -r / -R for recursive */
     bool recursive = false;
@@ -1514,11 +1525,11 @@ static void cmd_rm(const char *arg) {
     }
 
     fat_result_t r = fat_unlink(abs);
-    if (r != FAT_OK) out_fmt("rm: %s: %s\n", abs, fat_result_str(r));
+    if (r != FAT_OK) { out_fmt("rm: %s: %s\n", abs, fat_result_str(r)); _last_exit = 1; }
 }
 
 static void cmd_rename(const char *arg) {
-    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); return; }
+    if (!_fat_mounted) { out_str("Not mounted. Run 'mount' first.\n"); _last_exit = 1; return; }
     if (!arg || !*arg) { out_str("usage: rename <old> <new>\n"); return; }
     /* Split arg into old and new names */
     char buf[CWD_MAX * 2];
@@ -1534,7 +1545,7 @@ static void cmd_rename(const char *arg) {
     resolve_abs(buf, abs_old);
     resolve_abs(p, abs_new);
     fat_result_t r = fat_rename(abs_old, abs_new);
-    if (r != FAT_OK) out_fmt("rename: %s\n", fat_result_str(r));
+    if (r != FAT_OK) { out_fmt("rename: %s\n", fat_result_str(r)); _last_exit = 1; }
 }
 
 static void cmd_sdinfo(void) {
@@ -1619,11 +1630,11 @@ static void cmd_screenshot(const char *arg) {
     const char *fname = (arg && *arg) ? arg : "/SCREEN.TXT";
     char abs[CWD_MAX];
     resolve_abs(fname, abs);
-    /* 20 rows * (40 cols + 1 newline) + small slack */
-    char buf[20 * 41 + 16];
+    /* One row per cell plus a newline, with small slack. */
+    char buf[LCD_ROWS * (LCD_COLS + 1) + 16];
     size_t pos = 0;
-    for (int r = 0; r < 20 && pos + 41 < sizeof buf; r++) {
-        for (int c = 0; c < 40; c++) {
+    for (int r = 0; r < LCD_ROWS && pos + LCD_COLS + 1 < sizeof buf; r++) {
+        for (int c = 0; c < LCD_COLS; c++) {
             char ch = lcd_get_cell(c, r);
             if (ch < 0x20 || ch > 0x7E) ch = ' ';
             buf[pos++] = ch;
@@ -2135,6 +2146,14 @@ static void dispatch_ex(char *line, bool record_history) {
 }
 
 
+bool shell_run_command(const char *cmdline) {
+    if (!cmdline || !*cmdline) return true;
+    char buf[LINE_BUF];
+    copy_cstr(buf, sizeof buf, cmdline);
+    dispatch_ex(buf, false);
+    return _last_exit == 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Wildcard expansion                                                   */
 /* ------------------------------------------------------------------ */
@@ -2634,7 +2653,6 @@ static void dispatch_single_no_glob(char *line) {
     else if (!strcmp(line, "mkdir"))     cmd_mkdir(arg);
     else if (!strcmp(line, "rm"))        cmd_rm(arg);
     else if (!strcmp(line, "rename"))   cmd_rename(arg);
-    else if (!strcmp(line, "mv"))       cmd_rename(arg);
     else if (!strcmp(line, "sdinfo"))    cmd_sdinfo();
     else if (!strcmp(line, "sdread"))    cmd_sdread(arg);
     else if (!strcmp(line, "reboot"))    cmd_reboot();

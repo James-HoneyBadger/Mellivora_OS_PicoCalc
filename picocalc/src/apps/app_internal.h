@@ -36,6 +36,7 @@ typedef struct {
 
 /* Registry lookup used by apps that open other commands. */
 bool app_dispatch_named(const char *cmd, const char *arg);
+bool app_known(const char *cmd);
 
 /* Shared helpers implemented in app_util.c. */
 int         write_text_file(const char *path, const char *buf, const char *label);

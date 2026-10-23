@@ -521,4 +521,11 @@ A practical device-first session often looks like this:
 - Long file names created by a PC are readable, listed by `ls` and `browse`,
   and usable in paths. Creating or renaming to a long name still stores an
   8.3 alias.
+- `edit` accepts files that fit its RAM buffer (8 KiB on RP2350, 4 KiB on
+  RP2040) and lines up to 95 characters; larger files are refused rather
+  than truncated
+- `hexedit` opens files larger than its buffer view-only and disables saving
+- Pipelines support up to 4 stages, and intermediate output is capped at
+  4 KiB per stage
+- Wildcards match 8.3 short names; type long names directly
 - Maximum file size for in-memory operations is limited by available RAM

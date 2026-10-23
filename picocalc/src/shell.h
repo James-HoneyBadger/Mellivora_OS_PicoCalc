@@ -12,3 +12,7 @@
  * Returns false if the file could not be opened or a line reported failure.
  */
 bool shell_run_script(const char *path, bool quiet);
+
+/* Execute one shell command line (builtins, apps, pipes, redirection).
+   Used by tools such as `watch`. Returns true when the command succeeded. */
+bool shell_run_command(const char *cmdline);

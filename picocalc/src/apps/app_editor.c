@@ -25,12 +25,18 @@ static void editor_clear(editor_state_t *ed, const char *path) {
     if (path && *path) app_make_abs(path, ed->path, sizeof ed->path);
 }
 
-static void editor_load(editor_state_t *ed, const char *path) {
+static bool editor_load(editor_state_t *ed, const char *path) {
     char buf[APP_READ_MAX + 1];
     editor_clear(ed, path);
 
+    fat_file_t f;
+    if (fat_open(ed->path, &f) == FAT_OK && f.size > APP_READ_MAX) {
+        ui_error("edit", "file is too large for the editor; use pager or hexedit");
+        return false;
+    }
+
     int n = sys_fread(path, buf, APP_READ_MAX);
-    if (n < 0) return;
+    if (n < 0) return true; /* new file */
     buf[n] = '\0';
 
     const char *p = buf;
@@ -39,7 +45,13 @@ static void editor_load(editor_state_t *ed, const char *path) {
         while (*p && *p != '\n') p++;
         size_t len = (size_t)(p - start);
         if (len > 0 && start[len - 1] == '\r') len--;
-        if (len >= EDIT_LINE_MAX) len = EDIT_LINE_MAX - 1;
+        if (len >= EDIT_LINE_MAX) {
+            char msg[72];
+            snprintf(msg, sizeof msg, "line %d is longer than %d characters",
+                     ed->line_count + 1, EDIT_LINE_MAX - 1);
+            ui_error("edit", msg);
+            return false;
+        }
         memcpy(ed->lines[ed->line_count], start, len);
         ed->lines[ed->line_count][len] = '\0';
         ed->line_count++;
@@ -49,6 +61,13 @@ static void editor_load(editor_state_t *ed, const char *path) {
             ed->line_count++;
         }
     }
+    if (*p) {
+        char msg[64];
+        snprintf(msg, sizeof msg, "file has more than %d lines", EDIT_LINES_MAX);
+        ui_error("edit", msg);
+        return false;
+    }
+    return true;
 }
 
 static void editor_status(editor_state_t *ed) {
@@ -153,7 +172,7 @@ void app_edit(const char *arg) {
         return;
     }
 
-    editor_load(&g_editor, path);
+    if (!editor_load(&g_editor, path)) return;
     if (g_editor.path[0] == '\0') app_make_abs(path, g_editor.path, sizeof g_editor.path);
 
     app_draw_header("Edit");

@@ -215,7 +215,9 @@ void ui_header(const char *title, const char *right) {
     if (len > 0 && title) memcpy(bar + 1, title, (size_t)len);
 
     int rlen = right ? (int)strlen(right) : 0;
-    if (rlen > LCD_COLS - 2) rlen = LCD_COLS - 2;
+    int room = LCD_COLS - len - 3; /* keep a gap after the title */
+    if (room < 0) room = 0;
+    if (rlen > room) rlen = room;
     if (rlen > 0 && right) memcpy(bar + LCD_COLS - rlen - 1, right, (size_t)rlen);
 
     uint32_t fg = ui_color(UI_SELECT_TEXT);
@@ -280,8 +282,10 @@ void ui_notify(const char *msg) {
         _notice_until = 0;
         return;
     }
+    lcd_lock();
     snprintf(_notice, sizeof _notice, "%s", msg);
     _notice_until = sys_time_ms() + 4000;
+    lcd_unlock();
 }
 
 bool ui_fullscreen(void) { return _fullscreen; }

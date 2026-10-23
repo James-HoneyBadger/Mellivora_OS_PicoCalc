@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include "pipe.h"
 #include "syscall.h"
+#include "ui/ui.h"
 
 static void app_hexdump_core(const char *arg, const char *label) {
     char path[APP_TOKEN_MAX];
@@ -115,14 +116,17 @@ void app_hexedit(const char *arg) {
     static uint8_t buf[HEXEDIT_BYTES_MAX];
     memset(buf, 0, sizeof buf);
 
+    fat_file_t probe;
+    bool read_only = fat_open(target, &probe) == FAT_OK &&
+                     probe.size > (uint32_t)sizeof buf;
     int n = sys_fread(target, buf, (uint32_t)sizeof buf);
     size_t len = 0;
     bool dirty = false;
 
     if (n >= 0) {
         len = (size_t)n;
-        if ((size_t)n == sizeof buf)
-            print_line("hexedit: showing first 4096 bytes of file");
+        if (read_only)
+            print_line("hexedit: file is larger than the buffer; view-only (saving disabled)");
     } else {
         print_line("hexedit: file not found; starting empty buffer");
     }
@@ -261,6 +265,14 @@ void app_hexedit(const char *arg) {
             }
             if (!found) print_line("hexedit: pattern not found");
             continue;
+        }
+
+        if (ci_eq(cmd, "saveas") || ci_eq(cmd, "save") || ci_eq(cmd, "write") ||
+            ci_eq(cmd, "w")) {
+            if (read_only) {
+                ui_error("hexedit", "file is larger than the buffer; saving is disabled");
+                continue;
+            }
         }
 
         if (ci_eq(cmd, "saveas")) {

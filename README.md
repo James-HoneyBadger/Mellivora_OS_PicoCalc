@@ -10,16 +10,17 @@ environments, and lightweight games into a single image.
 ## Highlights
 
 - text shell with history (persistent across reboots), aliases, shell variables (`set X=Y`, `$X`), tab completion, command chaining (`;`), output redirection (`>` `>>`), and built-in help
-- FAT16/FAT32 SD card storage with file, search, and disk-usage tools (`rm -r`, `cp -r`)
+- FAT16/FAT32 SD card storage with file, search, and disk-usage tools (`rm -r`, `cp -r`), plus read-only VFAT long filenames
 - persistent apps for notes, todo lists, planner, journal, habits (with streak tracking), and bookmarks (with CWD context)
 - interactive utilities including browser, editor, hex editor (with byte search), paint, sprite editor, and terminal mode
-- text processing: grep (with regex), sort, find, head, tail, cut, wc, and more
+- pipelines (`cmd1 | cmd2 | cmd3`), tr/sed/markdown helpers, and text processing with grep (regex), sort, find, head, tail, cut, and wc
 - built-in calculator (with hex/bin/oct literals), BASIC environment, and Tiny C environment
 - WiFi networking with multi-AP credential store, boot-time auto-connect, HTTP, IRC, telnet, NTP (auto-syncs the RTC), and DNS (Pico 2W only)
 - productivity timers: `stopwatch` and `pomodoro`
 - power management: idle backlight dim, `sleep` command, `shutdown`/`halt`/`poweroff`, low-battery warning
 - reliability: hardware watchdog (3 s), persistent CWD/clock, ANSI-aware redraws
 - smoother LCD console with optimized scrolling and software key repeat
+- semantic colour themes (ten palettes), themed prompt/status bar/menus, and a file browser with preview pane
 - launcher, dashboard, system monitor, samples, and mini games including snake (with persistent high scores)
 
 ## Quick Start

@@ -192,7 +192,7 @@ void app_settings(const char *arg) {
 
     s = skip_ws(s);
     if (!*key || !*s) {
-        print_line("usage: settings set [backlight|home|notes|startup|autorun] VALUE");
+        print_line("usage: settings set [backlight|home|notes|startup|autorun|theme] VALUE");
         return;
     }
 

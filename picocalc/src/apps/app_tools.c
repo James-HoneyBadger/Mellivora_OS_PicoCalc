@@ -15,6 +15,7 @@
 #include "lcd.h"
 #include "pipe.h"
 #include "syscall.h"
+#include "shell.h"
 #include "ui/ui.h"
 
 #define PAINT_SAVE_MAX   (PAINT_WIDTH * PAINT_HEIGHT + PAINT_HEIGHT + 1)
@@ -115,19 +116,30 @@ void app_paint(const char *arg) {
  * New utilities: watch, diff, env, lock, xxd, strings, yes, tee
  * ============================================================ */
 
-/* watch CMD [SEC] — repeat a command every N seconds */
+/* watch CMD [SEC] — repeat a shell command every N seconds */
 void app_watch(const char *arg) {
     const char *p = skip_ws(arg);
-    if (!*p) { print_line("usage: watch <seconds> <command>"); return; }
-    int interval = atoi(p);
-    if (interval <= 0) interval = 2;
-    while (*p && !isspace((unsigned char)*p)) p++;
-    p = skip_ws(p);
-    if (!*p) { print_line("usage: watch <seconds> <command>"); return; }
+    if (!*p) { print_line("usage: watch CMD [SECONDS]"); return; }
 
+    /* Also accept the legacy interval-first form: watch 5 ls. */
+    char first[APP_TOKEN_MAX];
+    const char *rest = next_token(p, first, sizeof first);
+    int interval = 2;
     char cmd_buf[APP_TOKEN_MAX];
-    strncpy(cmd_buf, p, sizeof cmd_buf - 1);
-    cmd_buf[sizeof cmd_buf - 1] = '\0';
+
+    if (*first && isdigit((unsigned char)first[0])) {
+        interval = atoi(first);
+        copy_cstr(cmd_buf, sizeof cmd_buf, skip_ws(rest));
+    } else {
+        copy_cstr(cmd_buf, sizeof cmd_buf, p);
+        const char *last = strrchr(cmd_buf, ' ');
+        if (last && last[1] && isdigit((unsigned char)last[1])) {
+            interval = atoi(last + 1);
+            cmd_buf[(size_t)(last - cmd_buf)] = '\0';
+        }
+    }
+    if (interval <= 0) interval = 2;
+    if (!*cmd_buf) { print_line("usage: watch CMD [SECONDS]"); return; }
 
     while (1) {
         sys_clear();
@@ -136,18 +148,9 @@ void app_watch(const char *arg) {
         print_line(hdr);
         print_line("---");
 
-        /* Execute command by calling app_run */
-        char copy[APP_TOKEN_MAX];
-        strncpy(copy, cmd_buf, sizeof copy - 1);
-        copy[sizeof copy - 1] = '\0';
-        char *sp = copy;
-        while (*sp && !isspace((unsigned char)*sp)) sp++;
-        char *warg = "";
-        if (*sp) { *sp = '\0'; warg = sp + 1; while (*warg == ' ') warg++; }
-        app_run(copy, warg);
+        (void)shell_run_command(cmd_buf);
 
-        /* Wait interval, checking for quit */
-        for (int s = 0; s < interval * 10; s++) {
+        for (int tick = 0; tick < interval * 10; tick++) {
             watchdog_update();
             int ch = getchar_timeout_us(0);
             if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
@@ -854,10 +857,14 @@ void app_xmodem(const char *arg) {
         }
 
         if (blk == (expected_blk & 0xFF)) {
-            if (total + 128 <= (int)sizeof filebuf) {
-                memcpy(filebuf + total, data, 128);
-                total += 128;
+            if (total + 128 > (int)sizeof filebuf) {
+                putchar_raw(XMODEM_CAN);
+                putchar_raw(XMODEM_CAN);
+                ui_error("xmodem", "file exceeds receive buffer; transfer aborted");
+                return;
             }
+            memcpy(filebuf + total, data, 128);
+            total += 128;
             expected_blk++;
         }
         putchar_raw(XMODEM_ACK);
