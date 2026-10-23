@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the prompt error marker behave correctly.
 - **`watch` accepts `watch CMD [SECONDS]`** as documented and can run shell
   builtins, not just app-table commands.
+- **Wildcards match VFAT long names** and matched names containing spaces
+  are quoted automatically.
+- **Editor and paint saves stream to disk**, removing 25-33 KB stack frames.
 - **XMODEM aborts instead of silently dropping data** when the receive
   buffer is full.
 - **`cat` no longer appends a blank line** to files that already end with a

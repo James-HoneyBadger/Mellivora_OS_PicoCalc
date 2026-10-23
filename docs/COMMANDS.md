@@ -16,7 +16,7 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 - Pipelines (`cmd1 | cmd2 | cmd3`) are buffered in RAM; `-` or no file reads the upstream stage.
   Up to 4 stages are supported and each intermediate result is capped at 4 KiB;
   longer output prints `pipe: output truncated`
-- Unquoted wildcards match 8.3 short names only; long names can be typed directly
+- Unquoted wildcards match 8.3 and VFAT long names; matched names with spaces are quoted automatically
 - `/PROFILE.CFG` runs at boot; use it for aliases, variables, and `PROMPT`
 - `Ctrl-C` cancels long-running commands
 - `Ctrl-R` searches command history

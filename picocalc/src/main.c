@@ -41,6 +41,7 @@
 #include "core/glob.h"
 #include "core/path_util.h"
 #include "core/shell_parse.h"
+#include "core/lfn.h"
 #include "hal/hal.h"
 #include "pipe.h"
 #include "shell.h"
@@ -2159,18 +2160,24 @@ bool shell_run_command(const char *cmdline) {
 /* ------------------------------------------------------------------ */
 
 #define GLOB_MAX_MATCHES 16
+#define GLOB_NAME_MAX    (LFN_MAX_CHARS + 1)
 
 typedef struct {
     const char *pattern;
-    char names[GLOB_MAX_MATCHES][13];
+    char names[GLOB_MAX_MATCHES][GLOB_NAME_MAX];
     int count;
     bool overflow;
 } glob_ctx_t;
 
-static void glob_collect_cb(const char *name, uint32_t size, bool is_dir, void *ctx) {
+/* Static: 16 long-name slots would be a large stack frame. */
+static glob_ctx_t g_glob;
+
+static void glob_collect_cb(const char *short_name, const char *long_name,
+                            uint32_t size, bool is_dir, void *ctx) {
     (void)size;
     (void)is_dir;
     glob_ctx_t *g = (glob_ctx_t *)ctx;
+    const char *name = (long_name && *long_name) ? long_name : short_name;
     if (!name || !*name) return;
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return;
     if (!glob_match(g->pattern, name, true)) return;
@@ -2180,6 +2187,30 @@ static void glob_collect_cb(const char *name, uint32_t size, bool is_dir, void *
     }
     copy_cstr(g->names[g->count], sizeof g->names[0], name);
     g->count++;
+}
+
+/* Quote a matched name so spaces/quotes survive tokenization. */
+static void glob_quote(const char *src, char *dst, size_t cap) {
+    bool need = false;
+    for (const char *p = src; *p; p++) {
+        if (*p == ' ' || *p == '\t' || *p == '"' || *p == '\'' || *p == '\\') {
+            need = true;
+            break;
+        }
+    }
+    if (!need) {
+        copy_cstr(dst, cap, src);
+        return;
+    }
+
+    size_t o = 0;
+    if (o + 1 < cap) dst[o++] = '"';
+    for (const char *p = src; *p && o + 2 < cap; p++) {
+        if (*p == '"' || *p == '\\') dst[o++] = '\\';
+        dst[o++] = *p;
+    }
+    if (o + 1 < cap) dst[o++] = '"';
+    dst[o] = '\0';
 }
 
 static int glob_name_cmp(const void *a, const void *b) {
@@ -2227,28 +2258,35 @@ static bool dispatch_globbed(char *line) {
     char absdir[CWD_MAX];
     resolve_abs(dir, absdir);
 
-    glob_ctx_t g = {.pattern = base, .count = 0, .overflow = false};
-    if (fat_ls(absdir, glob_collect_cb, &g) != FAT_OK || g.count == 0) return false;
+    glob_ctx_t *g = &g_glob;
+    g->pattern = base;
+    g->count = 0;
+    g->overflow = false;
+    if (fat_ls_ex(absdir, glob_collect_cb, g) != FAT_OK || g->count == 0) return false;
 
-    qsort(g.names, (size_t)g.count, sizeof g.names[0], glob_name_cmp);
+    qsort(g->names, (size_t)g->count, sizeof g->names[0], glob_name_cmp);
 
     size_t suffix_off = start + len;
 
-    if (g.count == 1) {
-        char rebuilt[LINE_BUF];
+    if (g->count == 1) {
+        char quoted[GLOB_NAME_MAX * 2];
+        char rebuilt[LINE_BUF + GLOB_NAME_MAX * 2];
+        glob_quote(g->names[0], quoted, sizeof quoted);
         int n = snprintf(rebuilt, sizeof rebuilt, "%.*s%.*s%s%s", (int)start, line,
-                         (int)dir_prefix, token, g.names[0], line + suffix_off);
+                         (int)dir_prefix, token, quoted, line + suffix_off);
         if (n < 0 || n >= (int)sizeof rebuilt) return false;
         dispatch_single_no_glob(rebuilt);
         return true;
     }
 
-    if (g.overflow) out_str("glob: showing first 16 matches\n");
+    if (g->overflow) out_str("glob: showing first 16 matches\n");
 
-    for (int i = 0; i < g.count; i++) {
-        char rebuilt[LINE_BUF];
+    for (int i = 0; i < g->count; i++) {
+        char quoted[GLOB_NAME_MAX * 2];
+        char rebuilt[LINE_BUF + GLOB_NAME_MAX * 2];
+        glob_quote(g->names[i], quoted, sizeof quoted);
         int n = snprintf(rebuilt, sizeof rebuilt, "%.*s%.*s%s%s", (int)start, line,
-                         (int)dir_prefix, token, g.names[i], line + suffix_off);
+                         (int)dir_prefix, token, quoted, line + suffix_off);
         if (n < 0 || n >= (int)sizeof rebuilt) continue;
 
         if (i > 0) {

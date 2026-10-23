@@ -525,7 +525,8 @@ A practical device-first session often looks like this:
   RP2040) and lines up to 95 characters; larger files are refused rather
   than truncated
 - `hexedit` opens files larger than its buffer view-only and disables saving
+- `edit` and `paint` save by streaming, so the file size is not limited by
+  the editor buffer
 - Pipelines support up to 4 stages, and intermediate output is capped at
   4 KiB per stage
-- Wildcards match 8.3 short names; type long names directly
 - Maximum file size for in-memory operations is limited by available RAM

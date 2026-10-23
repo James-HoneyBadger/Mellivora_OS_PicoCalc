@@ -48,41 +48,53 @@ void app_paint(const char *arg) {
             char filename[32];
             sys_print("Save to: ");
             if (app_read_line("", filename, sizeof filename) >= 0 && *filename) {
-                char buf[PAINT_SAVE_MAX];
-                int pos = 0;
-                for (int yy = 0; yy < PAINT_HEIGHT && pos < (int)sizeof buf - 2; yy++) {
-                    for (int xx = 0; xx < PAINT_WIDTH && pos < (int)sizeof buf - 2; xx++) {
-                        buf[pos++] = canvas[yy * PAINT_WIDTH + xx] ? '#' : ' ';
-                    }
-                    buf[pos++] = '\n';
+                char abs[APP_TOKEN_MAX];
+                app_make_abs(filename, abs, sizeof abs);
+                char row[PAINT_WIDTH];
+                bool ok = fat_create(abs, NULL, 0) == FAT_OK;
+
+                for (int yy = 0; ok && yy < PAINT_HEIGHT; yy++) {
+                    for (int xx = 0; xx < PAINT_WIDTH; xx++)
+                        row[xx] = canvas[yy * PAINT_WIDTH + xx] ? '#' : ' ';
+                    ok = fat_append(abs, (const uint8_t *)row, PAINT_WIDTH) == FAT_OK &&
+                         fat_append(abs, (const uint8_t *)"\n", 1) == FAT_OK;
                 }
-                buf[pos] = '\0';
-                if (write_text_file(filename, buf, "paint") >= 0) sys_print("Saved\n");
+                if (ok) sys_print("Saved\n");
+                else ui_error("paint", "save failed");
             }
         } else if (ch == 'l' || ch == 'L') {
             char filename[32];
             sys_print("Load from: ");
             if (app_read_line("", filename, sizeof filename) >= 0 && *filename) {
-                char buf[PAINT_SAVE_MAX];
-                int n = read_text_file(filename, buf, sizeof buf, "paint");
-                if (n >= 0) {
+                char abs[APP_TOKEN_MAX];
+                app_make_abs(filename, abs, sizeof abs);
+                fat_file_t f;
+                if (fat_open(abs, &f) != FAT_OK) {
+                    ui_error("paint", "cannot open file");
+                } else {
                     memset(canvas, 0, sizeof canvas);
-                    int pos = 0;
-                    for (int yy = 0; yy < PAINT_HEIGHT; yy++) {
-                        for (int xx = 0; xx < PAINT_WIDTH; xx++) {
-                            if (pos < n && buf[pos] != '\n') {
-                                canvas[yy * PAINT_WIDTH + xx] = (buf[pos] == '#');
-                                pos++;
+                    uint8_t chunk[128];
+                    int xx = 0, yy = 0;
+                    int32_t n;
+                    while (yy < PAINT_HEIGHT &&
+                           (n = fat_read(&f, chunk, sizeof chunk)) > 0) {
+                        for (int32_t i = 0; i < n && yy < PAINT_HEIGHT; i++) {
+                            char c = (char)chunk[i];
+                            if (c == '\r') continue;
+                            if (c == '\n') {
+                                yy++;
+                                xx = 0;
                             } else {
-                                break;
+                                if (xx < PAINT_WIDTH)
+                                    canvas[yy * PAINT_WIDTH + xx] = (c == '#');
+                                xx++;
                             }
                         }
-                        if (pos < n && buf[pos] == '\n') pos++;
                     }
-                    for (int yy = 0; yy < PAINT_HEIGHT; yy++) {
-                        for (int xx = 0; xx < PAINT_WIDTH; xx++) {
-                            uint32_t px = canvas[yy * PAINT_WIDTH + xx] ? LCD_WHITE : LCD_BLACK;
-                            lcd_draw_pixel(xx, yy, px);
+                    for (int ry = 0; ry < PAINT_HEIGHT; ry++) {
+                        for (int rx = 0; rx < PAINT_WIDTH; rx++) {
+                            uint32_t px = canvas[ry * PAINT_WIDTH + rx] ? LCD_WHITE : LCD_BLACK;
+                            lcd_draw_pixel(rx, ry, px);
                         }
                     }
                     sys_print("Loaded\n");

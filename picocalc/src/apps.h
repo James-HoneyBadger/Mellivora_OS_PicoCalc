@@ -27,7 +27,6 @@
 #define BASIC_STACK_MAX    16
 #define TINYC_VAR_MAX      64
 #define EDIT_LINE_MAX      96
-#define EDIT_SAVE_MAX      (EDIT_LINES_MAX * (EDIT_LINE_MAX + 1) + 1)
 #define BROWSE_ITEMS_MAX   64
 #define BROWSE_NAME_MAX    32
 #define HEXEDIT_BYTES_MAX  APP_READ_MAX

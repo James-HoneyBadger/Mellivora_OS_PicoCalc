@@ -129,25 +129,28 @@ static bool editor_insert_line(editor_state_t *ed, int pos, const char *text) {
 }
 
 static bool editor_save(editor_state_t *ed) {
-    char buf[EDIT_SAVE_MAX];
-    size_t pos = 0;
-    for (int i = 0; i < ed->line_count; i++) {
-        size_t len = strlen(ed->lines[i]);
-        if (pos + len + 2 >= sizeof buf) {
-            ui_error("edit", "file exceeds the editor save limit");
-            return false;
-        }
-        memcpy(buf + pos, ed->lines[i], len);
-        pos += len;
-        if (i + 1 < ed->line_count) buf[pos++] = '\n';
-    }
-    if (sys_fwrite(ed->path, buf, (uint32_t)pos) < 0) {
+    if (fat_create(ed->path, NULL, 0) != FAT_OK) {
         ui_error("edit", "save failed");
         return false;
     }
+
+    for (int i = 0; i < ed->line_count; i++) {
+        size_t len = strlen(ed->lines[i]);
+        if (len > 0 &&
+            fat_append(ed->path, (const uint8_t *)ed->lines[i], (uint32_t)len) != FAT_OK) {
+            ui_error("edit", "save failed");
+            return false;
+        }
+        if (i + 1 < ed->line_count &&
+            fat_append(ed->path, (const uint8_t *)"\n", 1) != FAT_OK) {
+            ui_error("edit", "save failed");
+            return false;
+        }
+    }
+
     ed->dirty = false;
-    char out[96];
-    snprintf(out, sizeof out, "saved %s (%lu bytes)", ed->path, (unsigned long)pos);
+    char out[APP_TOKEN_MAX + 32];
+    snprintf(out, sizeof out, "saved %s (%d lines)", ed->path, ed->line_count);
     ui_ok(out);
     ui_notify("file saved");
     return true;
