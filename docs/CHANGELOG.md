@@ -6,11 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 2.4.0 development
 
+### Added (2.4.0-dev)
+
+- **Tiny C loops and loop control** — `for (init; cond; step)` joins
+  `while`, with `break` and `continue` honoured by both.
+- **BASIC random and clock access** — `RANDOMIZE [seed]` reseeds, and
+  `RND` / `TIMER` are usable anywhere an expression is accepted.
+- **Stronger `pass` output** — generated passwords now include at least
+  one uppercase, lowercase, digit, and symbol, avoid modulo bias, and are
+  shuffled so the required classes are not always in the same position.
+
 ### Changed (2.4.0-dev)
 
 - **Unified visual language** — new `ui/` module provides semantic colour
   roles (text, muted, accent, success, warning, error, border, panel,
-  selection, status) mapped through ten themes. The prompt, status bar,
+  selection, status) mapped through ten themes. `diff` now uses the
+  error/success roles instead of fixed red and green. The prompt, status bar,
   `app_*` headers, `ls`, `help`, `settings`, editor feedback, and the
   `home` launcher now share one palette and one menu widget. The file
   browser gained a themed title bar, inverted selection row, aligned

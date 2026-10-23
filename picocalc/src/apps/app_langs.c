@@ -46,6 +46,8 @@ typedef struct {
 typedef struct {
     tinyc_var_t vars[TINYC_VAR_MAX];
     bool stop;
+    bool brk;
+    bool cont;
 } tinyc_env_t;
 static int expr_lookup_tinyc(void *ctx, const char *name, size_t len);
 static void tinyc_set_var(tinyc_env_t *env, const char *name, int value);
@@ -587,10 +589,25 @@ void app_samples(const char *arg) {
     print_line("usage: samples [list|show NAME|write NAME [PATH]|run NAME]");
 }
 
+static bool basic_name_is(const char *name, size_t len, const char *want) {
+    size_t n = strlen(want);
+    if (len != n) return false;
+    for (size_t i = 0; i < n; i++) {
+        if (tolower((unsigned char)name[i]) != tolower((unsigned char)want[i]))
+            return false;
+    }
+    return true;
+}
+
 static int expr_lookup_basic(void *ctx, const char *name, size_t len) {
-    (void)len;
     basic_env_t *env = (basic_env_t *)ctx;
     if (!env || !name || !isalpha((unsigned char)name[0])) return 0;
+    if (basic_name_is(name, len, "TIMER")) {
+        return (int)(sys_time_ms() / 1000U) % 65536;
+    }
+    if (basic_name_is(name, len, "RND")) {
+        return (int)((unsigned)rand() & 0x7FFFu);
+    }
     return env->vars[toupper((unsigned char)name[0]) - 'A'];
 }
 
@@ -974,6 +991,13 @@ static void basic_exec_stmt(const char *stmt, int *pc) {
         int idx = basic_find_line(line_no);
         if (idx >= 0) *pc = idx - 1;
         else print_line("BASIC: line not found");
+    } else if (ci_eq(tok, "RANDOMIZE")) {
+        const char *seedarg = skip_ws(rest);
+        unsigned seed = *seedarg ? (unsigned)atoi(seedarg) : sys_time_ms();
+        srand(seed);
+        char out[48];
+        snprintf(out, sizeof out, "BASIC: seed %u", seed);
+        print_line(out);
     } else if (ci_eq(tok, "CLS") || ci_eq(tok, "CLEAR")) {
         sys_clear();
     } else if (ci_eq(tok, "LIST")) {
@@ -1049,7 +1073,7 @@ void app_basic(const char *arg) {
 
     print_line("Mellivora BASIC for PicoCalc");
     print_line("Commands: RUN, LIST, NEW, PRINT, LET, INPUT, IF/THEN, FOR/NEXT,");
-    print_line("          GOTO, GOSUB, RETURN, CLS, END, BYE");
+    print_line("          GOTO, GOSUB, RETURN, CLS, RANDOMIZE, END, BYE");
     while (1) {
         char line[APP_TOKEN_MAX];
         if (app_read_line("BASIC> ", line, sizeof line) < 0) break;
@@ -1136,7 +1160,9 @@ static void tinyc_exec_stmt(char *stmt) {
 
     if (ci_eq(s, "help")) {
         print_line("TinyC: int x = 1; x = x + 1; print(x); if (x > 0) print(x);");
-        print_line("       int arr[4]; arr[0] = 42; print(arr[0]); vars; clear; exit;");
+        print_line("       while (x > 0) x = x - 1; for (i = 0; i < 3; i = i + 1) print(i);");
+        print_line("       break; continue; int arr[4]; arr[0] = 42; print(arr[0]);");
+        print_line("       vars; clear; exit;");
         return;
     }
     if (ci_eq(s, "vars")) {
@@ -1204,10 +1230,72 @@ static void tinyc_exec_stmt(char *stmt) {
             int cond = expr_eval(expr, expr_lookup_tinyc, &g_tinyc_env, &ok);
             if (!ok || !cond || g_tinyc_env.stop) break;
             tinyc_exec_stmt(body);
+            if (g_tinyc_env.brk) {
+                g_tinyc_env.brk = false;
+                break;
+            }
+            g_tinyc_env.cont = false;
         }
         return;
     }
 
+    if (strncmp(s, "for", 3) == 0 && isspace((unsigned char)s[3])) {
+        char *open = strchr(s, '(');
+        char *close = strrchr(s, ')');
+        if (!open || !close || close <= open) {
+            print_line("TinyC: usage: for (init; cond; step) statement");
+            return;
+        }
+        char inner[APP_TOKEN_MAX];
+        size_t ilen = (size_t)(close - open - 1);
+        if (ilen >= sizeof inner) ilen = sizeof inner - 1;
+        memcpy(inner, open + 1, ilen);
+        inner[ilen] = '\0';
+
+        char *semi1 = strchr(inner, ';');
+        char *semi2 = semi1 ? strchr(semi1 + 1, ';') : NULL;
+        if (!semi1 || !semi2) {
+            print_line("TinyC: usage: for (init; cond; step) statement");
+            return;
+        }
+        *semi1 = '\0';
+        *semi2 = '\0';
+
+        char *init = (char *)skip_ws(inner);
+        const char *cond = skip_ws(semi1 + 1);
+        char *step = (char *)skip_ws(semi2 + 1);
+        char *body = (char *)skip_ws(close + 1);
+
+        if (*init) tinyc_exec_stmt(init);
+        for (int guard = 0; guard < 1024 && !g_tinyc_env.stop; guard++) {
+            if (*cond) {
+                bool ok = false;
+                int c = expr_eval(cond, expr_lookup_tinyc, &g_tinyc_env, &ok);
+                if (!ok) {
+                    print_line("TinyC: bad for condition");
+                    return;
+                }
+                if (!c) break;
+            }
+            tinyc_exec_stmt(body);
+            if (g_tinyc_env.stop) break;
+            if (g_tinyc_env.brk) {
+                g_tinyc_env.brk = false;
+                break;
+            }
+            g_tinyc_env.cont = false;
+            if (*step) tinyc_exec_stmt(step);
+        }
+        return;
+    }
+    if (ci_eq(s, "break")) {
+        g_tinyc_env.brk = true;
+        return;
+    }
+    if (ci_eq(s, "continue")) {
+        g_tinyc_env.cont = true;
+        return;
+    }
     if (strncmp(s, "int", 3) == 0 && isspace((unsigned char)s[3])) {
         s = (char *)skip_ws(s + 3);
         if (!isalpha((unsigned char)*s) && *s != '_') {

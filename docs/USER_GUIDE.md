@@ -384,10 +384,13 @@ BASIC supports:
 - line-numbered program editing
 - `RUN`, `LIST`, and `NEW`
 - `PRINT`, `LET`, and `INPUT`
-- `IF ... THEN`
+- `IF ... THEN ... ELSE`
 - `FOR ... NEXT`
 - `GOSUB` and `RETURN`
 - `CLS`, `GOTO`, `END`, and `STOP`
+- `DATA`/`READ`, `DIM`, and string variables such as `R$(1)`
+- `RANDOMIZE [seed]`, plus `RND` (0-32767) and `TIMER` (seconds) in
+  expressions
 
 Example:
 
@@ -418,7 +421,8 @@ Tiny C supports integer-oriented experiments such as:
 - small arrays
 - arithmetic and bitwise operations
 - `if` statements
-- `while` loops
+- `while` and `for (init; cond; step)` loops
+- `break` and `continue`
 - `print`, `puts`, `vars`, and `clear`
 
 Example:
