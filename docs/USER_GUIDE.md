@@ -107,6 +107,11 @@ Use it to move around the SD card, inspect files, and open content quickly.
 PC-created long file names are shown; the browser uses the 8.3 alias
 internally, so editing, viewing, and deleting work with either name.
 
+The lower pane previews the highlighted entry: a directory summary, or the
+first few lines of a text file with name and size. Only a small bounded
+read is performed, so large files open instantly. Keys are listed in the
+footer bar.
+
 ### Text editor
 
 Run:

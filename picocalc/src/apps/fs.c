@@ -41,10 +41,15 @@ typedef struct {
     uint32_t size;
 } browser_entry_t;
 
+#define BROWSE_PREVIEW_LINES 5
+
 typedef struct {
     char cwd[APP_TOKEN_MAX];
     browser_entry_t items[BROWSE_ITEMS_MAX];
     int count;
+    int preview_sel;
+    bool preview_dirty;
+    char preview[BROWSE_PREVIEW_LINES][LCD_COLS + 1];
 } browser_state_t;
 
 typedef struct {
@@ -705,6 +710,81 @@ static void browser_sort(browser_state_t *br) {
 static void browser_refresh(browser_state_t *br) {
     br->count = 0;
     if (fat_ls_ex(br->cwd, browser_collect_cb, br) == FAT_OK) browser_sort(br);
+    br->preview_dirty = true;
+}
+
+static void _browser_size(uint32_t bytes, char *out, size_t out_sz);
+
+static void browser_draw_row(int y, const char *text, uint32_t fg, uint32_t bg) {
+    char line[LCD_COLS + 1];
+    memset(line, ' ', LCD_COLS);
+    line[LCD_COLS] = '\0';
+    if (text) {
+        size_t n = strlen(text);
+        if (n > LCD_COLS) n = LCD_COLS;
+        memcpy(line, text, n);
+    }
+    lcd_lock();
+    for (int c = 0; c < LCD_COLS; c++) lcd_draw_cell(c, y, line[c], fg, bg);
+    lcd_unlock();
+}
+
+/* Load a short, bounded preview for the selected entry (never reads the
+   whole file: five lines or 200 bytes, whichever comes first). */
+static void browser_load_preview(browser_state_t *br, int sel) {
+    br->preview_sel = sel;
+    br->preview_dirty = false;
+    for (int i = 0; i < BROWSE_PREVIEW_LINES; i++) br->preview[i][0] = '\0';
+
+    int base = (strcmp(br->cwd, "/") != 0) ? 1 : 0;
+    if (sel == 0 && base) {
+        copy_cstr(br->preview[0], sizeof br->preview[0], "..  parent directory");
+        return;
+    }
+
+    int idx = sel - base;
+    if (idx < 0 || idx >= br->count) return;
+    browser_entry_t *e = &br->items[idx];
+
+    char sz[16];
+    _browser_size(e->size, sz, sizeof sz);
+    if (e->is_dir) {
+        snprintf(br->preview[0], sizeof br->preview[0], "%.24s/  (directory)", e->name);
+        copy_cstr(br->preview[1], sizeof br->preview[1], "Enter to open");
+        return;
+    }
+
+    snprintf(br->preview[0], sizeof br->preview[0], "%.20s  %.12s", e->name, sz);
+
+    char abs[APP_TOKEN_MAX];
+    app_make_abs(e->short_name, abs, sizeof abs);
+    fat_file_t f;
+    if (fat_open(abs, &f) != FAT_OK) {
+        copy_cstr(br->preview[1], sizeof br->preview[1], "(unreadable)");
+        return;
+    }
+
+    char buf[192];
+    int32_t n = fat_read(&f, buf, sizeof buf - 1);
+    if (n < 0) n = 0;
+    buf[n] = '\0';
+
+    int line = 1;
+    int col = 0;
+    for (int32_t i = 0; i < n && line < BROWSE_PREVIEW_LINES; i++) {
+        char c = buf[i];
+        if (c == '\r') continue;
+        if (c == '\n') {
+            br->preview[line][col] = '\0';
+            line++;
+            col = 0;
+            continue;
+        }
+        if (col < LCD_COLS) {
+            br->preview[line][col++] = (c >= 0x20 && c < 0x7F) ? c : '.';
+        }
+    }
+    if (col > 0 && line < BROWSE_PREVIEW_LINES) br->preview[line][col] = '\0';
 }
 
 static void _browser_size(uint32_t bytes, char *out, size_t out_sz) {
@@ -718,10 +798,9 @@ static void browser_render(browser_state_t *br, int sel) {
     ui_header("Files", br->cwd);
 
     const int top_row = 1;
-    const int bottom_row = LCD_ROWS - 3;
-    const int visible = bottom_row - top_row + 1;
+    const int list_bottom = LCD_ROWS - 8;   /* rule + 5 preview rows + footer */
+    const int visible = list_bottom - top_row + 1;
     int base = (strcmp(br->cwd, "/") != 0) ? 1 : 0;
-    int total = br->count + base;
     int page_start = 0;
     if (sel >= visible) page_start = sel - visible + 1;
 
@@ -749,18 +828,28 @@ static void browser_render(browser_state_t *br, int sel) {
         bool is_sel = (row == sel);
         uint32_t fg = is_sel ? ui_color(UI_SELECT_TEXT) : ui_color(UI_TEXT);
         uint32_t bg = is_sel ? ui_color(UI_SELECT_BG) : ui_bg();
-        lcd_lock();
-        for (int c = 0; c < LCD_COLS; c++)
-            lcd_draw_cell(c, y, line[c], fg, bg);
-        lcd_unlock();
+        browser_draw_row(y, line, fg, bg);
     }
 
     if (br->count == 0 && base == 0) {
-        ui_print(UI_MUTED, "  (empty directory)");
+        browser_draw_row(top_row, "  (empty directory)", ui_color(UI_MUTED), ui_bg());
+    }
+
+    /* Separator + preview pane. */
+    char rule[LCD_COLS + 1];
+    memset(rule, '-', LCD_COLS);
+    rule[LCD_COLS] = '\0';
+    browser_draw_row(LCD_ROWS - 7, rule, ui_color(UI_BORDER), ui_bg());
+
+    if (br->preview_dirty || br->preview_sel != sel) {
+        browser_load_preview(br, sel);
+    }
+    for (int i = 0; i < BROWSE_PREVIEW_LINES; i++) {
+        uint32_t fg = (i == 0) ? ui_color(UI_TEXT) : ui_color(UI_MUTED);
+        browser_draw_row(LCD_ROWS - 6 + i, br->preview[i], fg, ui_bg());
     }
 
     ui_footer("j/k move  enter open  e edit  x hex  d del  q quit");
-    (void)total;
 }
 
 void app_browse(const char *arg) {

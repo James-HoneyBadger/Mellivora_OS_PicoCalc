@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `app_*` headers, `ls`, `help`, `settings`, editor feedback, and the
   `home` launcher now share one palette and one menu widget. The file
   browser gained a themed title bar, inverted selection row, aligned
-  size column and a key-hint footer; the editor uses muted line numbers
+  size column, a key-hint footer, and a bounded preview pane for the
+  highlighted file or directory; the editor uses muted line numbers
   and a colour-coded modified/saved status. Default theme is `noir`;
   all previous theme names still work.
 - **Modular app layer** — `apps.c` is now a small registry; command
