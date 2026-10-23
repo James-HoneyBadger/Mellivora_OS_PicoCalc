@@ -2348,6 +2348,8 @@ bool shell_run_script(const char *path, bool quiet) {
     uint8_t chunk[512];
     size_t n = 0;
     bool ok = true;
+    bool warned = false;
+    int line_no = 1;
     int32_t got;
 
     while ((got = fat_read(&f, chunk, sizeof chunk)) > 0) {
@@ -2357,8 +2359,15 @@ bool shell_run_script(const char *path, bool quiet) {
                 line_buf[n] = '\0';
                 if (!script_exec_line(line_buf)) ok = false;
                 n = 0;
-            } else if (ch != '\r' && n + 1 < sizeof line_buf) {
-                line_buf[n++] = ch;
+                line_no++;
+            } else if (ch != '\r') {
+                if (n + 1 < sizeof line_buf) {
+                    line_buf[n++] = ch;
+                } else if (!warned && !quiet) {
+                    out_fmt("script: line %d exceeds %d characters\n",
+                            line_no, LINE_BUF - 1);
+                    warned = true;
+                }
             }
             if (_interrupted) break;
         }

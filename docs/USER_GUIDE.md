@@ -529,4 +529,6 @@ A practical device-first session often looks like this:
   the editor buffer
 - Pipelines support up to 4 stages, and intermediate output is capped at
   4 KiB per stage
+- Script lines are limited to 255 characters; longer lines are truncated
+  with a warning
 - Maximum file size for in-memory operations is limited by available RAM
