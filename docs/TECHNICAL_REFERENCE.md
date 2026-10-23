@@ -261,7 +261,7 @@ Many limits differ between the RP2040 (Pico) and RP2350 (Pico 2 / Pico 2W) build
 | File read buffer | 4096 bytes | 8192 bytes | Max file size for in-memory tools |
 | FAT sector cache | 2 slots | 2 slots | LRU for FAT table reads |
 | SD CRC validation | Per-block | Per-block | CRC16-CCITT on every read |
-| File names | 8.3 format | 8.3 format | Uppercase, no long filenames |
+| File names | 8.3 create, LFN read | 8.3 create, LFN read | Long names are read and listed; new files use 8.3 |
 | Key repeat delay | 500ms | 500ms | Initial delay before repeat |
 | Key repeat rate | 100ms | 100ms | Interval between repeats |
 

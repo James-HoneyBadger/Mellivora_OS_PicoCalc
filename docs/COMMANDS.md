@@ -7,9 +7,14 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 
 - `arg` — required argument
 - `[arg]` — optional argument
-- Multiple commands can be chained on one line with `;`
+- Multiple commands can be chained on one line with `;`, `&&`, or `||`
 - Output can be redirected with `> file` (truncate) or `>> file` (append)
 - Aliases are expanded before dispatch (`alias ll="ls -l"`)
+- `ls` and `browse` show VFAT long names when present; paths may use them
+- `$NAME`, `${NAME}`, `$?`, and `$((EXPR))` are expanded before dispatch
+- Unquoted wildcards (`*`, `?`, `[abc]`) run the command once per match
+- Pipelines (`cmd1 | cmd2 | cmd3`) are buffered in RAM; `-` or no file reads the upstream stage
+- `/PROFILE.CFG` runs at boot; use it for aliases, variables, and `PROMPT`
 - `Ctrl-C` cancels long-running commands
 - `Ctrl-R` searches command history
 
@@ -62,6 +67,9 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `rev <file>`                 | Reverse characters per line                          |
 | `uniq <file>`                | Collapse adjacent duplicate lines                    |
 | `grep [-i] PATTERN <file>`   | Regex search                                         |
+| `tr [-d] SET1 [SET2] [file]` | Translate or delete characters (`a-z`, `\n`)       |
+| `sed s/OLD/NEW/[g] [file]`  | Literal substitution                                 |
+| `md <file>` / `markdown`    | Render Markdown for the LCD                          |
 | `find <path> -name PATTERN`  | Find files                                           |
 | `tree [path]`                | Recursive tree view                                  |
 | `du <path>`                  | Disk usage                                           |
@@ -90,7 +98,10 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `env`                   | Show environment / variables                             |
 | `set X=Y`               | Set a shell variable                                     |
 | `unset NAME`            | Remove a shell variable                                  |
-| `script <file>`         | Run a script of shell commands                           |
+| `read [-p TEXT] NAME...`| Read a line into one or more variables                   |
+| `which CMD...` / `type` | Locate a command, alias, or file                         |
+| `expr EXPR`             | Evaluate an integer expression                           |
+| `script <file>`         | Run a script through the full shell parser (also `. FILE`) |
 | `watch CMD`             | Re-run CMD every 2s until any key                        |
 | `yes [STRING]`          | Repeatedly print STRING                                  |
 | `seq N` / `seq A B`     | Numeric sequence                                         |
@@ -176,7 +187,7 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `home` / `launcher` / `dashboard` | Visual launchers                            |
 | `sysmon` / `monitor` / `status` | System monitor                               |
 | `terminal` / `term` / `tty` / `serial` | UART pass-through                      |
-| `theme`                    | Choose color theme                                |
+| `theme`                    | Choose color theme (`noir`, `paper`, `green`, ...) |
 
 ## File Transfer
 

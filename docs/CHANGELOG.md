@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 2.4.0 development
 
+### Changed (2.4.0-dev)
+
+- **Unified visual language** — new `ui/` module provides semantic colour
+  roles (text, muted, accent, success, warning, error, border, panel,
+  selection, status) mapped through ten themes. The prompt, status bar,
+  `app_*` headers, `ls`, `help`, `settings`, editor feedback, and the
+  `home` launcher now share one palette and one menu widget. The file
+  browser gained a themed title bar, inverted selection row, aligned
+  size column and a key-hint footer; the editor uses muted line numbers
+  and a colour-coded modified/saved status. Default theme is `noir`;
+  all previous theme names still work.
+- **Modular app layer** — `apps.c` is now a small registry; command
+  implementations live in `apps/app_util.c`, `app_settings.c`,
+  `app_editor.c`, `app_langs.c`, `app_productivity.c`, `app_games.c`,
+  `app_system.c`, `app_builtins.c`, and `app_tools.c`, wired through the
+  private `apps/app_internal.h` interface. Dead-code elimination now
+  drops unused handlers per object file, shrinking firmware by ~3.5 KB.
+
+
 ### Added (2.4.0-dev)
 
 - **`uniq` command** — filter adjacent duplicate lines from a file.
@@ -40,9 +59,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sieve2.tc` (primes up to 100).
 - **Ctrl-W** word-delete — deletes the word to the left of the cursor in
   the shell input line (complements existing Ctrl-A/E/K/U/L/R bindings).
+- **Scripting upgrades** — `script FILE` and `. FILE` now execute each line
+  through the full shell dispatcher, so variables, aliases, `;`/`&&`/`||`,
+  redirection, pipes, and wildcards work inside scripts. Nested scripts are
+  limited to four levels.
+- **Arithmetic expansion** — `$((EXPR))` is evaluated before dispatch,
+  including shell variables and integer comparisons/bitwise operators.
+- **Wildcard expansion** — unquoted `*`, `?`, `[abc]`, and `[!abc]` patterns
+  run the command once per match (up to 16). `find -name` also accepts these
+  patterns.
+- **`read [-p TEXT] NAME...`** — read a line into one or more shell
+  variables.
+- **`which` / `type`** — locate a shell command, app, alias, or file.
+- **`expr EXPR`** — evaluate an integer expression from the shell.
+- **Startup profile and prompt** — `/PROFILE.CFG` runs at boot, and the
+  `PROMPT` variable supports `%c` (cwd), `%t` (time), `%b` (battery),
+  `%w` (WiFi), and `%%`.
+- **VFAT long file names (read-only)** — `ls` and the `browse` file
+  browser display long names, and file/directory paths may use them.
+  Lookup matches long names first, then falls back to the 8.3 alias.
+  Creating or renaming to a long name still stores an 8.3 alias.
+- **General pipelines** — `cmd1 | cmd2 | cmd3` exchanges data through two
+  bounded RAM buffers. `cmd | more` keeps the streaming pager for large
+  outputs. Text commands accept `-` or an omitted file to read the
+  upstream stage.
+- **`tr [-d] SET1 [SET2] [FILE]`** — translate or delete characters with
+  ranges (`a-z`) and escapes (`\n`, `\t`, `\xNN`).
+- **`sed s/OLD/NEW/[g] [FILE]`** — literal line substitution; reads from a
+  file or the pipeline.
+- **`md` / `markdown`** — render headings, lists, quotes, code fences, and
+  links for the LCD.
+
+### Added (engineering)
+
+- **Host unit tests** — `make test` builds the pure modules with the
+  system compiler and runs the parser/path/name suites under ASan/UBSan.
+- **Static analysis and formatting** — `make lint` (clang-tidy) and
+  `make format-check` (clang-format) cover `src/core` and the tests.
+- **`make size-baseline` / `make size-gate`** — reproducible size
+  baselines and an enforceable regression gate.
+
+### Changed (2.4.0-dev)
+
+- **Testable core modules** — extracted the expression evaluator, shell
+  line parsing (`$VAR`, `;`/`&&`/`||`, redirection, pager pipes), path
+  joining/canonicalisation, 8.3 name conversion, and the simple regex
+  matcher into `picocalc/src/core/`. Firmware behaviour is unchanged.
+- **Shared console and audio modules** — `console_read_line()` and
+  `audio_beep()` now back both the app layer and the production HAL, so
+  the HAL's `read_line` and `beep` slots are no longer `NULL`.
+- **Warnings are errors** — every Mellivora source is compiled with
+  `-Wall -Wextra -Wshadow -Wundef -Werror` (`-DMELLIVORA_WERROR=OFF`
+  opts out). Pico SDK sources are excluded from the strict flags.
+- **Real size gate** — CI checks flash and RAM budgets for each target
+  and fails on growth beyond the committed baselines.
 
 ### Fixed (2.4.0-dev)
 
+- **Redirection captures app output** — output written through
+  `sys_print`/`sys_putchar` is now routed through the shell capture hook,
+  so `cmd > FILE` and pipeline stages include app output, not just shell
+  builtins.
+- **RP2350 capacity macros now apply consistently** — `apps.h` and
+  `picocalc_hw.h` tested `PICO_RP2350A` before the Pico SDK board header
+  defined it, so some translation units silently used the smaller RP2040
+  buffer sizes (editor, BASIC store, paint canvas, read buffers) while
+  others used the larger RP2350 ones. The checks now also accept the
+  platform-level `PICO_RP2350` define, which is present in every compile.
+  Pico 2 and Pico 2 W regain their intended capacities and 40 MHz LCD SPI.
 - **Pico 2 W freeze with keyboard firmware 1.6** — serialised all
   keyboard-controller I2C access with a cross-core mutex so core0 input
   polling and core1 status-bar battery reads cannot corrupt the I2C

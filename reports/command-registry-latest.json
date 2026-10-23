@@ -160,6 +160,10 @@
     "source": "shell completion"
   },
   {
+    "name": "expr",
+    "source": "shell completion"
+  },
+  {
     "name": "false",
     "source": "shell completion"
   },
@@ -304,6 +308,14 @@
     "source": "shell completion"
   },
   {
+    "name": "markdown",
+    "source": "shell completion"
+  },
+  {
+    "name": "md",
+    "source": "shell completion"
+  },
+  {
     "name": "memo",
     "source": "shell completion"
   },
@@ -400,6 +412,10 @@
     "source": "shell completion"
   },
   {
+    "name": "read",
+    "source": "shell completion"
+  },
+  {
     "name": "reboot",
     "source": "shell completion"
   },
@@ -437,6 +453,10 @@
   },
   {
     "name": "sdread",
+    "source": "shell completion"
+  },
+  {
+    "name": "sed",
     "source": "shell completion"
   },
   {
@@ -564,6 +584,10 @@
     "source": "shell completion"
   },
   {
+    "name": "tr",
+    "source": "shell completion"
+  },
+  {
     "name": "tree",
     "source": "shell completion"
   },
@@ -573,6 +597,10 @@
   },
   {
     "name": "tty",
+    "source": "shell completion"
+  },
+  {
+    "name": "type",
     "source": "shell completion"
   },
   {
@@ -625,6 +653,10 @@
   },
   {
     "name": "wget",
+    "source": "shell completion"
+  },
+  {
+    "name": "which",
     "source": "shell completion"
   },
   {

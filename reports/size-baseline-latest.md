@@ -1,10 +1,10 @@
 # Firmware Size Baseline
 
-Generated: 2026-09-23T17:29:38Z
+Generated: 2026-10-23T01:29:26Z
 Tool: arm-none-eabi-size
 
 | Target | text | data | bss | dec | hex |
 | --- | ---: | ---: | ---: | ---: | --- |
-| pico | 322356 | 0 | 168136 | 490492 | 77bfc |
-| pico2 | 312148 | 0 | 394568 | 706716 | ac89c |
-| pico2w | 628220 | 0 | 469020 | 1097240 | 10be18 |
+| pico | 336852 | 0 | 165912 | 502764 | 7abec |
+| pico2 | 326612 | 0 | 385688 | 712300 | ade6c |
+| pico2w | 639796 | 0 | 460140 | 1099936 | 10c8a0 |

@@ -20,7 +20,8 @@ When the firmware boots, you arrive at the command prompt.
 Useful shell behavior:
 
 - Up and Down browse history
-- `Tab` completes command names
+- `Tab` completes command names and file paths; press it again to cycle
+  through the candidates
 - `Ctrl-U` clears the current line
 - `Ctrl-L` redraws the screen
 - `Ctrl-C` cancels the current line or exits many interactive tools
@@ -103,6 +104,8 @@ browse
 ```
 
 Use it to move around the SD card, inspect files, and open content quickly.
+PC-created long file names are shown; the browser uses the 8.3 alias
+internally, so editing, viewing, and deleting work with either name.
 
 ### Text editor
 
@@ -263,9 +266,91 @@ Useful for quick arithmetic from the shell.
 
 ```text
 script /AUTOEXEC.SH
+. /AUTOEXEC.SH
 ```
 
-Lets you execute command files directly from storage.
+Scripts run line by line through the normal shell parser, so variables,
+aliases, `;`/`&&`/`||`, redirection, pipes, `$((...))`, and wildcards all
+work. Lines beginning with `#` are comments, and script lines are not added
+to the interactive history. Nested scripts are supported up to four levels.
+
+Example `/DEMO.SH`:
+
+```text
+# comments and blank lines are ignored
+set COUNT=3
+echo "Count is $COUNT"
+echo "2 + 3 * 4 = $((2+3*4))"
+read -p "Your name: " NAME
+echo "Hello, $NAME"
+ls *.BAS
+```
+
+### Wildcards, `read`, and `which`
+
+```text
+rm *.TXT              # runs rm once per matching file
+read -p "Name: " NAME # read a line into a variable
+which ls              # shell/app/alias/file lookup
+expr 6*7              # integer expression result
+```
+
+Only the first wildcard argument on a line is expanded; the directory part
+may not contain wildcards. Matches are capped at 16 per command.
+
+### Pipelines and text tools
+
+```text
+ls | grep TXT
+cat /NOTES.TXT | wc
+cat /NOTES.TXT | tr a-z A-Z
+sed s/foo/bar/g /NOTES.TXT
+md /README.MD
+```
+
+Pipeline stages exchange data through bounded 4 KB RAM buffers. `| more` keeps the streaming pager so large outputs
+are not limited by that buffer. Commands that accept a file also accept `-`,
+or no file argument, to read the upstream stage. `tr` supports ranges and
+escapes (`tr a-z A-Z`, `tr -d \r`); `sed` supports literal substitution with
+an optional `g` flag.
+
+### Startup profile and prompt
+
+Create `/PROFILE.CFG` to run commands at boot, before the first prompt:
+
+```text
+alias ll ls
+set PROMPT='[%t %b%%] %c> '
+```
+
+`PROMPT` supports `%c` (current directory), `%t` (time), `%b` (battery
+percent), `%w` (WiFi state), and `%%`. The default prompt shows the
+working directory in the theme accent colour with a muted `>` separator,
+and a red `!` marker when the previous command failed.
+
+### Themes, status bar, and menus
+
+`theme` lists the built-in palettes; `theme NAME` applies one and saves it:
+
+```text
+theme            # list palettes (current one marked *)
+theme noir       # neutral dark, teal accent (default)
+theme paper      # light background
+theme green      # classic phosphor
+```
+
+Available: `noir`, `paper`, `green`, `amber`, `cyan`, `blue`, `matrix`,
+`white`, `dark`, `high-contrast`.
+
+Colours are semantic, so every screen follows the theme: text, muted
+text, accent, success, warning, error, borders, panels, selection bar,
+and the status bar. The status bar shows SD mount state, WiFi, an
+eight-cell battery gauge with charge level (red under 15 %, green while
+charging), the working directory (or a transient notification), and the
+clock.
+
+`home` opens a full-screen launcher driven by the same selection widget
+(up/down move, Enter select, Esc back) used by other menus.
 
 ### Samples
 
@@ -396,6 +481,9 @@ These smaller built-in commands are useful in scripts and day-to-day work:
 | `sdinfo` | Show SD card hardware status |
 | `sdread LBA` | Read a raw SD block (debugging) |
 | `true` / `false` | Return success or failure (for scripts) |
+| `read NAME` | Read a line into a shell variable |
+| `which CMD` | Locate a command, alias, or file |
+| `expr EXPR` | Evaluate an integer expression |
 
 ## 14. Suggested Daily Workflow
 
@@ -421,5 +509,7 @@ A practical device-first session often looks like this:
 - Utilities focus on compact embedded behavior rather than full desktop compatibility
 - Interactive language support is integer-oriented and intentionally small
 - Some commands do not yet support every flag found in larger Unix systems
-- File names must follow 8.3 format (uppercase only, no long filenames)
+- Long file names created by a PC are readable, listed by `ls` and `browse`,
+  and usable in paths. Creating or renaming to a long name still stores an
+  8.3 alias.
 - Maximum file size for in-memory operations is limited by available RAM

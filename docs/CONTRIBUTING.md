@@ -36,7 +36,7 @@ sudo dnf install cmake arm-none-eabi-gcc-cs arm-none-eabi-newlib make git python
 make picocalc        # original Raspberry Pi Pico (RP2040)
 make pico2           # Raspberry Pi Pico 2 (RP2350)
 make pico2w          # Raspberry Pi Pico 2 W (RP2350 + CYW43439)
-make all             # all three targets
+make all-targets     # all three targets
 make clean           # remove all build trees
 ```
 
@@ -48,6 +48,30 @@ Each target produces a UF2 in its respective build directory:
 
 Hold BOOTSEL while plugging in the device, then drag-and-drop the UF2 onto
 the `RPI-RP2` (or `RP2350`) drive that appears.
+
+### Host tests, analysis, and size gates
+
+The hardware-independent modules live in `picocalc/src/core/` (`expr`,
+`shell_parse`, `path_util`, `fatname`, `simple_re`, `glob`, `textutil`) alongside the shared
+string helpers. They compile with the system C compiler, so tests run
+without the Pico SDK:
+
+```bash
+make test          # unit tests, ASan + UBSan by default
+make lint          # clang-tidy over src/core and app_shared
+make format-check  # clang-format over core modules and tests
+make size-gate     # flash/RAM budgets + baseline regression check
+make quality-check # docs/command checks plus host tests
+```
+
+The firmware compiles every Mellivora source with
+`-Wall -Wextra -Wshadow -Wundef -Werror`. Pass
+`-DMELLIVORA_WERROR=OFF` to CMake when experimenting locally.
+
+After an intentional size change, rebuild all targets and refresh the
+committed baselines with `make size-baseline`. CI applies `make size-gate`
+to each target and fails on a budget overflow or an unapproved regression
+(more than 5% growth plus 2 KiB slack).
 
 ## Code Style
 
@@ -68,8 +92,11 @@ the `RPI-RP2` (or `RP2350`) drive that appears.
 
 ## Pull Request Checklist
 
-- [ ] All three targets build cleanly (`make all`)
-- [ ] No new warnings from files in `picocalc/src/`
+- [ ] All three targets build cleanly (`make all-targets`)
+- [ ] No new warnings from files in `picocalc/src/` (`-Werror` is enabled)
+- [ ] Host tests, analysis, and formatting pass (`make test lint format-check`)
+- [ ] Size gate passes (`make size-gate`), or the baseline is refreshed with
+      an explanation in the PR
 - [ ] New commands are documented in `docs/COMMANDS.md`
 - [ ] User-visible changes added to `docs/CHANGELOG.md`
 - [ ] PR description explains *why*, not just *what*

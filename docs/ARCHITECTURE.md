@@ -41,12 +41,27 @@ shell loop:
 | File           | Purpose                                                       |
 |----------------|---------------------------------------------------------------|
 | `main.c`       | Shell, command dispatch, REPL, persistence, completion        |
-| `apps.c/.h`    | All built-in apps (calc, edit, snake, planner, etc.)          |
-| `kbd.c/.h`    | I2C driver for STM32 co-processor; key repeat; backlight       |
-| `lcd.c/.h`    | ILI9488 SPI driver; software framebuffer; ANSI parser          |
-| `sd.c/.h`     | Raw SPI SD-card block driver (CMD0..CMD58)                     |
-| `fat.c/.h`    | FAT16/FAT32 read/write (ls, mkdir, open, write, unlink)        |
-| `net.c/.h`    | TCP/UDP/DNS/NTP/HTTP wrappers over lwIP (CYW43 only)           |
+| `apps.c/.h`    | App registry: name table, startup hooks, dispatch              |
+| `apps/app_util.c` | Shared formatting, option parsing, file/path, calendar helpers |
+| `apps/app_settings.c` | Persistent settings and themes |
+| `apps/app_editor.c` | Line editor |
+| `apps/app_langs.c` | BASIC, TinyC, calculator, scripts, samples |
+| `apps/app_productivity.c` | Notes, tasks, planner, journal, habits, bookmarks |
+| `apps/app_games.c` | Games and toys |
+| `apps/app_system.c` | Calendar, clock, dashboard, launcher, timers |
+| `apps/app_builtins.c` | Small standalone commands and environment storage |
+| `apps/app_tools.c` | File/system tools, media toys, Forth |
+| `apps/text.c`, `apps/fs.c`, `apps/hex.c` | Text, filesystem, and hex utilities |
+| `core/`        | Pure logic with host tests: expressions, shell parsing, paths, 8.3 names, VFAT long names, regex, globs, tr/sed helpers |
+| `ui/ui.c/.h`   | Semantic colour roles, themed palettes, header/footer, menus, notifications |
+| `pipe.c/.h`    | Bounded in-RAM pipeline input/output                         |
+| `console.c/.h` | Blocking line input shared by apps and the HAL                |
+| `audio.c/.h`   | PWM tone output on the stereo pins                            |
+| `kbd.c/.h`     | I2C driver for STM32 co-processor; key repeat; backlight       |
+| `lcd.c/.h`     | ILI9488 SPI driver; software framebuffer; ANSI parser          |
+| `sd.c/.h`      | Raw SPI SD-card block driver (CMD0..CMD58)                     |
+| `fat.c/.h`     | FAT16/FAT32 read/write (ls, mkdir, open, write, unlink)        |
+| `net.c/.h`     | TCP/UDP/DNS/NTP/HTTP wrappers over lwIP (CYW43 only)           |
 | `netapps.c/.h`| User-facing network commands (`wifi`, `ping`, `ntp`, ...)      |
 | `syscall.c/.h`| Cross-module facade: `sys_print`, time, RTC, interrupt flag    |
 | `picocalc_hw.h`| Pin map and board constants                                   |
@@ -102,9 +117,23 @@ fat_*  -> resolve_path -> read_sector / write_sector
                          SPI0 to SD card (CS toggled)
 ```
 
+VFAT long-name entries are accumulated during the directory walk and
+validated against the 8.3 checksum; `resolve_path` prefers a long-name
+match, then falls back to 8.3.
+
 A single 512-byte `_sector_buf` is shared across reads, so callbacks invoked
 from inside `fat_ls` MUST NOT call back into `fat_*`. Helpers like `cp -r`
 and `rm -r` snapshot the directory listing first, then iterate.
+
+### Shell pipeline
+
+```text
+input line -> alias/var expansion -> ';' / '&&' / '||' split
+           -> '|' split -> per-stage glob -> redirection -> dispatch
+```
+
+Intermediate pipeline stages exchange up to 4 KiB through two ping-pong RAM
+buffers. `cmd | more` bypasses capture and streams through the pager.
 
 ### Network pipeline (Pico 2W)
 
@@ -157,7 +186,10 @@ device reboots cleanly within 3 seconds.
 
 ## Adding a New App
 
-1. Implement `static void app_foo(const char *arg)` in `apps.c`.
-2. Add `{"foo", app_foo}` to the dispatch table near line 4535.
+1. Implement `static void app_foo(const char *arg)` in `apps.c` (or in a
+   themed module under `apps/` and declare it in the matching header).
+2. Add `{"foo", app_foo}` to the dispatch table in `apps.c`.
 3. Add `"foo"` to the completion array in `main.c`.
 4. Document and changelog.
+5. If the app grows reusable pure logic, move it to `src/core/` and add
+   host tests under `picocalc/tests/`.

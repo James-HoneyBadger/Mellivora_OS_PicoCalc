@@ -5,7 +5,7 @@
 | Key | Action |
 | --- | --- |
 | `Up` / `Down` | Browse command history |
-| `Tab` | Auto-complete command name |
+| `Tab` | Complete command/path; repeat to cycle candidates |
 | `Ctrl-C` | Cancel current line / exit tools |
 | `Ctrl-U` | Clear current line |
 | `Ctrl-L` | Redraw screen |
@@ -17,11 +17,22 @@
 | Feature | Syntax | Example |
 | --- | --- | --- |
 | Chain commands | `cmd1 ; cmd2` | `mount ; ls` |
+| Conditional chain | `cmd1 && cmd2` / `cmd1 \|\| cmd2` | `mount && ls` |
 | Redirect output | `cmd > FILE` | `ls > DIR.TXT` |
 | Append output | `cmd >> FILE` | `echo hi >> LOG.TXT` |
+| Pipe | `cmd1 \| cmd2` | `ls \| grep TXT` |
 | Pipe to pager | `cmd \| more` | `cat FILE \| more` |
+| Read pipeline / stdin | `CMD -` or omit the file | `cat FILE \| wc` |
+| Wildcards | `*`, `?`, `[abc]` | `rm *.TXT` |
+| Variables | `$NAME` / `${NAME}` | `echo $PROMPT` |
+| Arithmetic | `$((EXPR))` | `echo $((2+3*4))` |
+| Read input | `read [-p TEXT] NAME...` | `read NAME` |
+| Locate a command | `which CMD` / `type CMD` | `which ls` |
+| Evaluate an expression | `expr EXPR` | `expr 6*7` |
 | Quoted args | `"text with spaces"` | `echo "hello world"` |
 | Aliases | `alias NAME VALUE` | `alias ll ls` |
+| Prompt | `set PROMPT='%c> '` | `%c` cwd, `%t` time, `%b` battery |
+| Startup profile | `/PROFILE.CFG` | aliases, variables, startup commands |
 
 ## System Commands
 
@@ -117,7 +128,7 @@
 | `basic [FILE.BAS]` | BASIC interpreter |
 | `tcc [FILE.TC]` | Tiny C interpreter |
 | `calc [EXPR]` | Calculator / expression REPL |
-| `script FILE` | Run shell script file |
+| `script FILE` | Run a script through the full shell parser |
 | `samples` | Bundled example programs |
 
 ## Additional Shell Commands
@@ -133,6 +144,9 @@
 | `dirname PATH` | Print directory part of a path |
 | `sdinfo` | SD card hardware status |
 | `true` / `false` | Return success or failure |
+| `tr [-d] SET1 [SET2] [FILE]` | Translate or delete characters |
+| `sed s/OLD/NEW/[g] [FILE]` | Literal substitution |
+| `md FILE` / `markdown` | Render Markdown |
 
 ## Launchers
 

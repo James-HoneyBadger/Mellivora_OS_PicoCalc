@@ -20,6 +20,14 @@ Important files and responsibilities:
 
 - `picocalc/src/main.c` — boot path, shell loop, built-in command handlers, help, history, aliasing
 - `picocalc/src/apps.c` — most user-facing apps and utility ports
+- `picocalc/src/core/` — hardware-independent logic with host tests: expression
+  evaluation (`expr`), shell parsing (`shell_parse`), path handling
+  (`path_util`), FAT 8.3 names (`fatname`), the simple regex matcher
+  (`simple_re`), wildcard matching (`glob`), and `tr`/`sed` helpers
+  (`textutil`)
+- `picocalc/src/console.c` — shared blocking line input
+- `picocalc/src/audio.c` — PWM tone output
+- `picocalc/src/pipe.c` — bounded in-RAM pipeline buffers
 - `picocalc/src/fat.c` and `fat.h` — FAT-backed filesystem logic
 - `picocalc/src/syscall.c` and related headers — app-facing helper surface
 - `picocalc/src/sd.c` — low-level SD card block I/O
@@ -28,19 +36,28 @@ Important files and responsibilities:
 - `picocalc/src/net.c` and `net.h` — WiFi, TCP, DNS, ICMP, NTP, HTTP (Pico 2W only)
 - `picocalc/src/netapps.c` and `netapps.h` — network application commands (Pico 2W only)
 - `picocalc/src/lwipopts.h` — lwIP stack configuration (Pico 2W only)
+- `picocalc/tests/` — host unit tests for `src/core` and the shared helpers
+- `tools/quality/` — baseline, size-gate, lint, and formatting scripts
 
 ## 3. Normal Edit and Test Cycle
 
 1. edit code under `picocalc/src/`
-2. rebuild from the repository root with:
+2. if you touched a pure module, add or update a test under `picocalc/tests/`
+3. run the host checks:
 
-```bash
-make picocalc
-```
+   ```bash
+   make test lint format-check
+   ```
 
-1. flash the generated UF2 to hardware
-2. test the command or app directly in the shell
-3. update docs when user-visible behavior changes
+4. rebuild from the repository root with:
+
+   ```bash
+   make picocalc
+   ```
+
+5. flash the generated UF2 to hardware
+6. test the command or app directly in the shell
+7. update docs when user-visible behavior changes
 
 ## 4. Choosing Between Built-ins and Apps
 
