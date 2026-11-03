@@ -3054,7 +3054,7 @@ int main(void) {
     hal_init();
 
     gpio_init(PICO_PIN_PS);
-    gpio_set_dir(PICO_PIN_PS, GPIO_OUT);
+    gpio_set_dir(PICO_PIN_PS, GPIO_OUT);  // NOLINT(clang-analyzer-core.FixedAddressDereference)
     gpio_put(PICO_PIN_PS, 1);
 
     g_boot_time = get_absolute_time();
