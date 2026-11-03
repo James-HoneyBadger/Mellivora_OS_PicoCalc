@@ -39,6 +39,8 @@
 #include "apps/app_shared.h"
 #include "core/expr.h"
 #include "core/glob.h"
+#include "core/history.h"
+#include "core/datetime.h"
 #include "core/path_util.h"
 #include "core/shell_parse.h"
 #include "core/lfn.h"
@@ -363,36 +365,29 @@ static const cmd_meta_t _cmd_registry[];
 /* History                                                              */
 /* ------------------------------------------------------------------ */
 
-static char _hist[HIST_ENTRIES][HIST_ENTRY_SZ];
-static int  _hist_count = 0;
-static int  _hist_head  = 0;   /* next write slot (ring) */
+static char _hist_storage[HIST_ENTRIES][HIST_ENTRY_SZ];
+static shell_history_t _history = {
+    .storage = &_hist_storage[0][0],
+    .capacity = HIST_ENTRIES,
+    .entry_size = HIST_ENTRY_SZ,
+};
+
+static int hist_count(void) {
+    return (int)shell_history_count(&_history);
+}
 
 static void hist_push(const char *line) {
-    if (!line || !*line) return;
-    /* Avoid duplicate of last entry */
-    if (_hist_count > 0) {
-        int prev = (_hist_head - 1 + HIST_ENTRIES) % HIST_ENTRIES;
-        if (strcmp(_hist[prev], line) == 0) return;
-    }
-    size_t len = strlen(line);
-    if (len >= HIST_ENTRY_SZ) len = HIST_ENTRY_SZ - 1;
-    memcpy(_hist[_hist_head], line, len);
-    _hist[_hist_head][len] = '\0';
-    _hist_head = (_hist_head + 1) % HIST_ENTRIES;
-    if (_hist_count < HIST_ENTRIES) _hist_count++;
+    shell_history_push(&_history, line);
 }
 
 /* Returns pointer to history entry (0 = oldest), or NULL if out of range. */
 static const char *hist_get(int offset) {
-    if (offset < 0 || offset >= _hist_count) return NULL;
-    int idx = (_hist_head - _hist_count + offset + HIST_ENTRIES * 2) % HIST_ENTRIES;
-    return _hist[idx];
+    if (offset < 0) return NULL;
+    return shell_history_get(&_history, (size_t)offset);
 }
 
 static void hist_clear(void) {
-    memset(_hist, 0, sizeof _hist);
-    _hist_count = 0;
-    _hist_head = 0;
+    shell_history_clear(&_history);
 }
 
 /* ----- Persistent history (/HISTORY.LOG) -------------------------- */
@@ -403,8 +398,8 @@ static void hist_save(void) {
     /* Build a single buffer of recent entries (newest last) */
     char buf[HIST_ENTRY_SZ * 8 + 8];  /* keep last 8 lines max for write */
     size_t pos = 0;
-    int start = (_hist_count > 8) ? _hist_count - 8 : 0;
-    for (int i = start; i < _hist_count; i++) {
+    int start = (hist_count() > 8) ? hist_count() - 8 : 0;
+    for (int i = start; i < hist_count(); i++) {
         const char *h = hist_get(i);
         if (!h) continue;
         size_t l = strlen(h);
@@ -651,7 +646,7 @@ static bool history_expand_bang(char *line, size_t line_sz) {
     if (!line || line[0] != '!') return false;
 
     const char *entry = NULL;
-    if (strcmp(line, "!!") == 0) entry = hist_get(_hist_count - 1);
+    if (strcmp(line, "!!") == 0) entry = hist_get(hist_count() - 1);
     else {
         int n = atoi(line + 1);
         if (n >= 1) entry = hist_get(n - 1);
@@ -680,11 +675,11 @@ static void cmd_history(const char *arg) {
     char *s = skip_spaces(tmp);
 
     if (!s || !*s) {
-        if (_hist_count == 0) {
+        if (hist_count() == 0) {
             out_str("history: empty\n");
             return;
         }
-        for (int i = 0; i < _hist_count; i++) out_fmt("%2d  %s\n", i + 1, hist_get(i));
+        for (int i = 0; i < hist_count(); i++) out_fmt("%2d  %s\n", i + 1, hist_get(i));
         return;
     }
 
@@ -853,11 +848,32 @@ static void cmd_help(const char *arg) {
     const char *topic = arg ? arg : "";
     while (*topic == ' ') topic++;
 
+    if (strncmp(topic, "-k ", 3) == 0 || strncmp(topic, "--search ", 9) == 0) {
+        const char *query = topic[1] == 'k' ? topic + 3 : topic + 9;
+        while (*query == ' ' || *query == '\t') query++;
+        if (!*query) {
+            out_str("usage: help -k KEYWORD\n");
+            return;
+        }
+
+        int matches = 0;
+        for (const cmd_meta_t *c = _cmd_registry; c->name; c++) {
+            if (!str_contains_ci(c->name, query) &&
+                !str_contains_ci(c->group, query)) continue;
+            out_fmt("  %-16s [%s]\n", c->name, c->group);
+            matches++;
+        }
+        if (matches == 0) out_fmt("help: no commands match '%s'\n", query);
+        else out_fmt("%d matching command(s); use 'man COMMAND' for details\n", matches);
+        return;
+    }
+
     /* ---- Top-level overview ---- */
     if (!*topic) {
         out_role(UI_ACCENT, "Mellivora OS " MELLIVORA_VERSION);
         out_str("  command overview\n");
         out_role(UI_MUTED, "Use  man TOPIC  for details on any command.\n\n");
+        out_role(UI_MUTED, "Search commands with: help -k KEYWORD\n\n");
 
         out_role(UI_ACCENT, "[system]");
         out_str("  help man uname sysinfo uptime clear battery backlight\n");
@@ -1051,7 +1067,7 @@ static void cmd_uname(const char *arg) {
 static void cmd_version(void) {
     out_str("Mellivora OS v" MELLIVORA_VERSION "\n");
     out_str("Built: " __DATE__ " " __TIME__ "\n");
-    out_str("https://github.com/James-HoneyBadger/Mellivora_OS_PicoCalc\n");
+    out_str("https://github.com/" MELLIVORA_REPOSITORY "\n");
 }
 
 static void cmd_uptime(void) {
@@ -1073,35 +1089,6 @@ static void cmd_uptime(void) {
 /* date — software RTC (settable, persisted to /CLOCK.CFG)            */
 /* ------------------------------------------------------------------ */
 #define CLOCK_FILE "/CLOCK.CFG"
-
-/* Days-from-civil based on Howard Hinnant's algorithm. */
-static int64_t ymd_to_epoch_ms(int y, int m, int d, int hh, int mm, int ss) {
-    y -= (m <= 2);
-    int era = (y >= 0 ? y : y - 399) / 400;
-    unsigned yoe = (unsigned)(y - era * 400);
-    unsigned doy = (153U * (unsigned)(m + (m > 2 ? -3 : 9)) + 2U) / 5U + (unsigned)(d - 1);
-    unsigned doe = yoe * 365U + yoe / 4U - yoe / 100U + doy;
-    int64_t days = (int64_t)era * 146097LL + (int64_t)doe - 719468LL;
-    return (days * 86400LL + (int64_t)hh * 3600LL + (int64_t)mm * 60LL + (int64_t)ss) * 1000LL;
-}
-
-static void epoch_ms_to_ymd(int64_t ms, int *y, int *mo, int *d, int *hh, int *mm, int *ss) {
-    int64_t s   = ms / 1000;
-    int64_t day = s / 86400; if (s < 0 && (s % 86400)) day--;
-    int64_t tod = s - day * 86400;
-    *hh = (int)(tod / 3600); *mm = (int)((tod / 60) % 60); *ss = (int)(tod % 60);
-    int64_t z = day + 719468;
-    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
-    unsigned doe = (unsigned)(z - era * 146097);
-    unsigned yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;
-    int yr = (int)yoe + (int)era * 400;
-    unsigned doy = doe - (365*yoe + yoe/4 - yoe/100);
-    unsigned mp  = (5*doy + 2)/153;
-    unsigned dd  = doy - (153*mp + 2)/5 + 1;
-    unsigned mn  = mp + (mp < 10 ? 3 : -9);
-    yr += (mn <= 2);
-    *y = yr; *mo = (int)mn; *d = (int)dd;
-}
 
 static void clock_persist(void) {
     if (!_fat_mounted) return;
@@ -1132,11 +1119,11 @@ static void cmd_date(const char *arg) {
             out_str("usage: date YYYY-MM-DD [HH:MM[:SS]]\n");
             return;
         }
-        sys_set_epoch_ms(ymd_to_epoch_ms(y, mo, d, hh, mm, ss));
+        sys_set_epoch_ms(datetime_ymd_to_epoch_ms(y, mo, d, hh, mm, ss));
         clock_persist();
     }
     int y, mo, d, hh, mm, ss;
-    epoch_ms_to_ymd(sys_now_epoch_ms(), &y, &mo, &d, &hh, &mm, &ss);
+    datetime_epoch_ms_to_ymd(sys_now_epoch_ms(), &y, &mo, &d, &hh, &mm, &ss);
     out_fmt("%04d-%02d-%02d %02d:%02d:%02d%s\n",
             y, mo, d, hh, mm, ss, sys_rtc_is_set() ? "" : " (unset; uptime only)");
 }
@@ -1553,6 +1540,60 @@ static void cmd_rename(const char *arg) {
 static void cmd_sdinfo(void) {
     sd_result_t r = sd_init();
     out_fmt("SD init: %s\n", sd_result_str(r));
+    if (r != SD_OK) {
+        _last_exit = 1;
+        return;
+    }
+    fat_usage_t usage;
+    fat_result_t fr = fat_get_usage(&usage);
+    if (fr == FAT_OK) {
+        out_fmt("Filesystem: FAT%u, %lu bytes/sector, %lu sectors/cluster\n",
+                usage.fat32 ? 32U : 16U,
+                (unsigned long)usage.bytes_per_sector,
+                (unsigned long)usage.sectors_per_cluster);
+        out_fmt("Capacity: %llu total, %llu used, %llu free bytes\n",
+                (unsigned long long)usage.total_bytes,
+                (unsigned long long)usage.used_bytes,
+                (unsigned long long)usage.free_bytes);
+    } else {
+        out_fmt("Filesystem usage unavailable: %s (run 'mount' first)\n",
+                fat_result_str(fr));
+    }
+}
+
+static void cmd_sdcheck(void) {
+    uint8_t sector[512];
+    sd_result_t sr = sd_init();
+    if (sr != SD_OK) {
+        out_fmt("sdcheck: card initialization failed: %s\n", sd_result_str(sr));
+        _last_exit = 1;
+        return;
+    }
+    sr = sd_read_block(0, sector);
+    if (sr != SD_OK) {
+        out_fmt("sdcheck: sector 0 read failed: %s\n", sd_result_str(sr));
+        _last_exit = 1;
+        return;
+    }
+    if (sector[510] != 0x55 || sector[511] != 0xAA) {
+        out_str("sdcheck: sector 0 is readable, but has no boot signature\n");
+        _last_exit = 1;
+        return;
+    }
+    out_str("sdcheck: card initialized; sector 0 read and boot signature valid\n");
+    if (_fat_mounted) {
+        fat_usage_t usage;
+        fat_result_t fr = fat_get_usage(&usage);
+        if (fr != FAT_OK) {
+            out_fmt("sdcheck: mounted filesystem check failed: %s\n",
+                    fat_result_str(fr));
+            _last_exit = 1;
+            return;
+        }
+        out_str("sdcheck: mounted FAT geometry and allocation scan succeeded\n");
+    } else {
+        out_str("sdcheck: filesystem not mounted; run 'mount' for FAT checks\n");
+    }
 }
 
 static void cmd_sdread(const char *arg) {
@@ -1712,7 +1753,8 @@ bool sys_output_captured(void) {
     X("battery", "system") X("backlight", "system") X("mount", "fs") X("ls", "fs") \
     X("dir", "fs") X("cd", "fs") X("pwd", "fs") X("cat", "fs") X("echo", "system") \
     X("touch", "fs") X("write", "fs") X("mkdir", "fs") X("rm", "fs") X("rename", "fs") \
-    X("sdinfo", "fs") X("sdread", "fs") X("reboot", "system") X("date", "time") \
+    X("sdinfo", "fs") X("sdread", "fs") X("sdcheck", "fs") X("backup", "fs") \
+    X("reboot", "system") X("date", "time") \
     X("dmesg", "system") X("hello", "apps") X("basename", "apps") X("dirname", "apps") \
     X("seq", "apps") X("head", "apps") X("tail", "apps") X("wc", "apps") X("cut", "apps") \
     X("grep", "apps") X("tr", "apps") X("sed", "apps") X("md", "apps") X("markdown", "apps") \
@@ -2706,6 +2748,7 @@ static void dispatch_single_no_glob(char *line) {
     else if (!strcmp(line, "rename"))   cmd_rename(arg);
     else if (!strcmp(line, "sdinfo"))    cmd_sdinfo();
     else if (!strcmp(line, "sdread"))    cmd_sdread(arg);
+    else if (!strcmp(line, "sdcheck"))   cmd_sdcheck();
     else if (!strcmp(line, "reboot"))    cmd_reboot();
     else if (!strcmp(line, "shutdown") ||
              !strcmp(line, "halt") ||
@@ -3104,6 +3147,7 @@ int main(void) {
 
     /* Run autorun script + startup app from settings, if any. */
     if (_fat_mounted) app_boot();
+    if (_fat_mounted) app_planner_remind();
 
     /* Enable status bar on last LCD row */
     _statusbar_enabled = true;
@@ -3286,7 +3330,7 @@ int main(void) {
 
         /* ---- Ctrl+R — reverse incremental history search ---- */
         if (ch == 0x12) {
-            if (_hist_count == 0) continue;
+            if (hist_count() == 0) continue;
             char query[64];
             int qlen = 0;
             query[0] = '\0';
@@ -3323,7 +3367,7 @@ int main(void) {
                     if (qlen > 0) { query[--qlen] = '\0'; }
                 } else if (rch == 0x12) {
                     /* Find next older match */
-                    int start = (match_idx > 0) ? match_idx - 1 : _hist_count - 1;
+                    int start = (match_idx > 0) ? match_idx - 1 : hist_count() - 1;
                     int found = -1;
                     for (int i = start; i >= 0; i--) {
                         const char *h = hist_get(i);
@@ -3338,7 +3382,7 @@ int main(void) {
                 if (!done) {
                     /* Re-search from newest */
                     int found = -1;
-                    for (int i = _hist_count - 1; i >= 0; i--) {
+                    for (int i = hist_count() - 1; i >= 0; i--) {
                         const char *h = hist_get(i);
                         if (h && strstr(h, query)) { found = i; break; }
                     }
@@ -3370,9 +3414,9 @@ int main(void) {
         /* ---- Arrow keys (STM32 raw codes) ---- */
         /* Up = 0xB5, Down = 0xB4, Left = 0xB6, Right = 0xB7 */
         if (ch == 0xB5) { /* Up — previous history */
-            int next = (hist_browse < 0) ? _hist_count - 1 :
+            int next = (hist_browse < 0) ? hist_count() - 1 :
                        hist_browse - 1;
-            if (next >= 0 && next < _hist_count) {
+            if (next >= 0 && next < hist_count()) {
                 const char *h = hist_get(next);
                 if (h) {
                     hist_browse = next;
@@ -3396,7 +3440,7 @@ int main(void) {
             if (hist_browse >= 0) {
                 int old_len = idx;
                 while (cursor > 0) { out_str("\b"); cursor--; }
-                if (hist_browse < _hist_count - 1) {
+                if (hist_browse < hist_count() - 1) {
                     hist_browse++;
                     const char *h = hist_get(hist_browse);
                     if (h) {
@@ -3450,8 +3494,8 @@ int main(void) {
             if (ch == 0xB5 || ch == 0xB4 || ch == 0xB6 || ch == 0xB7) {
                 /* Reprocess — copy the arrow handling above */
                 if (ch == 0xB5) {
-                    int next = (hist_browse < 0) ? _hist_count - 1 : hist_browse - 1;
-                    if (next >= 0 && next < _hist_count) {
+                    int next = (hist_browse < 0) ? hist_count() - 1 : hist_browse - 1;
+                    if (next >= 0 && next < hist_count()) {
                         const char *h = hist_get(next);
                         if (h) {
                             hist_browse = next;
@@ -3470,7 +3514,7 @@ int main(void) {
                     if (hist_browse >= 0) {
                         int old_len = idx;
                         while (cursor > 0) { out_str("\b"); cursor--; }
-                        if (hist_browse < _hist_count - 1) {
+                        if (hist_browse < hist_count() - 1) {
                             hist_browse++;
                             const char *h = hist_get(hist_browse);
                             if (h) { strncpy(line, h, LINE_BUF - 1); line[LINE_BUF - 1] = '\0'; }

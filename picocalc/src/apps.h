@@ -48,6 +48,7 @@ extern uint8_t g_app_io_buf[APP_READ_MAX + 1];
 void app_init(void);
 void app_boot(void);
 bool app_run(const char *cmd, const char *arg);
+void app_planner_remind(void);
 
 /* Shared internal helpers (copy_cstr, append_cstr, skip_ws, etc. are in
    apps/app_shared.h). The rest are implemented in apps.c. */

@@ -23,26 +23,35 @@ The active codebase lives under `picocalc/src/`.
 
 Key modules:
 
-- `main.c` — shell core, built-ins, help system, history, aliases, boot flow
-- `apps.c` — application layer, utility ports, editor, dashboards, games, interpreters
-- `fat.c` and `fat.h` — FAT filesystem operations and capacity reporting
-- `syscall.c` and syscall headers — app-facing portability layer
-- `sd.c` — block-level storage transport
-- `lcd.c` — screen drawing and mirrored output
+- `main.c` — boot flow, shell core, built-ins, command dispatch, persistence
+- `apps.c` — app registry and dispatch; implementations are split across `apps/app_*.c`
+- `apps/fs.c`, `apps/text.c`, and `apps/hex.c` — filesystem, text, and hex utilities
+- `apps/app_shared.c` and `apps/app_util.c` — shared app helpers
+- `core/` — portable, host-tested parsing, path, text, filename, history, and date logic
+- `fat.c` and `fat.h` — FAT16/FAT32 filesystem operations
+- `syscall.c` and syscall headers — app-facing portability and I/O helpers
+- `sd.c` — SD-card block transport
+- `lcd.c` — display drawing and console rendering
 - `kbd.c` — keyboard input, battery reporting, and backlight control
-- `net.c` and `net.h` — WiFi, TCP, DNS, ICMP, NTP, and HTTP networking (Pico 2W only)
+- `hal/` — hardware abstraction used during platform initialization
+- `ui/ui.c` — semantic colors, menus, headers, footers, and notifications
+- `net.c` and `net.h` — Wi-Fi, TCP, DNS, ICMP, NTP, HTTP, and verified HTTPS (Pico 2W only)
 - `netapps.c` and `netapps.h` — network application commands (Pico 2W only)
 
 ## 3. Runtime Flow
 
 The normal runtime sequence is:
 
-1. initialize hardware and platform state
-2. establish the display and console output path
-3. bring up shell state such as current directory and history
-4. accept and parse user commands
-5. dispatch either to built-in handlers or app-layer handlers
-6. write persistent state to SD-backed files where needed
+1. set the board clock and initialize stdio, HAL, keyboard, and display
+2. initialize and mount the SD card when present; storage failure does not
+   prevent the shell from starting
+3. restore shell aliases, variables, settings, working directory, clock, and
+   history when the filesystem is mounted
+4. run `/PROFILE.CFG` and configured startup hooks
+5. on Pico 2 W, attempt a saved Wi-Fi connection and synchronize time when
+   the software clock is not yet valid
+6. start the RP2350 status-bar refresh task, enable the watchdog, and enter
+   the interactive shell
 
 ## 4. Shell Core Characteristics
 
@@ -50,15 +59,18 @@ Notable shell properties:
 
 - fixed-size line buffer (256 bytes)
 - history ring with replay support (`!!`, `!N`)
-- persistent alias storage with circular expansion protection (max depth 8)
+- persistent alias and variable storage on the SD card
+- alias expansion protection against recursive expansion
 - tab completion of command names
-- command chaining via `;` separator (up to 16 segments per line)
+- command chaining via `;`, `&&`, and `||` (up to 16 segments per line)
+- pipelines with up to 4 stages and bounded intermediate output
 - output redirection: `>` (truncate) and `>>` (append) to SD files
 - double-quoted argument grouping to preserve spaces
 - Ctrl-C interrupt flag for cancelling the current input line
 - relative and absolute path handling
 - mirrored output to both device display and serial console
 - topic-based built-in help through `help` and `man`
+- searchable command lookup through `help -k KEYWORD`
 - software key repeat (500ms delay, 100ms rate)
 
 ## 5. Filesystem Model
@@ -69,35 +81,41 @@ Provided capabilities include:
 
 - mount detection and initialization
 - directory listing
-- file opening and sequential reading
-- creation and overwrite support
-- append support (`fat_append`)
+- file opening, sequential reading, creation, and appending
+- whole-file replacement through atomic-write support for eligible callers
 - in-place rename support (`fat_rename`, same directory)
 - directory creation
 - file removal and empty-directory removal
-- recursive single-level directory copy
+- recursive file and directory operations exposed by shell utilities
 - tree and usage reporting
 - total, used, and free capacity reporting through `df`
 - 2-slot FAT sector cache for read performance
 - SD block CRC16 validation
-- card-detect debounce (3-read majority vote)
 
 Users are expected to mount the SD card before relying on persistent apps or file tools.
 
 ## 6. Persistent Application Files
 
-Several applications store state as normal files on the SD card. Important examples include:
+Shell and application state is stored as ordinary files on the SD card.
+Important paths include:
 
+- `LASTCWD.TXT` — last working directory
+- `HISTORY.LOG` — recent shell history
+- `ALIASES.CFG` — shell aliases
+- `ENV.CFG` — shell variables
+- `CLOCK.CFG` — persisted software clock timestamp
 - `SETTINGS.CFG` — user preferences
 - `TODO.TXT` — task list
 - `PLANNER.TXT` — dated agenda items
 - `BOOKMARKS.CFG` — saved bookmarks with CWD context
-- `ALIASES.CFG` — shell command aliases
 - `JOURNAL.TXT` — dated journal entries
 - `HABITS.CFG` — habit tracking with streak data
+- `WIFI.CFG` — saved Pico 2 W network credentials
 - `HISCORE.TXT` — snake game high score
 
-This plain-file approach keeps the system transparent and easy to recover manually.
+Text-based formats make user data accessible from another computer. Wi-Fi
+passwords in `WIFI.CFG` are stored as readable text, not encrypted. Back up
+important files and protect the card.
 
 ## 7. Built-in Command Families
 
@@ -128,6 +146,8 @@ This plain-file approach keeps the system transparent and easy to recover manual
 - rm
 - sdinfo
 - sdread
+- sdcheck
+- backup
 
 ### App-layer and utility surface
 
@@ -150,8 +170,8 @@ When built for the Pico 2W (`make pico2w`), the firmware includes WiFi networkin
 - `ifconfig` — show IP address, gateway, and DNS configuration
 - `ntp` — synchronise time from an NTP server
 - `dns` — resolve a hostname to an IP address
-- `fetch` — HTTP GET and display response body
-- `wget` — HTTP GET and save response to a file on the SD card
+- `fetch` — HTTP GET or verified HTTPS GET and display response body
+- `wget` — HTTP GET or verified HTTPS GET and save response to the SD card
 - `weather` — fetch weather data for a location
 - `irc` — minimal IRC client
 - `telnet` — minimal telnet client
@@ -197,7 +217,7 @@ Main limits:
 - integer-only model
 - no heap or dynamic linking
 - no separate compilation model
-- intentionally small syntax surface
+- bounded arrays and an intentionally small syntax surface
 
 ## 10. Network Layer (Pico 2W Only)
 
@@ -206,9 +226,12 @@ When built for the Pico 2W board (`make pico2w`), the firmware includes a WiFi n
 Architecture:
 
 - `net.c` implements the low-level network layer on top of the CYW43 WiFi driver and lwIP TCP/IP stack
+- HTTPS uses Pico SDK mbedTLS and TLS 1.2 with mandatory CA and hostname
+  verification. A user-provided PEM CA certificate at `/CA.CRT` and a valid
+  software clock are required; there is no implicit trust-all mode.
 - `netapps.c` provides user-facing commands that call into `net.c`
 - Network code is conditionally compiled using `#ifdef PICO_CYW43_SUPPORTED`
-- WiFi credentials are held in memory for the current session (not persisted to SD)
+- saved Wi-Fi credentials are persisted in `/WIFI.CFG` and are readable text
 
 Capabilities:
 
@@ -237,7 +260,9 @@ These limits strongly influence implementation style and are a key reason many t
 
 ## 12. Limits and Constraints
 
-Many limits differ between the RP2040 (Pico) and RP2350 (Pico 2 / Pico 2W) builds because the RP2350 has more RAM (520 KB vs 264 KB).
+The RP2350 builds use larger selected buffers than RP2040 builds. Values
+below describe compile-time capacities, not guarantees that every operation
+can use the full capacity simultaneously.
 
 | Resource | RP2040 | RP2350 | Notes |
 | --- | --- | --- | --- |
@@ -245,8 +270,8 @@ Many limits differ between the RP2040 (Pico) and RP2350 (Pico 2 / Pico 2W) build
 | Output format buffer | 512 bytes | 512 bytes | `out_fmt()` single call |
 | Output redirection buffer | 4096 bytes | 8192 bytes | Max redirected output per command |
 | History entries | 32 | 64 | Circular ring |
-| Alias storage | 2560 bytes | 2560 bytes | All aliases combined |
-| Alias expansion depth | 8 | 8 | Prevents circular aliases |
+| Alias entries | 16 | 16 | Each name has 16 bytes; each value has a 256-byte buffer |
+| Shell variables | 16 | 16 | Each name has 16 bytes; each value has a 256-byte buffer |
 | Command chain segments | 16 | 16 | Max `;`-separated commands |
 | LCD text grid | 40 cols × 20 rows | 40 cols × 20 rows | 8×16 pixel font on 320×320 |
 | Editor lines | 128 | 256 | Max lines per file in editor |
@@ -259,7 +284,7 @@ Many limits differ between the RP2040 (Pico) and RP2350 (Pico 2 / Pico 2W) build
 | Bookmarks | 32 | 32 | Max saved bookmarks |
 | Journal entries | 96 | 96 | Max journal entries |
 | File read buffer | 4096 bytes | 8192 bytes | Max file size for in-memory tools |
-| FAT sector cache | 2 slots | 2 slots | LRU for FAT table reads |
+| FAT sector cache | 2 slots | 2 slots | Round-robin replacement for FAT table reads |
 | SD CRC validation | Per-block | Per-block | CRC16-CCITT on every read |
 | File names | 8.3 create, LFN read | 8.3 create, LFN read | Long names are read and listed; new files use 8.3 |
 | Key repeat delay | 500ms | 500ms | Initial delay before repeat |
@@ -285,6 +310,8 @@ For Pico 2W (RP2350 with WiFi):
 picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
 ```
 
-## 14. Scope and Direction
+## 14. Scope
 
-This repository now centers on the PicoCalc firmware target. The maintained direction is a practical RP2040/RP2350 handheld shell environment with apps and interpreters, not the older desktop-oriented runtime flow.
+The maintained product is the PicoCalc firmware for RP2040 and RP2350
+boards. Host builds are used for tests of portable logic; hardware drivers
+and interactive display behavior still require on-device validation.

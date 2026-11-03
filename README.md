@@ -1,115 +1,103 @@
 # Mellivora PicoCalc
 
-Mellivora PicoCalc is a compact firmware for the Clockwork PicoCalc, built
-for the Raspberry Pi Pico, Pico 2, and Pico 2W. It bundles a shell,
-filesystem tools, persistent personal utilities, simple development
-environments, and lightweight games into a single image.
+Mellivora PicoCalc is a compact, keyboard-driven firmware environment for
+the Clockwork PicoCalc. It runs on Raspberry Pi Pico (RP2040), Pico 2
+(RP2350), and Pico 2 W (RP2350 with CYW43439 Wi-Fi).
 
 ![Mellivora PicoCalc preview](picocalc_mock_preview.svg)
 
-## Highlights
+The firmware combines a shell, FAT-backed microSD storage, productivity
+apps, text and file utilities, small programming environments, creative
+tools, and games in a single UF2 image.
 
-- text shell with history (persistent across reboots), aliases, shell variables (`set X=Y`, `$X`), tab completion, command chaining (`;`), output redirection (`>` `>>`), and built-in help
-- FAT16/FAT32 SD card storage with file, search, and disk-usage tools (`rm -r`, `cp -r`), plus read-only VFAT long filenames
-- persistent apps for notes, todo lists, planner, journal, habits (with streak tracking), and bookmarks (with CWD context)
-- interactive utilities including browser, editor, hex editor (with byte search), paint, sprite editor, and terminal mode
-- pipelines (`cmd1 | cmd2 | cmd3`), tr/sed/markdown helpers, and text processing with grep (regex), sort, find, head, tail, cut, and wc
-- built-in calculator (with hex/bin/oct literals), BASIC environment, and Tiny C environment
-- WiFi networking with multi-AP credential store, boot-time auto-connect, HTTP, IRC, telnet, NTP (auto-syncs the RTC), and DNS (Pico 2W only)
-- productivity timers: `stopwatch` and `pomodoro`
-- power management: idle backlight dim, `sleep` command, `shutdown`/`halt`/`poweroff`, low-battery warning
-- reliability: hardware watchdog (3 s), persistent CWD/clock, ANSI-aware redraws
-- smoother LCD console with optimized scrolling and software key repeat
-- semantic colour themes (ten palettes), themed prompt/status bar/menus, and a file browser with preview pane
-- launcher, dashboard, system monitor, samples, and mini games including snake (with persistent high scores)
+## Features
 
-## Quick Start
+- Shell history, aliases, variables, tab completion, command chaining,
+  redirection, pipelines, wildcards, scripts, and built-in help
+- FAT16/FAT32 storage, VFAT long-name lookup, recursive file operations,
+  file browsing, editing, and hex inspection
+- Notes, todo lists, planner, journal, habits, bookmarks, and settings
+- Directory-based user-data backup/restore, planner text import/export, and
+  read-only SD diagnostics
+- Text processing tools, calculator, BASIC, Tiny C, and Forth
+- Paint, sprite editor, games, launcher, dashboard, and system monitor
+- Pico 2 W networking: Wi-Fi, DNS, NTP, HTTP, certificate-verified HTTPS,
+  IRC, and telnet
+- Themeable display, persistent clock and working directory, idle dimming,
+  low-battery warnings, and watchdog recovery
 
-### Build
+Wi-Fi support is available only in the Pico 2 W firmware. Saved Wi-Fi
+credentials are stored as readable text on the SD card; protect the card
+accordingly.
+
+## Quick start
+
+### Flash a release image
+
+The checked-in firmware images are from release v2.5.0:
+
+| Board | Firmware image |
+| --- | --- |
+| Pico (RP2040) | [`firmware/mellivora_v2.5.0_pico.uf2`](firmware/mellivora_v2.5.0_pico.uf2) |
+| Pico 2 (RP2350) | [`firmware/mellivora_v2.5.0_pico2.uf2`](firmware/mellivora_v2.5.0_pico2.uf2) |
+| Pico 2 W (RP2350 + Wi-Fi) | [`firmware/mellivora_v2.5.0_pico2w.uf2`](firmware/mellivora_v2.5.0_pico2w.uf2) |
+
+1. Disconnect the PicoCalc from USB.
+2. Hold **BOOTSEL** while reconnecting the USB cable.
+3. Release **BOOTSEL** when the board's mass-storage drive appears.
+4. Copy the matching UF2 to the drive and wait for the board to reboot.
+5. Insert a FAT16- or FAT32-formatted microSD card and run `mount`.
+
+Use the image that matches the installed board. Newer prebuilt images may
+be available from [GitHub Releases](https://github.com/James-HoneyBadger/Mellivora_OS_PicoCalc/releases).
+
+### Build from source
 
 From the repository root:
 
 ```bash
-make picocalc
+make picocalc   # Pico (RP2040)
+make pico2      # Pico 2 (RP2350)
+make pico2w     # Pico 2 W (RP2350 + Wi-Fi)
 ```
 
-For the Pico 2 variant:
-
-```bash
-make pico2
-```
-
-For the Pico 2W variant:
-
-```bash
-make pico2w
-```
-
-Output images:
-
-```text
-picocalc/build/mellivora_picocalc.uf2
-picocalc/build-pico2/mellivora_picocalc_pico2.uf2
-picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
-```
-
-### Prebuilt firmware (v2.5.0)
-
-Ready-to-flash images for the current release live in [`firmware/`](firmware):
-
-| Board | Image |
-| --- | --- |
-| Pico (RP2040) | `firmware/mellivora_v2.5.0_pico.uf2` |
-| Pico 2 (RP2350) | `firmware/mellivora_v2.5.0_pico2.uf2` |
-| Pico 2 W (RP2350 + CYW43) | `firmware/mellivora_v2.5.0_pico2w.uf2` |
-
-### Flash
-
-1. Put the board into BOOTSEL mode (hold BOOTSEL, connect USB, release).
-2. Copy the matching UF2 file to the mounted `RPI-RP2` drive.
-3. The board reboots automatically into Mellivora PicoCalc.
-4. Insert an SD card and run `mount` to enable filesystem features.
-
-The Pico 2 W image also enables WiFi; use it only on boards with the
-wireless module.
+The first build fetches the pinned Pico SDK and required submodules unless
+`PICO_SDK_PATH` is set to an external SDK checkout. Build prerequisites,
+outputs, host tests, and troubleshooting are covered in
+[docs/INSTALL.md](docs/INSTALL.md).
 
 ## Documentation
 
-| Document | Purpose |
+| Guide | Contents |
 | --- | --- |
-| [docs/INSTRUCTIONS.md](docs/INSTRUCTIONS.md) | Fast-start setup and first-use instructions |
-| [docs/INSTALL.md](docs/INSTALL.md) | Setup, build, flash, and troubleshooting instructions |
-| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Day-to-day usage of the shell, tools, apps, and languages |
-| [docs/TUTORIAL.md](docs/TUTORIAL.md) | Guided first session from boot to productive use |
-| [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) | Single-page command cheatsheet |
-| [docs/COMMANDS.md](docs/COMMANDS.md) | Full categorized command reference |
-| [docs/PROGRAMMING_GUIDE.md](docs/PROGRAMMING_GUIDE.md) | Extending the firmware and adding new commands or apps |
-| [docs/TECHNICAL_REFERENCE.md](docs/TECHNICAL_REFERENCE.md) | Internal architecture, subsystems, and runtime behavior |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Boot flow, modules, cores, and pipelines |
-| [docs/HARDWARE.md](docs/HARDWARE.md) | Pin map, board variants, and power numbers |
-| [docs/CHANGELOG.md](docs/CHANGELOG.md) | Release notes (semver) |
-| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Build environment, style guide, PR checklist |
-| [SECURITY.md](SECURITY.md) | Vulnerability reporting policy |
-| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community standards |
-| [ABOUT.md](ABOUT.md) | GitHub-friendly project summary and repository about text |
+| [Quick start](docs/INSTRUCTIONS.md) | Flash and first commands |
+| [Installation and development setup](docs/INSTALL.md) | Dependencies, build, storage, and troubleshooting |
+| [User guide](docs/USER_GUIDE.md) | Shell, apps, languages, and networking |
+| [Tutorial](docs/TUTORIAL.md) | Guided first session |
+| [Quick reference](docs/QUICK_REFERENCE.md) | Keyboard shortcuts and command summaries |
+| [Command reference](docs/COMMANDS.md) | Categorized command details |
+| [Architecture](docs/ARCHITECTURE.md) | Boot flow, modules, and subsystem pipelines |
+| [Technical reference](docs/TECHNICAL_REFERENCE.md) | Runtime behavior, persistence, and resource limits |
+| [Hardware reference](docs/HARDWARE.md) | Board variants, pin map, and interfaces |
+| [Programmer's guide](docs/PROGRAMMING_GUIDE.md) | Source layout, development, and testing |
+| [Contributing](docs/CONTRIBUTING.md) | Style, quality gates, and pull request checklist |
+| [Feature ideas](docs/FEATURE_IDEAS.md) | Candidate enhancements, not a committed roadmap |
+| [Changelog](docs/CHANGELOG.md) | Release history |
+| [Security policy](SECURITY.md) | Supported versions and private vulnerability reporting |
 
-## Repository Layout
+## Project layout
 
-- `picocalc/` — active firmware source tree
-- `picocalc/src/` — shell, hardware, filesystem, and app logic
-- `docs/` — documentation set
-- `Makefile` — root build entry for both Pico and Pico 2 firmware targets
+- `picocalc/src/` — firmware, apps, hardware drivers, and portable core logic
+- `picocalc/tests/` — host-side tests, including FAT tests with a simulated SD card
+- `docs/` — user, developer, hardware, and architecture documentation
+- `tools/` — command-documentation and quality-check scripts
+- `firmware/` — checked-in v2.5.0 UF2 images
+- `VERSION`, `REPOSITORY` — canonical firmware and repository metadata
 
-## Project Status
+Three build targets are maintained from the same source tree: `picocalc`,
+`pico2`, and `pico2w`. CI builds the firmware variants and publishes
+SHA-256 checksums with release images.
 
-Three first-class build variants are produced from a single source tree:
+## License
 
-- **`picocalc`** — Raspberry Pi Pico (RP2040)
-- **`pico2`** — Raspberry Pi Pico 2 (RP2350)
-- **`pico2w`** — Raspberry Pi Pico 2 W (RP2350 + CYW43439 WiFi)
-
-CI builds and signs all three UF2 images on every push to `main` and on
-every release tag.
-
-See [docs/CHANGELOG.md](docs/CHANGELOG.md) for release history and
-[picocalc/README.md](picocalc/README.md) for the firmware-local overview.
+See [LICENSE](LICENSE).

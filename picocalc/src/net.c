@@ -23,6 +23,13 @@
 #include "lwip/netif.h"
 #include "lwip/timeouts.h"
 
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/platform_time.h"
+#include "mbedtls/ssl.h"
+#include "mbedtls/x509_crt.h"
+#include "syscall.h"
+
 #include <string.h>
 #include <stdio.h>
 
@@ -31,6 +38,16 @@
  * ============================================================ */
 static bool _net_inited = false;
 static bool _wifi_connected = false;
+
+static mbedtls_time_t _net_wall_time(mbedtls_time_t *out) {
+    mbedtls_time_t now = (mbedtls_time_t)(sys_now_epoch_ms() / 1000);
+    if (out) *out = now;
+    return now;
+}
+
+mbedtls_ms_time_t mbedtls_ms_time(void) {
+    return (mbedtls_ms_time_t)(time_us_64() / 1000);
+}
 
 /* NTP state */
 static bool     _ntp_valid = false;
@@ -501,7 +518,8 @@ int net_tcp_send(net_tcp_t *conn, const void *data, size_t len) {
     return (int)len;
 }
 
-int net_tcp_recv(net_tcp_t *conn, void *buf, size_t cap, int timeout_ms) {
+static int _net_tcp_recv_status(net_tcp_t *conn, void *buf, size_t cap,
+                                int timeout_ms) {
     if (!conn) return -1;
 
     /* Reset receive buffer */
@@ -517,7 +535,18 @@ int net_tcp_recv(net_tcp_t *conn, void *buf, size_t cap, int timeout_ms) {
     int n = conn->rxlen;
     if (n > (int)cap) n = (int)cap;
     if (n > 0) memcpy(buf, conn->rxbuf, (size_t)n);
+    if (n == 0) {
+        if (conn->closed) return 0;
+        if (conn->error) return -1;
+        return -2;
+    }
     return n;
+}
+
+int net_tcp_recv(net_tcp_t *conn, void *buf, size_t cap, int timeout_ms) {
+    if (!conn) return -1;
+    int n = _net_tcp_recv_status(conn, buf, cap, timeout_ms);
+    return n < 0 ? 0 : n;
 }
 
 void net_tcp_close(net_tcp_t *conn) {
@@ -582,6 +611,136 @@ int net_http_get(const char *host, uint16_t port, const char *path,
         return blen;
     }
     return total;
+}
+
+static int _https_send(void *ctx, const unsigned char *buf, size_t len) {
+    int n = net_tcp_send((net_tcp_t *)ctx, buf, len);
+    return n < 0 ? MBEDTLS_ERR_SSL_WANT_WRITE : n;
+}
+
+static int _https_recv(void *ctx, unsigned char *buf, size_t len) {
+    int n = _net_tcp_recv_status((net_tcp_t *)ctx, buf, len, 200);
+    if (n == -2) return MBEDTLS_ERR_SSL_WANT_READ;
+    return n;
+}
+
+static int _https_body(char *buf, int total, size_t cap) {
+    char *body = strstr(buf, "\r\n\r\n");
+    if (!body) return total;
+    body += 4;
+    int body_len = total - (int)(body - buf);
+    if (body_len < 0 || (size_t)body_len >= cap) return -1;
+    memmove(buf, body, (size_t)body_len);
+    buf[body_len] = '\0';
+    return body_len;
+}
+
+int net_https_get(const char *host, uint16_t port, const char *path,
+                  const char *ca_pem, size_t ca_len, char *buf, size_t cap,
+                  int timeout_ms) {
+    if (!host || !*host || !path || !buf || cap < 2 ||
+        !ca_pem || ca_len == 0 || timeout_ms <= 0) return -1;
+
+    uint32_t ip;
+    if (net_dns_resolve(host, &ip, 5000) < 0) return -1;
+    net_tcp_t *conn = net_tcp_connect(ip, port, timeout_ms);
+    if (!conn) return -1;
+
+    static mbedtls_ssl_context ssl;
+    static mbedtls_ssl_config conf;
+    static mbedtls_x509_crt ca;
+    static mbedtls_entropy_context entropy;
+    static mbedtls_ctr_drbg_context drbg;
+    int result = -1;
+    bool ssl_ready = false;
+    absolute_time_t deadline = make_timeout_time_ms(timeout_ms);
+
+    mbedtls_ssl_init(&ssl);
+    mbedtls_ssl_config_init(&conf);
+    mbedtls_x509_crt_init(&ca);
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&drbg);
+
+    if (mbedtls_platform_set_time(_net_wall_time) != 0) goto cleanup;
+    if (mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy,
+                              (const unsigned char *)"Mellivora HTTPS", 15) != 0)
+        goto cleanup;
+    if (mbedtls_x509_crt_parse(&ca, (const unsigned char *)ca_pem,
+                               ca_len + 1) != 0)
+        goto cleanup;
+    if (mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT,
+                                    MBEDTLS_SSL_TRANSPORT_STREAM,
+                                    MBEDTLS_SSL_PRESET_DEFAULT) != 0)
+        goto cleanup;
+    mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+    mbedtls_ssl_conf_ca_chain(&conf, &ca, NULL);
+    mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &drbg);
+    if (mbedtls_ssl_setup(&ssl, &conf) != 0 ||
+        mbedtls_ssl_set_hostname(&ssl, host) != 0)
+        goto cleanup;
+    mbedtls_ssl_set_bio(&ssl, conn, _https_send, _https_recv, NULL);
+
+    while (true) {
+        int rc = mbedtls_ssl_handshake(&ssl);
+        if (rc == 0) break;
+        if (rc != MBEDTLS_ERR_SSL_WANT_READ &&
+            rc != MBEDTLS_ERR_SSL_WANT_WRITE) goto cleanup;
+        if (absolute_time_diff_us(get_absolute_time(), deadline) < 0) goto cleanup;
+        net_poll();
+    }
+    if (mbedtls_ssl_get_verify_result(&ssl) != 0) goto cleanup;
+
+    char req[512];
+    int req_len = snprintf(req, sizeof req,
+        "GET %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n"
+        "User-Agent: MellivoraOS/1.0\r\n\r\n", path, host);
+    if (req_len <= 0 || (size_t)req_len >= sizeof req) goto cleanup;
+
+    size_t sent = 0;
+    while (sent < (size_t)req_len) {
+        int n = mbedtls_ssl_write(&ssl, (const unsigned char *)req + sent,
+                                  (size_t)req_len - sent);
+        if (n > 0) sent += (size_t)n;
+        else if (n == MBEDTLS_ERR_SSL_WANT_READ ||
+                 n == MBEDTLS_ERR_SSL_WANT_WRITE) {
+            if (absolute_time_diff_us(get_absolute_time(), deadline) < 0)
+                goto cleanup;
+            net_poll();
+        } else goto cleanup;
+    }
+
+    int total = 0;
+    while ((size_t)total < cap - 1) {
+        int n = mbedtls_ssl_read(&ssl, (unsigned char *)buf + total,
+                                 cap - 1 - (size_t)total);
+        if (n > 0) {
+            total += n;
+            continue;
+        }
+        if (n == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) break;
+        if (n == 0 || n == MBEDTLS_ERR_SSL_CONN_EOF) goto cleanup;
+        if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE) {
+            if (absolute_time_diff_us(get_absolute_time(), deadline) < 0)
+                goto cleanup;
+            net_poll();
+            continue;
+        }
+        goto cleanup;
+    }
+    if ((size_t)total == cap - 1) goto cleanup;
+    buf[total] = '\0';
+    result = _https_body(buf, total, cap);
+    if (result >= 0) ssl_ready = true;
+
+cleanup:
+    if (ssl_ready) (void)mbedtls_ssl_close_notify(&ssl);
+    mbedtls_ssl_free(&ssl);
+    mbedtls_ssl_config_free(&conf);
+    mbedtls_x509_crt_free(&ca);
+    mbedtls_ctr_drbg_free(&drbg);
+    mbedtls_entropy_free(&entropy);
+    net_tcp_close(conn);
+    return result;
 }
 
 #endif /* PICO_CYW43_SUPPORTED */

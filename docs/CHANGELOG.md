@@ -4,6 +4,20 @@ All notable changes to **Mellivora OS for PicoCalc** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-11-02
+
+### Added
+
+- **User-data backup/restore** — version-marked directory snapshots; restore
+  never overwrites existing files.
+- **Planner transfer and reminders** — validated text import/export and
+  today's entries at startup when the software clock is valid.
+- **Storage diagnostics and searchable help** — read-only `sdcheck` plus
+  `help -k KEYWORD`.
+- **Optional serial smoke test** — non-destructive USB-console checks.
+- **Verified HTTPS on Pico 2 W** — mbedTLS TLS 1.2 with mandatory CA and
+  hostname verification using `/CA.CRT`; a valid clock is required.
+
 ## [2.5.0] - 2026-10-22
 
 ### Fixed
@@ -192,7 +206,8 @@ networking, productivity, and CI improvements.
 - **Versioning** — `MELLIVORA_VERSION` macro baked into builds; new
   `version` command; `uname -a` reports LCD/KBD/SD/UART/WLAN and build
   date; banner shows the active firmware version.
-- **Hardware watchdog** (3 s) — tickled in the shell loop to auto-recover
+- **Hardware watchdog** (8 s) — serviced during normal operation and long
+  blocking tasks to reset the device if execution stalls
   from lockups.
 - **Persistent shell history** — saved to `/HISTORY.LOG` and reloaded at
   boot.

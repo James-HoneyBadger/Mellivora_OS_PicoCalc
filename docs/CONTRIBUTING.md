@@ -10,6 +10,14 @@ Mellivora OS is a bare-metal C11 firmware built with the official
 [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) and the
 `arm-none-eabi-gcc` toolchain.
 
+The root `Makefile` fetches Pico SDK 2.3.1 at a pinned commit when
+`PICO_SDK_PATH` is not set. To build against a separately managed SDK, set
+`PICO_SDK_PATH` to its directory; that external checkout is not version-checked
+by the project.
+
+`VERSION` and `REPOSITORY` at the repository root are the source of truth for
+firmware and OCI metadata. Release tags must use the form `v<VERSION>`.
+
 ### Required tools
 
 - `cmake >= 3.13`
@@ -21,7 +29,8 @@ Mellivora OS is a bare-metal C11 firmware built with the official
 On Debian / Ubuntu:
 
 ```bash
-sudo apt install cmake gcc-arm-none-eabi build-essential git python3
+sudo apt install cmake gcc-arm-none-eabi build-essential git python3 \
+  libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
 ```
 
 On Fedora:
@@ -51,10 +60,10 @@ the `RPI-RP2` (or `RP2350`) drive that appears.
 
 ### Host tests, analysis, and size gates
 
-The hardware-independent modules live in `picocalc/src/core/` (`expr`,
-`shell_parse`, `path_util`, `fatname`, `simple_re`, `glob`, `textutil`) alongside the shared
-string helpers. They compile with the system C compiler, so tests run
-without the Pico SDK:
+Pure modules in `picocalc/src/core/` (`expr`, `shell_parse`, `path_util`,
+`fatname`, `simple_re`, `glob`, `textutil`, `history`, `datetime`) and the FAT
+driver compile with the system C compiler. FAT tests provide an in-memory
+SD-card backend, so host tests run without hardware or the Pico SDK:
 
 ```bash
 make test          # unit tests, ASan + UBSan by default
@@ -80,10 +89,11 @@ to each target and fails on a budget overflow or an unapproved regression
 - **Braces**: K&R / 1TBS — opening brace on same line for functions and blocks
 - **Naming**:
   - Functions: `snake_case`
-  - Static helpers: prefixed `_` (e.g. `_draw_status_bar`)
+  - Private implementation helpers: `static` where possible; use descriptive
+    `snake_case` names
   - Public (cross-module) APIs: module prefix (e.g. `kbd_`, `lcd_`, `fat_`)
   - Constants / macros: `UPPER_SNAKE_CASE`
-- **Headers**: prefer `#pragma once` over include guards
+- **Headers**: follow the existing `#pragma once` convention
 - **Comments**: `/* ... */` for blocks; `//` is fine for single-line
 - **Avoid** `malloc`/`free` in firmware code; prefer static / stack buffers
 - **Memory**: be explicit about buffer sizes; never assume `strncpy` terminates

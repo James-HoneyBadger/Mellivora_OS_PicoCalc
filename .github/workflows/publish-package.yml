@@ -25,12 +25,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y build-essential cmake gcc-arm-none-eabi libnewlib-arm-none-eabi git make python3
 
-      - name: Fetch Pico SDK
-        run: |
-          if [ ! -d picocalc/pico-sdk/.git ]; then
-            git clone --depth 1 https://github.com/raspberrypi/pico-sdk picocalc/pico-sdk
-          fi
-
       - name: Build PicoCalc UF2
         run: |
           make picocalc
@@ -58,6 +52,23 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Read project metadata
+        id: project
+        run: |
+          echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+          echo "repository=$(cat REPOSITORY)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release tag matches project version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          if [ "$RELEASE_TAG" != "v$VERSION" ]; then
+            echo "Release tag $RELEASE_TAG does not match VERSION $VERSION" >&2
+            exit 1
+          fi
+
       - name: Build and push OCI image
         uses: docker/build-push-action@v6
         with:
@@ -66,3 +77,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.project.outputs.version }}
+            REPOSITORY=${{ steps.project.outputs.repository }}

@@ -8,6 +8,15 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../VERSION" MELLIVORA_VERSION LIMIT_COUNT 1)
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../REPOSITORY" MELLIVORA_REPOSITORY LIMIT_COUNT 1)
+if (NOT MELLIVORA_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "VERSION must contain a semantic version (for example 2.5.0)")
+endif()
+if (NOT MELLIVORA_REPOSITORY MATCHES "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+    message(FATAL_ERROR "REPOSITORY must contain an owner/repository slug")
+endif()
+
 pico_sdk_init()
 
 option(MELLIVORA_WERROR "Treat compiler warnings as errors" ON)
@@ -44,6 +53,8 @@ set(MELLIVORA_SOURCES
     src/core/simple_re.c
     src/core/glob.c
     src/core/textutil.c
+    src/core/history.c
+    src/core/datetime.c
     src/core/lfn.c
     src/net.c
     src/netapps.c
@@ -67,8 +78,8 @@ endif()
 
 target_compile_definitions(mellivora_picocalc PRIVATE
     PICO_DEFAULT_UART_BAUD_RATE=115200
-    MELLIVORA_VERSION="2.5.0"
-    MELLIVORA_BUILD_DATE="${CMAKE_PROJECT_NAME}-${CMAKE_BUILD_TYPE}"
+    MELLIVORA_VERSION="${MELLIVORA_VERSION}"
+    MELLIVORA_REPOSITORY="${MELLIVORA_REPOSITORY}"
 )
 
 target_link_libraries(mellivora_picocalc
@@ -91,6 +102,7 @@ if (PICO_CYW43_SUPPORTED)
     )
     target_link_libraries(mellivora_picocalc
         pico_cyw43_arch_lwip_poll
+        pico_mbedtls
     )
 endif()
 

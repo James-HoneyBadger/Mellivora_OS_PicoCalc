@@ -16,6 +16,16 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Verify release tag matches project version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          if [ "$RELEASE_TAG" != "v$VERSION" ]; then
+            echo "Release tag $RELEASE_TAG does not match VERSION $VERSION" >&2
+            exit 1
+          fi
+
       - name: Install ARM toolchain
         run: |
           sudo apt-get update

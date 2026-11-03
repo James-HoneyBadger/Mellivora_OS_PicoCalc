@@ -26,6 +26,7 @@ Useful shell behavior:
 - `Ctrl-L` redraws the screen
 - `Ctrl-C` cancels the current line or exits many interactive tools
 - `help` and `man` show built-in documentation
+- `help -k KEYWORD` searches command names and groups
 
 Advanced shell features:
 
@@ -59,6 +60,25 @@ Before using storage-backed tools, insert your SD card and run:
 ```text
 mount
 ```
+
+`sdcheck` performs a read-only card initialization and sector-0 check.
+`sdinfo` shows mounted filesystem geometry and free space. Neither command
+repairs or writes to the card.
+
+### Back up and restore user data
+
+```text
+backup create
+backup list
+backup restore
+```
+
+By default, backups are stored in `/BACKUP` as a directory snapshot. Choose
+another directory to create a separate backup. A format marker identifies
+the backup version. Restore adds only files missing from the root and never
+replaces existing files. Copy the backup directory to another device for
+protection against SD-card failure. `/WIFI.CFG` is included and contains
+readable Wi-Fi credentials, so protect the backup.
 
 Common file commands:
 
@@ -159,6 +179,13 @@ planner
 ```
 
 Stores dated agenda items and helps you review upcoming events.
+
+`planner export [FILE]` writes `YYYY-MM-DD|TEXT` records, defaulting to
+`/PLANNER-EXPORT.TXT`. `planner import FILE` validates and merges records
+from that format, skips duplicates, and leaves existing entries intact.
+Malformed records and overlong entries are rejected. When the clock has
+been set or synchronized, today's entries are shown once at startup; use
+`planner remind` to show them again.
 
 ### Journal
 
@@ -437,6 +464,8 @@ vars
 ## 12. Network Commands (Pico 2W Only)
 
 If you are running the Pico 2W firmware build, the following WiFi and network commands are available.
+Saved network credentials are written to `/WIFI.CFG` on the SD card as
+readable text. Protect the card if it contains passwords.
 
 ### Connect to WiFi
 
@@ -461,8 +490,8 @@ ifconfig
 | `ping HOST` | Send ICMP echo requests to a host |
 | `dns HOSTNAME` | Resolve a hostname to an IP address |
 | `ntp` | Synchronise time from an NTP server |
-| `fetch URL` | HTTP GET and display the response body |
-| `wget URL FILE` | HTTP GET and save the response to a file |
+| `fetch URL` | HTTP GET or verified HTTPS GET and display the response body |
+| `wget URL FILE` | HTTP GET or verified HTTPS GET and save the response |
 | `weather LOCATION` | Fetch weather data for a location |
 | `irc` | Minimal IRC client |
 | `telnet HOST [PORT]` | Minimal telnet client |
@@ -489,6 +518,7 @@ These smaller built-in commands are useful in scripts and day-to-day work:
 | `dirname PATH` | Print the directory part of a path |
 | `sdinfo` | Show SD card hardware status |
 | `sdread LBA` | Read a raw SD block (debugging) |
+| `sdcheck` | Read-only SD initialization and sector-0 check |
 | `true` / `false` | Return success or failure (for scripts) |
 | `read NAME` | Read a line into a shell variable |
 | `which CMD` | Locate a command, alias, or file |

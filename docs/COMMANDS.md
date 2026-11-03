@@ -25,7 +25,7 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 
 | Command                    | Description                                            |
 |----------------------------|--------------------------------------------------------|
-| `version`                  | Print firmware version, build date, project URL        |
+| `version`                  | Print firmware version, build timestamp, project URL   |
 | `uname [-a]`               | OS name; with `-a` adds hardware/build details         |
 | `sysinfo`                  | Detailed system info (memory, clock, peripherals)      |
 | `dmesg`                    | Kernel-style boot log                                  |
@@ -61,6 +61,10 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `cat <file>`                 | Display file contents                                |
 | `sdinfo`                     | Show SD-card status and geometry                     |
 | `sdread LBA`                 | Read and inspect a raw SD block                      |
+| `sdcheck`                    | Read-only check of SD initialization and sector 0    |
+| `backup create [DIR]`        | Copy known shell and app data into a versioned directory |
+| `backup list [DIR]`          | List a backup directory                              |
+| `backup restore [DIR]`       | Restore only missing files; existing files are skipped |
 | `more <file>` / `less`       | Paged display                                        |
 | `pager <file>`               | Paged display alias                                  |
 | `head [-n N] <file>`         | First N (or 10) lines                                |
@@ -97,6 +101,7 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 |-------------------------|----------------------------------------------------------|
 | `history`               | Show command history                                     |
 | `man [topic]`           | Show detailed help pages                                 |
+| `help -k KEYWORD`       | Search command names and groups                          |
 | `alias [name=value]`    | List or define aliases                                   |
 | `unalias <name>`        | Remove alias                                             |
 | `env`                   | Show environment / variables                             |
@@ -146,8 +151,8 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `ping HOST`                      | ICMP ping                                    |
 | `dns HOST`                       | Resolve hostname                             |
 | `ntp [server]`                   | Sync RTC from NTP                            |
-| `fetch URL`                      | HTTP GET (display body)                      |
-| `wget URL`                       | HTTP GET to file                             |
+| `fetch URL`                      | HTTP or verified HTTPS GET (display body)     |
+| `wget URL FILE`                  | HTTP or verified HTTPS GET to file            |
 | `weather [LOCATION]`             | Fetch weather forecast                       |
 | `irc HOST PORT NICK CHAN`        | Minimal IRC client                           |
 | `telnet HOST PORT`               | Telnet client                                |
@@ -161,6 +166,9 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `journal` / `diary`    | Dated journal                                        |
 | `todo` / `tasks`       | Todo list                                            |
 | `planner` / `agenda` / `plan` | Daily / weekly planner                        |
+| `planner import FILE`       | Merge validated `YYYY-MM-DD|TEXT` entries      |
+| `planner export [FILE]`     | Export planner entries in the import format    |
+| `planner remind`            | Show today's entries when the clock is set      |
 | `habits` / `habit`     | Habit tracker with streaks                           |
 | `bookmarks` / `favs`   | Path bookmarks (saves CWD)                           |
 | `bookmark` / `favorites` | Bookmark aliases                                     |

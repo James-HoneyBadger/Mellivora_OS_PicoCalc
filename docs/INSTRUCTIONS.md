@@ -1,43 +1,37 @@
-# Mellivora PicoCalc Quick Instructions
+# Quick Start
 
-This page is the short version of the documentation set. Use it when you want the essentials without reading the full guides.
+This page gets a Clockwork PicoCalc running Mellivora PicoCalc. Use
+[INSTALL.md](INSTALL.md) for detailed setup and troubleshooting, or
+[USER_GUIDE.md](USER_GUIDE.md) for day-to-day usage.
 
-## Build
+## 1. Choose a firmware image
 
-From the repository root:
+Use the image that matches the Raspberry Pi board installed in the
+PicoCalc:
 
-```bash
-make picocalc
-```
+| Board | Firmware target | Checked-in image |
+| --- | --- | --- |
+| Raspberry Pi Pico (RP2040) | `picocalc` | `firmware/mellivora_v2.5.0_pico.uf2` |
+| Raspberry Pi Pico 2 (RP2350) | `pico2` | `firmware/mellivora_v2.5.0_pico2.uf2` |
+| Raspberry Pi Pico 2 W (RP2350, Wi-Fi) | `pico2w` | `firmware/mellivora_v2.5.0_pico2w.uf2` |
 
-For the Pico 2 firmware image:
+The checked-in images are the v2.5.0 release. Newer releases may be
+available from the repository's GitHub Releases page.
 
-```bash
-make pico2
-```
+## 2. Flash the firmware
 
-For the Pico 2W firmware image:
+1. Disconnect the PicoCalc from USB.
+2. Hold **BOOTSEL** while connecting the USB cable.
+3. Release **BOOTSEL** after the board's USB mass-storage drive appears.
+4. Copy the matching UF2 image to that drive.
+5. Wait for the board to reboot.
 
-```bash
-make pico2w
-```
+Use a data-capable USB cable. The Pico 2 W image enables Wi-Fi and should
+only be used with a Pico 2 W board.
 
-This produces:
+## 3. Start using the device
 
-```text
-picocalc/build/mellivora_picocalc.uf2
-picocalc/build-pico2/mellivora_picocalc_pico2.uf2
-picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
-```
-
-## Flash
-
-1. Hold BOOTSEL on the Pico or Pico 2 device.
-2. Connect USB.
-3. Copy the matching UF2 to the mounted drive.
-4. Wait for the reboot.
-
-## First Commands to Try
+At the shell prompt, try:
 
 ```text
 help
@@ -45,28 +39,26 @@ dashboard
 mount
 ls
 home
-notes
 ```
 
-## Most Useful Daily Commands
+Insert a FAT16- or FAT32-formatted microSD card before running `mount`.
+Storage-backed apps, shell history, settings, and files are unavailable
+until the card is mounted.
 
-- `browse` for files
-- `edit` for text editing
-- `todo` for task tracking
-- `planner` for dated items
-- `journal` for notes by date
-- `habits` for routine tracking
-- `bookmarks` for saved shortcuts
-- `calc`, `basic`, and `tcc` for quick computing and experiments
+## Build from source
 
-## If You Need More Detail
+From the repository root, build the image for your board:
 
-- full setup: [INSTALL.md](INSTALL.md)
-- daily usage: [USER_GUIDE.md](USER_GUIDE.md)
-- command cheatsheet: [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
-- step-by-step onboarding: [TUTORIAL.md](TUTORIAL.md)
-- command cheatsheet: [QUICK_REFERENCE.md](QUICK_REFERENCE.md)
-- step-by-step onboarding: [TUTORIAL.md](TUTORIAL.md)
-- step-by-step onboarding: [TUTORIAL.md](TUTORIAL.md)
-- development internals: [PROGRAMMING_GUIDE.md](PROGRAMMING_GUIDE.md)
-- architecture details: [TECHNICAL_REFERENCE.md](TECHNICAL_REFERENCE.md)
+```bash
+make picocalc   # Pico (RP2040)
+make pico2      # Pico 2 (RP2350)
+make pico2w     # Pico 2 W (RP2350 + Wi-Fi)
+```
+
+The first build fetches the pinned Pico SDK and its required submodules
+unless `PICO_SDK_PATH` points to an existing SDK checkout. Build outputs
+are written to `picocalc/build/`, `picocalc/build-pico2/`, and
+`picocalc/build-pico2w/`.
+
+See [INSTALL.md](INSTALL.md) for prerequisites, test commands, and build
+troubleshooting.

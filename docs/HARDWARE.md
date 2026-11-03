@@ -51,7 +51,8 @@ SPI1 runs at **25 MHz** on RP2040, **40 MHz** on RP2350.
 | CS    | chip select | 17   |
 | DET   | card detect | 22   |
 
-SPI0 runs at **4 MHz** for compatibility across SD card classes.
+The SD driver bit-bangs the SPI0 pins; the configured nominal clock is
+**4 MHz**. Actual transfer speed depends on the MCU and GPIO timing.
 
 ### Audio — dual-channel PWM
 
@@ -78,11 +79,29 @@ SPI0 runs at **4 MHz** for compatibility across SD card classes.
 Numbers are approximate and depend on SD card, USB connection, and battery
 charge state.
 
+## Optional Serial Smoke Test
+
+After flashing firmware and connecting the PicoCalc over USB, run the
+non-destructive console checks from the repository root:
+
+```bash
+python3 tools/hardware/smoke_test.py /dev/ttyACM0
+```
+
+The script sends shell echo, searchable help, `sdcheck`, and date commands
+and verifies that their responses arrive over USB serial. It does not write
+to the SD card. The selected serial port must be available to the current
+user; adjust the device path for the host operating system. This checks
+console and command dispatch, not the physical LCD or keyboard wiring. It
+waits for the default shell prompt before testing; use `--ready-marker` if
+the `PROMPT` variable has been customized.
+
 ## File System Format
 
-The SD card must be formatted as **FAT16** or **FAT32** with a single
-partition (or partitionless / "superfloppy" layout). exFAT and other
-filesystems are not supported.
+The SD card must be formatted as **FAT16** or **FAT32** with one supported
+partition, or in a partitionless ("superfloppy") layout. exFAT and other
+filesystems are not supported. Persistent app data and saved Wi-Fi
+credentials are stored on the card; credential files are not encrypted.
 
 ## Battery
 

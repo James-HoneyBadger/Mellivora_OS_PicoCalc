@@ -12,6 +12,7 @@
 
 #include "apps/app_internal.h"
 #include "syscall.h"
+#include "fat.h"
 
 void app_hello(const char *arg) {
     (void)arg;
@@ -84,6 +85,224 @@ void app_seq(const char *arg) {
         snprintf(buf, sizeof buf, "%ld\n", i);
         sys_print(buf);
     }
+}
+
+static const char *const _backup_files[] = {
+    "/ALIASES.CFG", "/ENV.CFG", "/LASTCWD.TXT", "/HISTORY.LOG",
+    "/CLOCK.CFG", "/SETTINGS.CFG", "/WIFI.CFG", "/PROFILE.CFG",
+    "/NOTES.TXT", "/TODO.TXT", "/PLANNER.TXT", "/JOURNAL.TXT",
+    "/HABITS.CFG", "/BOOKMARKS.CFG", "/HISCORE.TXT",
+};
+#define BACKUP_FORMAT_FILE "FORMAT.TXT"
+#define BACKUP_FORMAT_TEXT "MELLIVORA_BACKUP 1\n"
+
+static bool _backup_path(const char *directory, const char *name,
+                         char *out, size_t out_size) {
+    const char *base = strrchr(name, '/');
+    base = base ? base + 1 : name;
+    int written = snprintf(out, out_size, "%s/%s", directory, base);
+    return written >= 0 && (size_t)written < out_size;
+}
+
+static fat_result_t _backup_copy(const char *source, const char *target) {
+    fat_file_t in;
+    fat_result_t r = fat_open(source, &in);
+    if (r != FAT_OK) return r;
+
+    fat_file_t existing;
+    r = fat_open(target, &existing);
+    if (r == FAT_OK) return FAT_ERR_EXISTS;
+    if (r != FAT_ERR_NOTFOUND) return r;
+
+    char temporary[APP_TOKEN_MAX];
+    const char *slash = strrchr(target, '/');
+    size_t dir_len = slash ? (size_t)(slash - target) : 0;
+    if (dir_len + sizeof "/_BKUP.TMP" > sizeof temporary)
+        return FAT_ERR_NAMETOOLONG;
+    if (dir_len == 0) {
+        copy_cstr(temporary, sizeof temporary, "/_BKUP.TMP");
+    } else {
+        memcpy(temporary, target, dir_len);
+        copy_cstr(temporary + dir_len, sizeof temporary - dir_len, "/_BKUP.TMP");
+    }
+
+    (void)fat_unlink(temporary);
+    uint8_t chunk[512];
+    bool first = true;
+    int32_t n;
+    while ((n = fat_read(&in, chunk, sizeof chunk)) > 0) {
+        r = first ? fat_create(temporary, chunk, (uint32_t)n)
+                  : fat_append(temporary, chunk, (uint32_t)n);
+        if (r != FAT_OK) {
+            (void)fat_unlink(temporary);
+            return r;
+        }
+        first = false;
+    }
+    if (n < 0 && n != FAT_ERR_EOF) {
+        (void)fat_unlink(temporary);
+        return (fat_result_t)n;
+    }
+    if (first) {
+        r = fat_create(temporary, NULL, 0);
+        if (r != FAT_OK) return r;
+    }
+
+    r = fat_rename(temporary, target);
+    if (r != FAT_OK) (void)fat_unlink(temporary);
+    return r;
+}
+
+static void _backup_list_cb(const char *short_name, const char *long_name,
+                            uint32_t size, bool is_dir, void *ctx) {
+    (void)ctx;
+    if (strcmp(short_name, ".") == 0 || strcmp(short_name, "..") == 0) return;
+    char line[96];
+    snprintf(line, sizeof line, "%c %-24.24s %lu bytes",
+             is_dir ? 'd' : '-', long_name ? long_name : short_name,
+             (unsigned long)size);
+    print_line(line);
+}
+
+void app_backup(const char *arg) {
+    char action[16];
+    char directory[APP_TOKEN_MAX];
+    const char *rest = next_token(arg, action, sizeof action);
+    const char *path = next_token(rest, directory, sizeof directory);
+    if (!*action || (strcmp(action, "create") != 0 &&
+                     strcmp(action, "restore") != 0 &&
+                     strcmp(action, "list") != 0)) {
+        print_line("usage: backup create|restore|list [DIRECTORY]");
+        return;
+    }
+
+    char backup_dir[APP_TOKEN_MAX];
+    app_make_abs(*directory ? directory : "/BACKUP", backup_dir, sizeof backup_dir);
+    if (*path) {
+        print_line("usage: backup create|restore|list [DIRECTORY]");
+        return;
+    }
+
+    if (strcmp(action, "create") == 0) {
+        fat_result_t dr = fat_is_dir(backup_dir);
+        if (dr == FAT_ERR_NOTFOUND) dr = fat_mkdir(backup_dir);
+        if (dr != FAT_OK) {
+            char msg[APP_TOKEN_MAX + 48];
+            snprintf(msg, sizeof msg, "backup: cannot use directory: %s",
+                     fat_result_str(dr));
+            print_line(msg);
+            return;
+        }
+        char format_path[APP_TOKEN_MAX];
+        if (!_backup_path(backup_dir, BACKUP_FORMAT_FILE, format_path,
+                          sizeof format_path) ||
+            sys_fwrite(format_path, BACKUP_FORMAT_TEXT,
+                       (uint32_t)strlen(BACKUP_FORMAT_TEXT)) < 0) {
+            print_line("backup: could not write the backup format marker");
+            return;
+        }
+        int copied = 0, skipped = 0, failed = 0;
+        for (size_t i = 0; i < sizeof _backup_files / sizeof _backup_files[0]; i++) {
+            char target[APP_TOKEN_MAX];
+            if (!_backup_path(backup_dir, _backup_files[i], target, sizeof target)) {
+                failed++;
+                continue;
+            }
+            fat_result_t r = _backup_copy(_backup_files[i], target);
+            if (r == FAT_ERR_NOTFOUND) {
+                skipped++;
+            } else if (r == FAT_ERR_EXISTS) {
+                skipped++;
+            } else if (r != FAT_OK) {
+                char msg[APP_TOKEN_MAX + 64];
+                snprintf(msg, sizeof msg, "backup: %s: %s",
+                         _backup_files[i], fat_result_str(r));
+                print_line(msg);
+                failed++;
+            } else {
+                copied++;
+            }
+        }
+        char msg[96];
+        snprintf(msg, sizeof msg, "backup: %d copied, %d skipped, %d failed",
+                 copied, skipped, failed);
+        print_line(msg);
+        if (copied == 0 && failed == 0)
+            print_line("backup: no new files; choose another directory to refresh a backup");
+        print_line("backup: WIFI.CFG contains readable credentials; protect the card");
+        return;
+    }
+
+    if (strcmp(action, "list") == 0) {
+        fat_result_t r = fat_ls_ex(backup_dir, _backup_list_cb, NULL);
+        if (r != FAT_OK) {
+            char msg[APP_TOKEN_MAX + 48];
+            snprintf(msg, sizeof msg, "backup: cannot list directory: %s",
+                     fat_result_str(r));
+            print_line(msg);
+        }
+        return;
+    }
+
+    char format_path[APP_TOKEN_MAX];
+    char format[32];
+    if (!_backup_path(backup_dir, BACKUP_FORMAT_FILE, format_path,
+                      sizeof format_path)) {
+        print_line("backup: invalid backup directory");
+        return;
+    }
+    fat_file_t format_file;
+    fat_result_t format_result = fat_open(format_path, &format_file);
+    if (format_result != FAT_OK || format_file.size >= sizeof format) {
+        print_line("backup: unsupported or missing backup format marker");
+        return;
+    }
+    int32_t format_len = fat_read(&format_file, format, sizeof format - 1);
+    if (format_len < 0 || (uint32_t)format_len != format_file.size) {
+        print_line("backup: could not read the backup format marker");
+        return;
+    }
+    format[format_len] = '\0';
+    if (strcmp(format, BACKUP_FORMAT_TEXT) != 0) {
+        print_line("backup: unsupported backup format version");
+        return;
+    }
+
+    int restored = 0, skipped = 0, failed = 0;
+    for (size_t i = 0; i < sizeof _backup_files / sizeof _backup_files[0]; i++) {
+        char source[APP_TOKEN_MAX];
+        if (!_backup_path(backup_dir, _backup_files[i], source, sizeof source)) {
+            failed++;
+            continue;
+        }
+        fat_file_t existing;
+        fat_result_t probe = fat_open(_backup_files[i], &existing);
+        if (probe == FAT_OK) {
+            skipped++;
+            continue;
+        }
+        if (probe != FAT_ERR_NOTFOUND) {
+            char msg[APP_TOKEN_MAX + 64];
+            snprintf(msg, sizeof msg, "backup: inspect %s: %s",
+                     _backup_files[i], fat_result_str(probe));
+            print_line(msg);
+            failed++;
+            continue;
+        }
+        fat_result_t r = _backup_copy(source, _backup_files[i]);
+        if (r == FAT_ERR_NOTFOUND) skipped++;
+        else if (r != FAT_OK) {
+            char msg[APP_TOKEN_MAX + 64];
+            snprintf(msg, sizeof msg, "backup: restore %s: %s",
+                     _backup_files[i], fat_result_str(r));
+            print_line(msg);
+            failed++;
+        } else restored++;
+    }
+    char msg[96];
+    snprintf(msg, sizeof msg, "backup: %d restored, %d skipped, %d failed",
+             restored, skipped, failed);
+    print_line(msg);
 }
 
 /* env — show shell environment */

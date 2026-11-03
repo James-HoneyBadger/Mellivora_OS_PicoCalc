@@ -457,11 +457,97 @@ void net_app_dns(const char *arg) {
 /* ============================================================
  * fetch — HTTP GET and display body
  * ============================================================ */
+typedef struct {
+    char host[128];
+    char path[256];
+    uint16_t port;
+    bool tls;
+} _http_url_t;
+
+static bool _http_parse_url(const char *url, _http_url_t *out) {
+    if (!url || !*url || !out) return false;
+    memset(out, 0, sizeof *out);
+    out->port = 80;
+    out->path[0] = '/';
+    out->path[1] = '\0';
+
+    const char *p = url;
+    if (strncmp(p, "https://", 8) == 0) {
+        out->tls = true;
+        out->port = 443;
+        p += 8;
+    } else if (strncmp(p, "http://", 7) == 0) {
+        p += 7;
+    } else if (strstr(p, "://")) {
+        return false;
+    }
+
+    const char *space = strchr(p, ' ');
+    const char *path = strchr(p, '/');
+    if (space && (!path || space < path)) path = space;
+    size_t host_len = path ? (size_t)(path - p) : strlen(p);
+    if (host_len == 0 || host_len >= sizeof out->host) return false;
+    memcpy(out->host, p, host_len);
+    out->host[host_len] = '\0';
+    if (path) {
+        while (*path == ' ') path++;
+        if (*path) {
+            strncpy(out->path, path, sizeof out->path - 1);
+            out->path[sizeof out->path - 1] = '\0';
+        }
+    }
+
+    char *colon = strrchr(out->host, ':');
+    if (colon) {
+        if (strchr(out->host, ']')) return false;
+        char *end = NULL;
+        unsigned long parsed = strtoul(colon + 1, &end, 10);
+        if (end == colon + 1 || *end != '\0' || parsed == 0 || parsed > 65535)
+            return false;
+        out->port = (uint16_t)parsed;
+        *colon = '\0';
+    }
+    return out->host[0] != '\0' && out->path[0] == '/';
+}
+
+#define HTTPS_CA_FILE "/CA.CRT"
+#define HTTPS_CA_MAX  4096
+static char _https_ca_pem[HTTPS_CA_MAX + 1];
+
+static int _http_get(const _http_url_t *url, char *response, size_t cap,
+                     int timeout_ms) {
+    if (!url->tls)
+        return net_http_get(url->host, url->port, url->path,
+                            response, cap, timeout_ms);
+    if (!sys_rtc_is_set()) {
+        sys_print("HTTPS: set the clock with date or sync time before connecting\n");
+        return -1;
+    }
+
+    fat_file_t ca_file;
+    if (fat_open(HTTPS_CA_FILE, &ca_file) != FAT_OK ||
+        ca_file.size == 0 || ca_file.size > HTTPS_CA_MAX) {
+        sys_print("HTTPS: install a PEM CA certificate at /CA.CRT\n");
+        return -1;
+    }
+    int32_t ca_len = fat_read(&ca_file, _https_ca_pem, HTTPS_CA_MAX);
+    if (ca_len < 0 || (uint32_t)ca_len != ca_file.size) {
+        sys_print("HTTPS: could not read /CA.CRT\n");
+        return -1;
+    }
+    _https_ca_pem[ca_len] = '\0';
+    int n = net_https_get(url->host, url->port, url->path,
+                          _https_ca_pem, (size_t)ca_len, response, cap,
+                          timeout_ms);
+    if (n < 0) sys_print("HTTPS: TLS connection or certificate validation failed\n");
+    return n;
+}
+
 void net_app_fetch(const char *arg) {
     if (!arg || !*arg) {
         sys_print("Usage: fetch <url>\n");
         sys_print("  e.g. fetch http://example.com/\n");
-        sys_print("  e.g. fetch example.com /path\n");
+        sys_print("  e.g. fetch https://example.com/ (requires /CA.CRT)\n");
         return;
     }
     if (!net_is_connected()) {
@@ -469,52 +555,20 @@ void net_app_fetch(const char *arg) {
         return;
     }
 
-    char host[128] = "";
-    char path[256] = "/";
-    uint16_t port = 80;
-
-    /* Parse URL */
-    const char *p = arg;
-    if (!strncmp(p, "http://", 7)) p += 7;
-
-    /* Extract host */
-    const char *slash = strchr(p, '/');
-    const char *space = strchr(p, ' ');
-
-    if (slash && (!space || slash < space)) {
-        size_t hlen = (size_t)(slash - p);
-        if (hlen > 127) hlen = 127;
-        memcpy(host, p, hlen);
-        host[hlen] = '\0';
-        strncpy(path, slash, 255);
-        path[255] = '\0';
-    } else if (space) {
-        size_t hlen = (size_t)(space - p);
-        if (hlen > 127) hlen = 127;
-        memcpy(host, p, hlen);
-        host[hlen] = '\0';
-        while (*space == ' ') space++;
-        if (*space) { strncpy(path, space, 255); path[255] = '\0'; }
-    } else {
-        strncpy(host, p, 127);
-        host[127] = '\0';
-    }
-
-    /* Check for port in host */
-    char *colon = strchr(host, ':');
-    if (colon) {
-        *colon = '\0';
-        port = (uint16_t)atoi(colon + 1);
-        if (port == 0) port = 80;
+    _http_url_t url;
+    if (!_http_parse_url(arg, &url)) {
+        sys_print("fetch: invalid URL; use http:// or https:// host/path\n");
+        return;
     }
 
     char line[160];
-    snprintf(line, sizeof line, "GET %s:%d%s ...", host, port, path);
+    snprintf(line, sizeof line, "GET %.60s:%u%.80s ...", url.host,
+             (unsigned)url.port, url.path);
     sys_print(line);
     sys_putchar('\n');
 
     static char response[8192];
-    int n = net_http_get(host, port, path, response, sizeof response, 10000);
+    int n = _http_get(&url, response, sizeof response, 15000);
     if (n < 0) {
         sys_print("fetch: request failed\n");
         return;
@@ -540,6 +594,7 @@ void net_app_wget(const char *arg) {
     if (!arg || !*arg) {
         sys_print("Usage: wget <url> <file>\n");
         sys_print("  e.g. wget http://example.com/ /INDEX.HTM\n");
+        sys_print("  e.g. wget https://example.com/ /INDEX.HTM (requires /CA.CRT)\n");
         return;
     }
     if (!net_is_connected()) {
@@ -571,45 +626,21 @@ void net_app_wget(const char *arg) {
     strncpy(file_part, sp, 127);
     file_part[127] = '\0';
 
-    /* Parse URL */
-    char host[128] = "";
-    char path[256] = "/";
-    uint16_t port = 80;
-
-    const char *p = url_part;
-    if (!strncmp(p, "http://", 7)) p += 7;
-
-    const char *slash = strchr(p, '/');
-    if (slash) {
-        size_t hlen = (size_t)(slash - p);
-        if (hlen > 127) hlen = 127;
-        memcpy(host, p, hlen);
-        host[hlen] = '\0';
-        strncpy(path, slash, 255);
-        path[255] = '\0';
-    } else {
-        size_t hlen = strlen(p);
-        if (hlen > sizeof host - 1) hlen = sizeof host - 1;
-        memcpy(host, p, hlen);
-        host[hlen] = '\0';
-    }
-
-    char *colon = strchr(host, ':');
-    if (colon) {
-        *colon = '\0';
-        port = (uint16_t)atoi(colon + 1);
-        if (port == 0) port = 80;
+    _http_url_t url;
+    if (!_http_parse_url(url_part, &url)) {
+        sys_print("wget: invalid URL; use http:// or https:// host/path\n");
+        return;
     }
 
     sys_print("Downloading ");
-    sys_print(host);
-    sys_print(path);
+    sys_print(url.host);
+    sys_print(url.path);
     sys_print(" -> ");
     sys_print(file_part);
     sys_putchar('\n');
 
     static char response[8192];
-    int n = net_http_get(host, port, path, response, sizeof response, 15000);
+    int n = _http_get(&url, response, sizeof response, 20000);
     if (n <= 0) {
         sys_print("wget: download failed\n");
         return;

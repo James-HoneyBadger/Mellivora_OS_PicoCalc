@@ -16,6 +16,10 @@
     "source": "shell completion"
   },
   {
+    "name": "backup",
+    "source": "shell completion"
+  },
+  {
     "name": "base64",
     "source": "shell completion"
   },
@@ -445,6 +449,10 @@
   },
   {
     "name": "script",
+    "source": "shell completion"
+  },
+  {
+    "name": "sdcheck",
     "source": "shell completion"
   },
   {

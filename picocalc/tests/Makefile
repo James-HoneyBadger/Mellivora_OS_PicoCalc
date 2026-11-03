@@ -1,8 +1,8 @@
 #
-# Host unit tests for the pure logic modules.
+# Host tests for pure logic and the FAT driver with an in-memory SD card.
 #
 # These compile with the system C compiler, not the ARM toolchain, so they
-# run quickly in CI and locally without the Pico SDK.
+# run quickly in CI and locally without hardware or the Pico SDK.
 #
 
 CC ?= cc
@@ -26,6 +26,9 @@ SOURCES := \
 	$(SRC_DIR)/core/simple_re.c \
 	$(SRC_DIR)/core/glob.c \
 	$(SRC_DIR)/core/textutil.c \
+	$(SRC_DIR)/core/history.c \
+	$(SRC_DIR)/core/datetime.c \
+	$(SRC_DIR)/fat.c \
 	$(SRC_DIR)/core/lfn.c
 
 TEST_SOURCES := $(wildcard test_*.c)

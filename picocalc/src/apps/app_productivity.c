@@ -323,6 +323,76 @@ static void planner_show(const planner_item_t *items, int count, const char *pre
     if (shown == 0) print_line("planner: no matching entries");
 }
 
+static int planner_import_file(const char *path, planner_item_t *items,
+                              int *count) {
+    fat_file_t file;
+    char buf[APP_READ_MAX + 1];
+    if (fat_open(path, &file) != FAT_OK) return -1;
+    if (file.size > APP_READ_MAX) return -2;
+
+    int32_t n = fat_read(&file, buf, APP_READ_MAX);
+    if (n < 0 || (uint32_t)n != file.size) return -1;
+    if (memchr(buf, '\0', (size_t)n)) return -3;
+    buf[n] = '\0';
+
+    int imported = 0;
+    char *saveptr = NULL;
+    for (char *line = strtok_r(buf, "\n", &saveptr); line;
+         line = strtok_r(NULL, "\n", &saveptr)) {
+        rtrim_in_place(line);
+        char *record = (char *)skip_ws(line);
+        if (!*record || *record == '#') continue;
+        char *sep = strchr(record, '|');
+        if (!sep) return -3;
+        *sep++ = '\0';
+        rtrim_in_place(record);
+        sep = (char *)skip_ws(sep);
+        if (!planner_valid_date(record) || !*sep ||
+            strlen(sep) >= sizeof items[0].text) return -3;
+
+        bool duplicate = false;
+        for (int i = 0; i < *count; i++) {
+            if (strcmp(items[i].date, record) == 0 &&
+                strcmp(items[i].text, sep) == 0) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate) continue;
+        if (*count >= PLANNER_ITEMS_MAX) return -4;
+        copy_cstr(items[*count].date, sizeof items[*count].date, record);
+        copy_cstr(items[*count].text, sizeof items[*count].text, sep);
+        (*count)++;
+        imported++;
+    }
+    return imported;
+}
+
+void app_planner_remind(void) {
+    static char reminded_date[16];
+    if (!sys_rtc_is_set()) return;
+
+    char today[16];
+    planner_today_string(today, sizeof today);
+    if (strcmp(today, reminded_date) == 0) return;
+
+    planner_item_t items[PLANNER_ITEMS_MAX];
+    int count = planner_load(items, PLANNER_ITEMS_MAX);
+    int due = 0;
+    for (int i = 0; i < count; i++)
+        if (strcmp(items[i].date, today) == 0) due++;
+    copy_cstr(reminded_date, sizeof reminded_date, today);
+    if (due == 0) return;
+
+    print_line("Planner reminder: today's entries");
+    for (int i = 0; i < count; i++) {
+        if (strcmp(items[i].date, today) != 0) continue;
+        char out[160];
+        snprintf(out, sizeof out, "  %s", items[i].text);
+        print_line(out);
+    }
+}
+
 void app_planner(const char *arg) {
     planner_item_t items[PLANNER_ITEMS_MAX];
     char cmd[APP_TOKEN_MAX];
@@ -336,12 +406,82 @@ void app_planner(const char *arg) {
     if (!*cmd || ci_eq(cmd, "list") || ci_eq(cmd, "all")) {
         app_draw_header("Planner");
         planner_show(items, count, "");
-        print_line("Usage: planner add DATE TEXT | today | month YYYY-MM | del N | next | edit");
+        print_line("Usage: planner add DATE TEXT | today | month YYYY-MM | del N | next | import FILE | export [FILE] | edit");
         return;
     }
 
     if (ci_eq(cmd, "today")) {
         planner_show(items, count, today);
+        return;
+    }
+
+    if (ci_eq(cmd, "remind")) {
+        if (!sys_rtc_is_set()) {
+            print_line("planner: set the clock or sync time before reminders can run");
+            return;
+        }
+        planner_show(items, count, today);
+        return;
+    }
+
+    if (ci_eq(cmd, "export")) {
+        char path[APP_TOKEN_MAX];
+        const char *extra = next_token(s, path, sizeof path);
+        if (*skip_ws(extra)) {
+            print_line("usage: planner export [FILE]");
+            return;
+        }
+        if (!*path) copy_cstr(path, sizeof path, "/PLANNER-EXPORT.TXT");
+        char abs[APP_TOKEN_MAX];
+        app_make_abs(path, abs, sizeof abs);
+
+        char buf[APP_READ_MAX + 1];
+        size_t pos = 0;
+        for (int i = 0; i < count; i++) {
+            int wrote = snprintf(buf + pos, sizeof buf - pos, "%s|%s\n",
+                                 items[i].date, items[i].text);
+            if (wrote < 0 || (size_t)wrote >= sizeof buf - pos) {
+                print_line("planner: export is too large");
+                return;
+            }
+            pos += (size_t)wrote;
+        }
+        if (sys_fwrite(abs, buf, (uint32_t)pos) < 0) {
+            print_line("planner: export write failed");
+            return;
+        }
+        char msg[APP_TOKEN_MAX + 48];
+        snprintf(msg, sizeof msg, "planner: exported %d entries to %s", count, abs);
+        print_line(msg);
+        return;
+    }
+
+    if (ci_eq(cmd, "import")) {
+        char path[APP_TOKEN_MAX];
+        const char *extra = next_token(s, path, sizeof path);
+        if (!*path) {
+            print_line("usage: planner import FILE");
+            return;
+        }
+        if (*skip_ws(extra)) {
+            print_line("usage: planner import FILE");
+            return;
+        }
+        char abs[APP_TOKEN_MAX];
+        app_make_abs(path, abs, sizeof abs);
+        int imported = planner_import_file(abs, items, &count);
+        if (imported < 0) {
+            if (imported == -2) print_line("planner: import file exceeds the supported size");
+            else if (imported == -3) print_line("planner: import rejected; expected DATE|TEXT records");
+            else if (imported == -4) print_line("planner: import would exceed the schedule limit");
+            else print_line("planner: cannot read import file");
+            return;
+        }
+        if (!planner_save(items, count)) return;
+        char msg[96];
+        snprintf(msg, sizeof msg, "planner: imported %d new entr%s",
+                 imported, imported == 1 ? "y" : "ies");
+        print_line(msg);
         return;
     }
 
@@ -418,7 +558,7 @@ void app_planner(const char *arg) {
         return;
     }
 
-    print_line("usage: planner [list|add|today|month|next|del|edit]");
+    print_line("usage: planner [list|add|today|remind|month|next|import|export|del|edit]");
 }
 
 static int bookmarks_load(bookmark_item_t *items, int max_items) {

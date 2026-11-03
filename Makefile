@@ -5,6 +5,8 @@
 #
 
 PICO_DIR = picocalc
+PICO_SDK_TAG = 2.3.1
+PICO_SDK_COMMIT = 079c6f39023649b154152db30f1d781e884879bc
 PICO_BUILD_DIR ?= $(PICO_DIR)/build
 PICO_BOARD ?= pico
 PICO_PLATFORM ?= rp2040
@@ -58,13 +60,22 @@ picocalc-pico2w: picocalc-sdk picocalc-config picocalc-build picocalc-uf2
 pico2w: picocalc-pico2w
 
 picocalc-sdk:
-	@if [ -z "$(PICO_SDK_PATH)" ] && [ ! -d "$(PICO_DIR)/pico-sdk/external" ]; then \
-		echo "=== Fetching Pico SDK ==="; \
-		git clone --depth 1 https://github.com/raspberrypi/pico-sdk "$(PICO_DIR)/pico-sdk"; \
-	fi
-	@if [ -z "$(PICO_SDK_PATH)" ] && [ ! -f "$(PICO_DIR)/pico-sdk/lib/cyw43-driver/src/cyw43.h" ]; then \
-		echo "=== Fetching Pico SDK submodules (cyw43-driver, lwip, tinyusb, ...) ==="; \
-		git -C "$(PICO_DIR)/pico-sdk" submodule update --init --recursive --depth 1; \
+	@if [ -z "$(PICO_SDK_PATH)" ]; then \
+		SDK_DIR="$(PICO_DIR)/pico-sdk"; \
+		if [ ! -d "$$SDK_DIR/external" ]; then \
+			echo "=== Fetching Pico SDK $(PICO_SDK_TAG) ==="; \
+			git clone --depth 1 --branch "$(PICO_SDK_TAG)" https://github.com/raspberrypi/pico-sdk "$$SDK_DIR"; \
+		fi; \
+		SDK_COMMIT=$$(git -C "$$SDK_DIR" rev-parse HEAD 2>/dev/null) || { echo "Invalid Pico SDK checkout at $$SDK_DIR" >&2; exit 1; }; \
+		if [ "$$SDK_COMMIT" != "$(PICO_SDK_COMMIT)" ]; then \
+			echo "Pico SDK revision mismatch: expected $(PICO_SDK_TAG) ($(PICO_SDK_COMMIT)), found $$SDK_COMMIT." >&2; \
+			echo "Remove $$SDK_DIR and rebuild, or set PICO_SDK_PATH to use another SDK." >&2; \
+			exit 1; \
+		fi; \
+		if [ ! -f "$$SDK_DIR/lib/cyw43-driver/src/cyw43.h" ]; then \
+			echo "=== Fetching Pico SDK submodules (cyw43-driver, lwip, tinyusb, ...) ==="; \
+			git -C "$$SDK_DIR" submodule update --init --recursive --depth 1; \
+		fi; \
 	fi
 
 picocalc-config:

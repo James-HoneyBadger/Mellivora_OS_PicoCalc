@@ -58,6 +58,9 @@ void       net_tcp_close(net_tcp_t *conn);
 /* ---- HTTP GET (simple) ---- */
 int  net_http_get(const char *host, uint16_t port, const char *path,
                   char *buf, size_t cap, int timeout_ms);
+int  net_https_get(const char *host, uint16_t port, const char *path,
+                   const char *ca_pem, size_t ca_len, char *buf, size_t cap,
+                   int timeout_ms);
 
 /* ---- Poll (call periodically to service lwIP) ---- */
 void net_poll(void);

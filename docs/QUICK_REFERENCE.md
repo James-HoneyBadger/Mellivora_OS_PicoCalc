@@ -1,12 +1,16 @@
 # Mellivora PicoCalc Quick Reference
 
+Use this page for command syntax at a glance. The
+[User Guide](USER_GUIDE.md) explains workflows; the
+[Command Reference](COMMANDS.md) is the categorized command listing.
+
 ## Keyboard Shortcuts
 
 | Key | Action |
 | --- | --- |
 | `Up` / `Down` | Browse command history |
 | `Tab` | Complete command/path; repeat to cycle candidates |
-| `Ctrl-C` | Cancel current line / exit tools |
+| `Ctrl-C` | Cancel the current input or interrupt supported tools |
 | `Ctrl-U` | Clear current line |
 | `Ctrl-L` | Redraw screen |
 | `!!` | Re-run last command |
@@ -49,6 +53,7 @@
 | `battery` | Battery level |
 | `backlight N` | Keyboard backlight (0-255) |
 | `mount` | Mount SD card |
+| `umount` | Unmount SD card |
 | `sdinfo` | SD card status |
 
 ## File Commands
@@ -62,9 +67,9 @@
 | `touch` | `touch FILE` |
 | `write` | `write FILE TEXT` |
 | `mkdir` | `mkdir DIR` |
-| `rm` | `rm PATH` |
-| `cp` | `cp SRC DST` (dirs supported) |
-| `mv` | `mv OLD NEW` |
+| `rm` | `rm [-rRf] PATH` |
+| `cp` | `cp [-r] SRC DST` (directories supported) |
+| `mv` | `mv SRC DST` (streams across directories) |
 | `rename` | `rename OLD NEW` |
 | `stat` | `stat PATH` |
 | `tree` | `tree [-L DEPTH] [PATH]` |

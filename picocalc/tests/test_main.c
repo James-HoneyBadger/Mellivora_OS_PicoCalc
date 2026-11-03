@@ -18,6 +18,9 @@ void test_simple_re(void);
 void test_glob(void);
 void test_textutil(void);
 void test_lfn(void);
+void test_history(void);
+void test_fat(void);
+void test_datetime(void);
 
 int main(void) {
     RUN(test_strutil);
@@ -29,6 +32,9 @@ int main(void) {
     RUN(test_glob);
     RUN(test_textutil);
     RUN(test_lfn);
+    RUN(test_history);
+    RUN(test_fat);
+    RUN(test_datetime);
 
     printf("\n%d checks, %d failure(s)\n", test_checks, test_failures);
     return test_failures == 0 ? 0 : 1;

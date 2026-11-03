@@ -1,124 +1,91 @@
-# Mellivora PicoCalc Installation and Build Instructions
+# Installation and Development Setup
 
-This document is the main setup and bring-up guide for Mellivora PicoCalc. It covers host requirements, toolchain setup, firmware builds, flashing, SD card preparation, and first boot validation.
+This guide covers building Mellivora PicoCalc, flashing a board, preparing
+storage, and diagnosing common setup problems.
 
-## 1. What You Need
+## Supported hardware
 
-### Host requirements
+| Board | MCU | Firmware target | Wi-Fi |
+| --- | --- | --- | --- |
+| Clockwork PicoCalc with Raspberry Pi Pico | RP2040 | `picocalc` | No |
+| Clockwork PicoCalc with Raspberry Pi Pico 2 | RP2350 | `pico2` | No |
+| Clockwork PicoCalc with Raspberry Pi Pico 2 W | RP2350 | `pico2w` | Yes |
 
-- Linux development machine
-- CMake 3.13 or newer
-- GNU Make
-- ARM embedded GCC toolchain with `arm-none-eabi-gcc`
-- Git
-- a local Raspberry Pi Pico SDK checkout or the auto-fetched SDK used by the project build flow
+You will also need a data-capable USB cable. A microSD card is optional for
+booting but required for filesystem commands and persistent app data.
 
-### Hardware requirements
+## Build prerequisites
 
-- Clockwork PicoCalc or another compatible device using Raspberry Pi Pico or Pico 2 class hardware
-- USB data cable
-- microSD card for filesystem-backed commands and persistent apps
-
-## 2. Important Paths
-
-- root build entry: `Makefile`
-- firmware tree: `picocalc/`
-- firmware sources: `picocalc/src/`
-- build output: `picocalc/build/mellivora_picocalc.uf2`
-- documentation: `docs/`
-
-## 3. Recommended Linux Setup
-
-On Debian or Ubuntu style systems, the usual prerequisites are:
+The build requires CMake, GNU Make, Git, Python 3, and the ARM embedded GCC
+toolchain. On Debian or Ubuntu:
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake git gcc-arm-none-eabi
+sudo apt install -y \
+  build-essential cmake git python3 gcc-arm-none-eabi \
+  libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
 ```
 
-If you already have the Pico SDK installed elsewhere, export the path:
+The project fetches Raspberry Pi Pico SDK 2.3.1 at a pinned commit, plus its
+required submodules, on the first build. Internet access is needed for that
+initial fetch. To use a separately managed SDK instead, set
+`PICO_SDK_PATH` before building:
 
 ```bash
 export PICO_SDK_PATH=/absolute/path/to/pico-sdk
 ```
 
-Confirm the toolchain is visible:
+The project does not version-check an externally supplied SDK. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the pinned revision and development
+workflow.
 
-```bash
-arm-none-eabi-gcc --version
-cmake --version
-```
+## Build firmware
 
-## 4. Building the Firmware
-
-From the repository root, run the standard Pico build:
+Run commands from the repository root:
 
 ```bash
 make picocalc
-```
-
-For the Pico 2 variant, run:
-
-```bash
 make pico2
-```
-
-For the Pico 2W variant, run:
-
-```bash
 make pico2w
 ```
 
-When the builds succeed, the UF2 images will be available at:
+To build all supported variants:
 
-```text
-picocalc/build/mellivora_picocalc.uf2
-picocalc/build-pico2/mellivora_picocalc_pico2.uf2
-picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2
+```bash
+make all-targets
 ```
 
-## 5. Flashing to Hardware
+Generated UF2 files:
 
-### Prebuilt images
+| Board | Output |
+| --- | --- |
+| Pico | `picocalc/build/mellivora_picocalc.uf2` |
+| Pico 2 | `picocalc/build-pico2/mellivora_picocalc_pico2.uf2` |
+| Pico 2 W | `picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2` |
 
-Release images are committed under `firmware/`:
+The build configuration reads the project version and repository slug from
+the root `VERSION` and `REPOSITORY` files. For the main project source tree,
+do not configure CMake directly; use the root Makefile so the SDK and board
+settings are consistent.
 
-- `firmware/mellivora_v2.5.0_pico.uf2`
-- `firmware/mellivora_v2.5.0_pico2.uf2`
-- `firmware/mellivora_v2.5.0_pico2w.uf2`
+## Flash a UF2
 
-Use the image that matches the board; the Pico 2 W image is required for
-WiFi support.
+1. Disconnect the PicoCalc from USB.
+2. Hold **BOOTSEL** and reconnect USB.
+3. Release **BOOTSEL** after the board's mass-storage drive appears.
+4. Copy the UF2 built for that exact board to the drive.
+5. Wait for the board to reboot.
 
+Firmware updates do not erase the microSD card. User files and persistent
+settings remain on the card unless you explicitly remove them.
 
-1. Disconnect the device if it is already attached.
-2. Hold the BOOTSEL button.
-3. Connect the USB cable while holding BOOTSEL.
-4. Release the button after the mass-storage drive appears.
-5. Copy `mellivora_picocalc.uf2` onto that drive.
-6. Wait for the automatic reboot.
+## Prepare storage
 
-## 6. First Boot Checklist
-
-After flashing, confirm the following on the device:
-
-1. the Mellivora shell prompt appears
-2. `help` lists the command families
-3. `home` opens the launcher
-4. `dashboard` shows live status information
-5. an inserted SD card mounts correctly with `mount`
-6. `ls` and `pwd` work as expected
-
-## 7. Preparing the SD Card
-
-The apps and file tools depend on a FAT-formatted card.
-
-Recommended practice:
-
-- use FAT16 or FAT32
-- use a clean, safely ejected card
-- create a few test folders and text files before first use
-- keep filenames simple if you want maximum compatibility
+The firmware supports FAT16 and FAT32 partitions and partitionless FAT
+("superfloppy") media. The driver selects the first recognized FAT
+partition; using a single FAT partition is recommended. exFAT is not
+supported. For best compatibility, use a safely ejected card formatted
+with a standard FAT16 or FAT32 filesystem.
 
 After inserting the card, run:
 
@@ -127,94 +94,74 @@ mount
 ls
 ```
 
-## 8. Updating the Firmware Later
+If mount reports an error, see [HARDWARE.md](HARDWARE.md) for the SD
+interface and [USER_GUIDE.md](USER_GUIDE.md) for storage commands. Wi-Fi
+credentials saved by the Pico 2 W firmware are stored in `/WIFI.CFG` on
+the card as readable text; do not use a card you cannot physically protect.
 
-To ship a new build to the device:
+## First-boot verification
 
-1. pull or edit the repository
-2. rebuild with `make picocalc`
-3. flash the new UF2 in BOOTSEL mode
-4. reboot and verify the shell and storage tools still work
-
-Persistent files stored on the SD card such as notes, planner data, settings, and journal entries remain on the card unless you erase them yourself.
-
-## 9. Troubleshooting
-
-### Build cannot find the Pico SDK
-
-Make sure `PICO_SDK_PATH` is valid or rerun the normal project build flow from the repository root.
-
-### Build cannot find `arm-none-eabi-gcc`
-
-Install the embedded GCC toolchain and verify it is present in your shell path.
-
-### The UF2 flashes but file commands fail
-
-- confirm the SD card is inserted correctly
-- run `mount` before using storage features
-- reformat the card as FAT16 or FAT32
-- try a smaller, known-good SD card if detection is unreliable
-- use long command output with `| more` if the display is busy with large listings
-
-### SD Card Compatibility
-
-The firmware communicates with SD cards over bit-banged SPI at 1 MHz. Compatibility notes:
-
-- **Recommended**: SDHC cards 4 GB to 32 GB formatted as FAT32
-- **Also supported**: SD cards up to 2 GB formatted as FAT16
-- **Not supported**: SDXC (64 GB+) cards with exFAT — reformat as FAT32 if needed
-- **Troubleshooting**: If `mount` fails or hangs, try a different card brand. Some ultra-fast UHS-I cards may not work reliably over SPI. The firmware now validates CRC16 checksums on every block read and uses 3-read debounce for card detection.
-
-### The device does not appear in BOOTSEL mode
-
-- use a data-capable USB cable
-- try a different USB port
-- reconnect while holding BOOTSEL longer
-
-### The shell runs but the display seems stale
-
-Use `clear` or `Ctrl-L` to redraw the screen.
-
-## 10. Verification Commands
-
-Useful post-install checks:
+Run these commands at the shell prompt:
 
 ```text
+version
 help
 uname
 mount
 ls
-settings
-samples
+dashboard
 ```
 
-## 11. Build System Reference
+`version` reports the firmware build date and project URL. If no SD card is
+present, storage-backed features remain unavailable, but the shell and
+built-in tools can still be used.
 
-The top-level `Makefile` provides these targets:
+## Host tests and quality checks
 
-| Target | Description |
-| --- | --- |
-| `make picocalc` | Build firmware for Pico (RP2040) |
-| `make pico2` | Build firmware for Pico 2 (RP2350) |
-| `make pico2w` | Build firmware for Pico 2W (RP2350 with WiFi) |
-| `make clean` | Remove build artifacts |
+The host test suite uses the system C compiler and runs without the Pico
+SDK or physical hardware:
 
-The build uses CMake internally. Key CMake variables:
+```bash
+make test
+```
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PICO_SDK_PATH` | `picocalc/pico-sdk` | Path to the Pico SDK |
-| `PICO_BOARD` | `pico` / `pico2` / `pico2_w` | Target board type |
-| `CMAKE_BUILD_TYPE` | `Release` | Build optimization level |
+The tests enable AddressSanitizer and UndefinedBehaviorSanitizer by default.
+Additional contributor checks are documented in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-Output files:
+## Troubleshooting
 
-- Pico: `picocalc/build/mellivora_picocalc.uf2`
-- Pico 2: `picocalc/build-pico2/mellivora_picocalc_pico2.uf2`
-- Pico 2W: `picocalc/build-pico2w/mellivora_picocalc_pico2w.uf2`
+### The SDK cannot be found
 
-A `Containerfile` is also provided for reproducible builds in a container environment.
+Run the build from the repository root and allow the first build to fetch
+the pinned SDK. If using a separately installed SDK, confirm
+`PICO_SDK_PATH` points to its root directory.
 
-## 12. Scope Reminder
+### The ARM compiler or libraries are missing
 
-This repository is maintained as a PicoCalc firmware project. The active targets are the RP2040 and RP2350 based handheld workflows.
+Install the packages listed under [Build prerequisites](#build-prerequisites)
+and verify that `arm-none-eabi-gcc` is on your `PATH`.
+
+### The UF2 drive does not appear
+
+- Use a data-capable USB cable and a direct USB port.
+- Disconnect and reconnect while holding **BOOTSEL**.
+- Confirm that the correct Pico board is installed in the PicoCalc.
+
+### The firmware boots but storage commands fail
+
+- Insert the microSD card fully and run `mount`.
+- Confirm the card uses FAT16 or FAT32, not exFAT.
+- Try a safely ejected card known to work in another device.
+- Re-run `mount` after reinserting the card.
+
+### The display needs to be redrawn
+
+Press `Ctrl-L` or run `clear`.
+
+## Related documentation
+
+- [Quick start](INSTRUCTIONS.md)
+- [User guide](USER_GUIDE.md)
+- [Hardware reference](HARDWARE.md)
+- [Contributor guide](CONTRIBUTING.md)

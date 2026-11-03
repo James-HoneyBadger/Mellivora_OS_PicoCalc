@@ -29,7 +29,8 @@ Important files and responsibilities:
   evaluation (`expr`), shell parsing (`shell_parse`), path handling
   (`path_util`), FAT 8.3 names (`fatname`), VFAT long names (`lfn`), the
   simple regex matcher (`simple_re`), wildcard matching (`glob`), and
-  `tr`/`sed` helpers (`textutil`)
+  `tr`/`sed` helpers (`textutil`), shell history (`history`), and Gregorian
+  date conversion (`datetime`)
 - `picocalc/src/console.c` — shared blocking line input
 - `picocalc/src/audio.c` — PWM tone output
 - `picocalc/src/pipe.c` — bounded in-RAM pipeline buffers
@@ -43,30 +44,32 @@ Important files and responsibilities:
 - `picocalc/src/net.c` and `net.h` — WiFi, TCP, DNS, ICMP, NTP, HTTP (Pico 2W only)
 - `picocalc/src/netapps.c` and `netapps.h` — network application commands (Pico 2W only)
 - `picocalc/src/lwipopts.h` — lwIP stack configuration (Pico 2W only)
-- `picocalc/tests/` — host unit tests for `src/core` and the shared helpers
+- `picocalc/tests/` — host unit tests for portable modules and FAT using an
+  in-memory SD-card backend
 - `tools/quality/` — baseline, size-gate, lint, and formatting scripts
 
 ## 3. Normal Edit and Test Cycle
 
 1. edit code under `picocalc/src/`
-2. if you touched a pure module, add or update a test under `picocalc/tests/`
-   - build once with `make picocalc` so `make lint` can analyse the app and
-     firmware modules through `compile_commands.json`
-3. run the host checks:
+2. add or update host tests when changing portable logic or filesystem
+   behavior; `make test` does not require the Pico SDK
+3. build once with `make picocalc` so `make lint` can analyse app and firmware
+   modules through `compile_commands.json`
+4. run the host checks:
 
    ```bash
    make test lint format-check
    ```
 
-4. rebuild from the repository root with:
+5. rebuild from the repository root with:
 
    ```bash
    make picocalc
    ```
 
-5. flash the generated UF2 to hardware
-6. test the command or app directly in the shell
-7. update docs when user-visible behavior changes
+6. flash the generated UF2 to hardware
+7. test the command or app directly in the shell
+8. update docs when user-visible behavior changes
 
 ## 4. Choosing Between Built-ins and Apps
 
@@ -89,10 +92,10 @@ Most user-facing expansions belong in the app layer.
 Typical process:
 
 1. implement the handler in `main.c`
-2. validate arguments carefully
-3. print clear usage text on bad input
-4. add entries to `help` and `man`
-5. test interactively on target hardware
+2. register the command in dispatch and completion/help metadata
+3. validate arguments and return an informative usage message on bad input
+4. add or update command-reference documentation
+5. test success and failure cases, then test interactively on target hardware
 
 Built-ins should stay small and focused.
 
@@ -142,8 +145,9 @@ The FAT layer (`fat.h`) provides these functions for app development:
 | `fat_ls(path, cb, ctx)` | Enumerate directory entries |
 | `fat_open(path, f)` | Open a file for reading |
 | `fat_read(f, buf, n)` | Read bytes from an open file |
-| `fat_create(path, data, len)` | Create or overwrite a file |
+| `fat_create(path, data, len)` | Create a new file; returns `FAT_ERR_EXISTS` if it already exists |
 | `fat_append(path, data, len)` | Append data to a file (creates if missing) |
+| `fat_write_atomic(path, data, len)` | Replace a file through a temporary file in its directory |
 | `fat_rename(old, new)` | Rename a file (same directory) |
 | `fat_unlink(path)` | Delete a file or empty directory |
 | `fat_mkdir(path)` | Create a directory |
@@ -210,3 +214,4 @@ As the system grows, the biggest architectural payoff will likely come from:
 - improving automated command documentation generation
 - expanding the sample library
 - widening interpreter coverage while staying within RP2040 limits
+- extracting cohesive, testable logic from the remaining large shell and filesystem modules

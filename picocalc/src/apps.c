@@ -54,6 +54,7 @@ static app_cmd_entry_t *app_table(size_t *out_count) {
         {"sort", app_sort}, {"uniq", app_uniq}, {"hexdump", app_hexdump}, {"od", app_od},
         {"hexedit", app_hexedit}, {"hex", app_hexedit},
         {"calc", app_calc}, {"cp", app_cp}, {"mv", app_mv},
+        {"backup", app_backup},
         {"stat", app_stat}, {"edit", app_edit}, {"bedit", app_edit},
         {"browse", app_browse}, {"files", app_browse}, {"notes", app_notes},
         {"memo", app_notes}, {"journal", app_journal}, {"diary", app_journal},
