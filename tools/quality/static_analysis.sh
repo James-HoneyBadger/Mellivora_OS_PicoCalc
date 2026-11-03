@@ -37,8 +37,24 @@ if [[ -f "$DB" ]]; then
         picocalc/src/apps/fs.c
         picocalc/src/apps/app_*.c
     )
+    ARM_SYSTEM_INCLUDES=()
+    if command -v arm-none-eabi-gcc >/dev/null 2>&1; then
+        mapfile -t system_include_dirs < <(
+            arm-none-eabi-gcc -E -x c - -v </dev/null 2>&1 |
+                sed -n '/search starts here:/,/End of search list./{
+                    /search starts here:/d
+                    /End of search list./d
+                    s/^ *//
+                    p
+                }'
+        )
+        for include_dir in "${system_include_dirs[@]}"; do
+            ARM_SYSTEM_INCLUDES+=(--extra-arg=-isystem --extra-arg="$include_dir")
+        done
+    fi
     clang-tidy -p "$ROOT_DIR/picocalc/build" --quiet \
-        --config-file="$ROOT_DIR/.clang-tidy" "${FIRMWARE_FILES[@]}"
+        --config-file="$ROOT_DIR/.clang-tidy" "${ARM_SYSTEM_INCLUDES[@]}" \
+        "${FIRMWARE_FILES[@]}"
 else
     echo "static_analysis: no firmware compile database; run 'make picocalc' for the wider pass"
 fi
