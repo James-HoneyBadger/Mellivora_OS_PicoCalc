@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -173,6 +174,10 @@ int32_t mapp_discover(void);
 int32_t mapp_catalog_truncated(void);
 const mapp_app_t *mapp_catalog_get(uint32_t index);
 void mapp_launch(const mapp_app_t *app);
+
+/* Resolve a shell command line to an app in /apps: matches the filename or
+   its stem (with or without the extension). Returns true when launched. */
+bool mapp_run(const char *name);
 
 #ifdef __cplusplus
 }

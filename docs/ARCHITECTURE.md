@@ -283,7 +283,11 @@ Version 2 added the graphics layer, and version 3 the polyphonic audio:
 
 Host-side developers use `tools/sdk/`: `make` produces `hello.mapp` and
 `plasma.mapp` from plain C, and the packer turns any linked ELF into the
-container format.
+container format. `tools/sim/` runs the same sources natively against the
+real gfx/mixer cores and screenshots the last frame (no hardware, no SDL),
+and `tools/mdev/` builds, simulates, and deploys over USB with an XMODEM
+sender that the shell's receiver accepts; typing an app name in the shell
+launches it through the `/apps` catalogue (`mapp_run`).
 
 ## Packages and user themes
 

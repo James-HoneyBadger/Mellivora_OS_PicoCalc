@@ -748,3 +748,29 @@ void mapp_launch(const mapp_app_t *app) {
     }
     if (_catalog_overflow) ui_warn("apps: showing first 24 matching files");
 }
+
+bool mapp_run(const char *name) {
+    if (!name || !*name) return false;
+    int32_t count = mapp_discover();
+    if (count <= 0) return false;
+
+    for (int32_t i = 0; i < count; i++) {
+        const mapp_app_t *app = mapp_catalog_get((uint32_t)i);
+        if (!app || !app->filename[0]) continue;
+
+        /* Match the full filename, then the stem without its extension. */
+        if (ci_eq(app->filename, name)) {
+            mapp_launch(app);
+            return true;
+        }
+        char stem[256];
+        _copy_string(stem, sizeof stem, app->filename);
+        char *dot = strrchr(stem, '.');
+        if (dot) *dot = '\0';
+        if (ci_eq(stem, name)) {
+            mapp_launch(app);
+            return true;
+        }
+    }
+    return false;
+}

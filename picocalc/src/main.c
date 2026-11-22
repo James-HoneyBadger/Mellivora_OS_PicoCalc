@@ -27,6 +27,7 @@
 #include "hardware/clocks.h"
 #include "hardware/watchdog.h"
 #include "hardware/uart.h"
+#include "mapp.h"
 
 #include "picocalc_hw.h"
 #include "lcd.h"
@@ -2864,6 +2865,9 @@ static void dispatch_single_no_glob(char *line) {
     else if (app_run(line, arg)) {
         strncpy(_cwd, _sys_cwd, CWD_MAX - 1);
         _cwd[CWD_MAX - 1] = '\0';
+        _last_exit = 0;
+    }
+    else if (mapp_run(line)) {
         _last_exit = 0;
     }
     else {

@@ -13,16 +13,17 @@
 #define SIZE 160
 #define ORIGIN ((320 - SIZE) / 2)
 
+/* Triangle wave over 0..255: bright at the ends, dark in the middle. */
+static uint8_t ramp(uint8_t value) {
+    return (value & 0x80u) ? (uint8_t)(0xFFu - ((value & 0x7Fu) << 1)) : (uint8_t)((value & 0x7Fu) << 1);
+}
+
+/* Three ramps offset by a third of the range give a rotating rainbow. */
 static uint32_t shade(uint8_t index, uint8_t phase) {
-    /* Two offset ramps through the 6x6x6 colour cube, rotating with `phase`. */
-    uint8_t i = (uint8_t)(index + phase);
-    uint8_t r = (uint8_t)(i >> 5);
-    uint8_t g = (uint8_t)(((i >> 3) & 3) + (i >> 6));
-    uint8_t b = (uint8_t)((i & 0x1F) + (phase >> 2));
-    r = (uint8_t)(r * 8);
-    g = (uint8_t)(g * 8);
-    b = (uint8_t)(b * 8);
-    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
+    uint8_t value = (uint8_t)(index + phase);
+    return ((uint32_t)ramp((uint8_t)(value + 0)) << 16) |
+           ((uint32_t)ramp((uint8_t)(value + 85)) << 8) |
+           (uint32_t)ramp((uint8_t)(value + 170));
 }
 
 int32_t mapp_main(const mapp_api_t *api, int32_t argc, char **argv) {

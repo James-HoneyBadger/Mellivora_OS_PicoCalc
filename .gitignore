@@ -17,6 +17,10 @@
 # Host SDK sample output
 tools/sdk/build/
 
+# Host simulator output
+tools/sim/build/
+tools/sim/shots/
+
 # PicoCalc build directories
 picocalc/build/
 picocalc/build-pico2/

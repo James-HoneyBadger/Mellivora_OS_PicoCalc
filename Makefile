@@ -15,7 +15,7 @@ PICO_ELF = $(PICO_BUILD_DIR)/mellivora_picocalc.elf
 PICO_UF2 = $(PICO_BUILD_DIR)/mellivora_picocalc.uf2
 PICOTOOL = $(PICO_BUILD_DIR)/_deps/picotool/picotool
 
-.PHONY: all all-targets picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean baseline-report doc-consistency-check command-registry-report command-registry-check quality-check test lint format-check size-report size-baseline size-gate starter-pack flasher-check clean
+.PHONY: all all-targets picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean baseline-report doc-consistency-check command-registry-report command-registry-check quality-check test lint format-check size-report size-baseline size-gate starter-pack flasher-check sim sim-check mdev-test clean
 
 all: picocalc
 
@@ -171,7 +171,22 @@ command-registry-check:
 	@chmod +x tools/quality/command_registry_check.sh
 	@tools/quality/command_registry_check.sh
 
-quality-check: baseline-report doc-consistency-check command-registry-check size-report test
+# Host simulator and the deploy tool: no hardware needed, so they run on
+# every quality pass and in CI.
+sim:
+	@$(MAKE) -C tools/sim APP=$(APP) $(if $(SIM_AUTOQUIT_MS),MAPP_AUTOQUIT_MS=$(SIM_AUTOQUIT_MS))
+
+sim-check:
+	@echo "=== Running host simulator checks ==="
+	@$(MAKE) -C tools/sim APP=hello run=0
+	@$(MAKE) -C tools/sim APP=plasma run=1
+	@python3 -c "import struct; d=open('tools/sim/shots/plasma.png','rb').read(); assert d[:8]==bytes([137,80,78,71,13,10,26,10]); w,h=struct.unpack('>II',d[16:24]); assert (w,h)==(160,160); print('sim-check: plasma screenshot valid')"
+
+mdev-test:
+	@echo "=== Testing the mdev XMODEM sender ==="
+	@python3 tools/mdev/test_mdev.py
+
+quality-check: baseline-report doc-consistency-check command-registry-check size-report test sim-check mdev-test
 	@echo "=== Quality checks passed ==="
 
 clean: picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean

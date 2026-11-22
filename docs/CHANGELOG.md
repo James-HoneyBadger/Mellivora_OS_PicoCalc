@@ -4,6 +4,25 @@ All notable changes to **Mellivora OS for PicoCalc** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **App graphics and polyphonic audio (ABI v3)** — indexed-colour surfaces,
+  sprites, dirty-rectangle presents, and a 4-voice PWM mixer exposed to
+  `.mapp` apps, with capability bits and an append-only table.
+- **BASIC graphics and sound** — `GR`/`TEXT`, `PSET`, `LINE`, `RECT`,
+  `CIRCLE` (and filled variants), `COLOR`, `PEN`, `SHOW`, plus `SOUND`,
+  `NOISE`, and `NOSOUND`.
+- **`gfxbench`** — measures full-surface and dirty-rect panel throughput on
+  the device, behind the same calls apps use.
+- **Host simulator** — `make sim APP=plasma` runs SDK apps natively against
+  the same graphics/mixer cores and screenshots the last frame; no
+  hardware, no SDL.
+- **`mdev` deploy tool** — builds, simulates, and pushes `.mapp` files over
+  USB with a tested XMODEM sender; the shell now launches `/apps` files by
+  name.
+
 ## [2.6.0] - 2026-11-02
 
 ### Added
