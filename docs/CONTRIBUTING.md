@@ -82,6 +82,10 @@ committed baselines with `make size-baseline`. CI applies `make size-gate`
 to each target and fails on a budget overflow or an unapproved regression
 (more than 5% growth plus 2 KiB slack).
 
+`make quality-check` records the current sizes in `reports/size-current-*.txt`
+but never rewrites `reports/size-baseline-*.txt`, so a routine check cannot
+quietly accept a regression; only `make size-baseline` moves the baseline.
+
 ## Code Style
 
 - **Language**: C11 (GNU extensions allowed where the SDK requires them)

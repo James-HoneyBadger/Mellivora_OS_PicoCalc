@@ -25,6 +25,9 @@ picocalc/build-pico2w/
 # Host unit-test binaries
 picocalc/tests/build/
 
+# Per-build size snapshots (reports/size-baseline-*.txt are committed)
+reports/size-current-*.txt
+
 # Pico SDK (fetched by build)
 picocalc/pico-sdk/
 

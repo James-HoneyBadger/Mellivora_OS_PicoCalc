@@ -124,7 +124,8 @@ size-baseline:
 	@test -f picocalc/build/mellivora_picocalc.elf || { echo "Missing Pico ELF; run 'make all-targets' first"; exit 1; }
 	@test -f picocalc/build-pico2/mellivora_picocalc.elf || { echo "Missing Pico 2 ELF; run 'make all-targets' first"; exit 1; }
 	@test -f picocalc/build-pico2w/mellivora_picocalc.elf || { echo "Missing Pico 2 W ELF; run 'make all-targets' first"; exit 1; }
-	@$(MAKE) --no-print-directory size-report
+	@chmod +x tools/quality/size_baseline.sh
+	@tools/quality/size_baseline.sh reports --update-baseline
 
 size-gate:
 	@echo "=== Checking firmware size budgets and regressions ==="
