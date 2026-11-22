@@ -60,6 +60,13 @@ bool lcd_cursor_is_block(void);
 /* Graphics primitives */
 void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t color);
 void lcd_draw_hline(uint16_t x, uint16_t y, uint16_t w, uint32_t color);
+
+/* Write one scanline of 3-byte RGB data (w * 3 bytes) at (x, y). Used by the
+   `.mapp` graphics layer to present a dirty region without a full framebuffer. */
+void lcd_blit_row(uint16_t x, uint16_t y, uint16_t w, const uint8_t *rgb888);
+
+/* Built-in 8x16 glyph rows (16 bytes, bit 7 leftmost), or NULL if unprintable. */
+const uint8_t *lcd_font_glyph(char ch);
 void lcd_draw_vline(uint16_t x, uint16_t y, uint16_t h, uint32_t color);
 void lcd_draw_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t color);
 

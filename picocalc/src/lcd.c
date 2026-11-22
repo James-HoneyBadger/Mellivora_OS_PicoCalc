@@ -64,6 +64,7 @@ typedef enum {
     LCD_OP_GET_ROW,
     LCD_OP_DRAW_CELL,
     LCD_OP_GET_CELL,
+    LCD_OP_BLIT_ROW,
 } lcd_op_t;
 
 typedef struct {
@@ -75,6 +76,7 @@ typedef struct {
     char ch, result_char;
     bool enable, block, result_bool;
     const char *text, *target;
+    const uint8_t *pixels;
     int result_int;
 } lcd_request_t;
 
@@ -125,6 +127,9 @@ static void _lcd_execute_request(void *context) {
             break;
         case LCD_OP_GET_CELL:
             request->result_char = lcd_get_cell(request->i, request->j);
+            break;
+        case LCD_OP_BLIT_ROW:
+            lcd_blit_row(request->x, request->y, request->w, request->pixels);
             break;
     }
 }
@@ -990,6 +995,20 @@ void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t colo
     _lcd_unlock();
 }
 
+/* Write one scanline of 3-byte-per-pixel data at (x, y). The `.mapp` graphics
+   layer expands a dirty row with gfx_row_to_rgb888() and calls this; the window
+   is set per row so a full-surface present never needs a full-frame buffer. */
+void lcd_blit_row(uint16_t x, uint16_t y, uint16_t w, const uint8_t *rgb888) {
+    LCD_ROUTE_VOID(LCD_OP_BLIT_ROW, .x = x, .y = y, .w = w, .pixels = rgb888);
+    if (!rgb888 || x >= LCD_WIDTH || y >= LCD_HEIGHT || w == 0) return;
+    if (x + w > LCD_WIDTH) w = (uint16_t)(LCD_WIDTH - x);
+    _lcd_lock();
+    _set_window(x, y, (uint16_t)(x + w - 1), y);
+    _spi_write_fast(rgb888, (size_t)w * 3u);
+    _end_window_write();
+    _lcd_unlock();
+}
+
 void lcd_draw_hline(uint16_t x, uint16_t y, uint16_t w, uint32_t color) {
     LCD_ROUTE_VOID(LCD_OP_DRAW_HLINE, .x = x, .y = y, .w = w, .color = color);
     lcd_fill_rect(x, y, w, 1, color);
@@ -1069,4 +1088,13 @@ char lcd_get_cell(int col, int row) {
     LCD_ROUTE_VALUE(LCD_OP_GET_CELL, result_char, .i = col, .j = row);
     if (col < 0 || col >= LCD_COLS || row < 0 || row >= LCD_ROWS) return ' ';
     return _text_buf[row][col];
+}
+
+/* Read-only access to the built-in 8x16 font, for the .mapp graphics layer
+   (which draws glyphs into its own indexed surface). Returns NULL outside
+   the printable ASCII range. */
+const uint8_t *lcd_font_glyph(char ch) {
+    unsigned char c = (unsigned char)ch;
+    if (c < 0x20 || c > 0x7E) return NULL;
+    return _font8x16[c - 0x20];
 }

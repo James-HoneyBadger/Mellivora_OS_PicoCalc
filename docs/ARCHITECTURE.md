@@ -58,7 +58,7 @@ shell loop:
 | `apps/app_hw.c` | Hardware Workbench: VT100 terminal, GPIO/PWM/I2C commands, XMODEM/YMODEM |
 | `apps/text.c`, `apps/fs.c`, `apps/hex.c` | Text, filesystem, and hex utilities |
 | `mapp.c`       | `.mapp` loader: discovery, RAM arena, relocation, and the app ABI jump table |
-| `core/`        | Portable logic with host tests: expressions, shell parsing, paths, names, regex, globs, text, history, date conversion, JSON, SHA-256, file hashing, package planning, theme files and discovery, `.mapp` image validation, pin map, VT100, XMODEM, i2cdetect, and workbench commands |
+| `core/`        | Portable logic with host tests: expressions, shell parsing, paths, names, regex, globs, text, history, date conversion, JSON, SHA-256, file hashing, indexed graphics surfaces, package planning, theme files and discovery, `.mapp` image validation, pin map, VT100, XMODEM, i2cdetect, and workbench commands |
 | `ui/ui.c/.h`   | Semantic colour roles, built-in and card-loaded palettes, header/footer, menus, notifications |
 | `pipe.c/.h`    | Bounded in-RAM pipeline input/output                         |
 | `console.c/.h` | Blocking line input shared by apps and the HAL                |
@@ -251,9 +251,27 @@ The loader is split so its memory-safety decisions are testable:
   reads the image, and calls the entry point with the API table.
 
 The ABI is a fixed jump table (`mapp_api_t`) of display, keyboard, file,
-timer, and network calls, versioned by `MAPP_API_VERSION`. Host-side
-developers use `tools/sdk/`: `make` produces `hello.mapp` from plain C,
-and the packer turns any linked ELF into the container format.
+timer, and network calls. It grows by appending only: `size` and `version`
+let an app discover what the running loader implements, and
+`capabilities()` reports `MAPP_CAP_*` bits. Compile-time asserts in
+`mapp.h` pin the v1 prefix so a future edit cannot silently move a field
+an older binary still reads.
+
+Version 2 adds the graphics and audio layer that games and demos need:
+
+- `core/gfx.c` implements indexed 8-bit surfaces with a 256-entry palette,
+  clipped primitives, masked sprite blits, glyph drawing, and dirty-rectangle
+  tracking. It is host-tested and knows nothing about the panel.
+- `mapp.c` hands out up to four surfaces per app from the heap and releases
+  them when `mapp_main` returns, so a leak cannot survive a launch.
+- `lcd_blit_row()` in the LCD driver writes one scanline, so `gfx_present()`
+  streams only the dirty rectangle instead of needing a full frame buffer.
+  A full 320x320 present would be ~307 KiB of SPI traffic; the 160x160 mode
+  is 25.6 KiB per surface and is the recommended default.
+
+Host-side developers use `tools/sdk/`: `make` produces `hello.mapp` and
+`plasma.mapp` from plain C, and the packer turns any linked ELF into the
+container format.
 
 ## Packages and user themes
 

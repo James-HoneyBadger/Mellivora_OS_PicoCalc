@@ -9,7 +9,9 @@
 #include <string.h>
 
 #include "apps/app_internal.h"
+#include "audio.h"
 #include "console.h"
+#include "core/gfx.h"
 #include "core/mapp_image.h"
 #include "fat.h"
 #include "kbd.h"
@@ -58,6 +60,20 @@ static uint32_t _catalog_count;
 static bool _catalog_overflow;
 static uint32_t _relocations[MAPP_RELOC_MAX];
 static mapp_file_slot_t _file_slots[MAPP_FILE_HANDLES];
+
+/* Graphics surfaces handed to the app. Pixel buffers come from the heap and
+   are released when the app returns, so a misbehaving app cannot leak the
+   arena across launches. */
+#define MAPP_GFX_SURFACES 4u
+#define MAPP_GFX_BYTES_MAX (128u * 1024u)
+
+typedef struct {
+    gfx_surface_t surface;
+    uint8_t *pixels;
+    uint32_t bytes;
+} mapp_gfx_slot_t;
+
+static mapp_gfx_slot_t _gfx_slots[MAPP_GFX_SURFACES];
 static bool _mapp_running;
 
 static bool _ends_with_ci(const char *text, const char *suffix) {
@@ -364,6 +380,146 @@ static int32_t _network_http_get(const char *host, uint16_t port, const char *pa
 #endif
 }
 
+/* ---- Graphics ------------------------------------------------------- */
+
+static uint32_t _gfx_bytes_in_use(void) {
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < MAPP_GFX_SURFACES; i++)
+        if (_gfx_slots[i].pixels) total += _gfx_slots[i].bytes;
+    return total;
+}
+
+static mapp_gfx_slot_t *_gfx_slot(void *surface) {
+    gfx_surface_t *wanted = (gfx_surface_t *)surface;
+    for (uint32_t i = 0; i < MAPP_GFX_SURFACES; i++) {
+        if (_gfx_slots[i].pixels && &_gfx_slots[i].surface == wanted) return &_gfx_slots[i];
+    }
+    return NULL;
+}
+
+static void *_gfx_create(uint16_t width, uint16_t height) {
+    if (width == 0 || height == 0 || width > LCD_WIDTH || height > LCD_HEIGHT) return NULL;
+    uint32_t bytes = (uint32_t)width * height;
+    if (_gfx_bytes_in_use() + bytes > MAPP_GFX_BYTES_MAX) return NULL;
+
+    for (uint32_t i = 0; i < MAPP_GFX_SURFACES; i++) {
+        if (_gfx_slots[i].pixels) continue;
+        uint8_t *pixels = malloc(bytes);
+        if (!pixels) return NULL;
+        memset(pixels, 0, bytes);
+        if (!gfx_surface_init(&_gfx_slots[i].surface, pixels, width, height)) {
+            free(pixels);
+            return NULL;
+        }
+        _gfx_slots[i].pixels = pixels;
+        _gfx_slots[i].bytes = bytes;
+        return &_gfx_slots[i].surface;
+    }
+    return NULL;
+}
+
+static void _gfx_destroy(void *surface) {
+    mapp_gfx_slot_t *slot = _gfx_slot(surface);
+    if (!slot) return;
+    free(slot->pixels);
+    slot->pixels = NULL;
+    slot->bytes = 0;
+    memset(&slot->surface, 0, sizeof slot->surface);
+}
+
+static void _gfx_release_all(void) {
+    for (uint32_t i = 0; i < MAPP_GFX_SURFACES; i++) {
+        if (_gfx_slots[i].pixels) _gfx_destroy(&_gfx_slots[i].surface);
+    }
+}
+
+static void _gfx_clear(void *surface, uint8_t color) { gfx_clear((gfx_surface_t *)surface, color); }
+
+static void _gfx_pixel(void *surface, int32_t x, int32_t y, uint8_t color) {
+    gfx_pixel((gfx_surface_t *)surface, x, y, color);
+}
+
+static void _gfx_hline(void *surface, int32_t x, int32_t y, int32_t width, uint8_t color) {
+    gfx_hline((gfx_surface_t *)surface, x, y, width, color);
+}
+
+static void _gfx_vline(void *surface, int32_t x, int32_t y, int32_t height, uint8_t color) {
+    gfx_vline((gfx_surface_t *)surface, x, y, height, color);
+}
+
+static void _gfx_rect(void *surface, int32_t x, int32_t y, int32_t width, int32_t height,
+                      uint8_t color) {
+    gfx_rect((gfx_surface_t *)surface, x, y, width, height, color);
+}
+
+static void _gfx_fill_rect(void *surface, int32_t x, int32_t y, int32_t width, int32_t height,
+                           uint8_t color) {
+    gfx_fill_rect((gfx_surface_t *)surface, x, y, width, height, color);
+}
+
+static void _gfx_char(void *surface, int32_t x, int32_t y, char ch, uint8_t color) {
+    const uint8_t *rows = lcd_font_glyph(ch);
+    if (rows) gfx_glyph((gfx_surface_t *)surface, x, y, rows, LCD_CHAR_H, color);
+}
+
+static void _gfx_blit(void *dst, int32_t x, int32_t y, const void *src, int32_t transparent) {
+    gfx_blit((gfx_surface_t *)dst, x, y, (const gfx_surface_t *)src, transparent);
+}
+
+static void _gfx_palette(uint8_t index, uint32_t rgb) {
+    gfx_palette_set(index, (uint8_t)(rgb >> 16), (uint8_t)(rgb >> 8), (uint8_t)rgb);
+}
+
+static void _gfx_invalidate(void *surface) { gfx_invalidate((gfx_surface_t *)surface); }
+
+static void _gfx_present(void *surface, int32_t x, int32_t y) {
+    gfx_surface_t *s = (gfx_surface_t *)surface;
+    if (!s || !s->pixels) return;
+    /* A clean surface still presents in full the first time, so an app that
+       clears once and then blits a sprite does not show a blank panel. */
+    uint16_t dx = 0, dy = 0, dw = s->width, dh = s->height;
+    if (s->dirty_any) {
+        dx = s->dirty_x0;
+        dy = s->dirty_y0;
+        dw = (uint16_t)(s->dirty_x1 - s->dirty_x0);
+        dh = (uint16_t)(s->dirty_y1 - s->dirty_y0);
+    }
+    if (dw == 0 || dh == 0) return;
+
+    static uint8_t rowbuf[LCD_WIDTH * 3];
+    if (dw > LCD_WIDTH) dw = LCD_WIDTH;
+    for (uint16_t row = 0; row < dh; row++) {
+        size_t bytes = gfx_row_to_rgb888(s, (uint16_t)(dy + row), dx, dw, rowbuf);
+        if (!bytes) break;
+        lcd_blit_row((uint16_t)(x + dx), (uint16_t)(y + dy + row), dw, rowbuf);
+    }
+    gfx_dirty_reset(s);
+}
+
+/* ---- Lifecycle and audio -------------------------------------------- */
+
+static uint32_t _capabilities(void) {
+    uint32_t caps = MAPP_CAP_DISPLAY | MAPP_CAP_FILES | MAPP_CAP_KEYS | MAPP_CAP_TIMER |
+                    MAPP_CAP_GFX | MAPP_CAP_AUDIO | MAPP_CAP_YIELD;
+#ifdef PICO_CYW43_SUPPORTED
+    caps |= MAPP_CAP_NETWORK;
+#endif
+    return caps;
+}
+
+static void _yield(void) {
+    watchdog_update();
+    audio_service_poll();
+}
+
+static int32_t _audio_tone(int32_t freq_hz, int32_t duration_ms) {
+    if (freq_hz < 20 || freq_hz > 20000 || duration_ms <= 0) return -1;
+    audio_beep((int)freq_hz, (int)duration_ms);
+    return 0;
+}
+
+static void _audio_stop(void) { audio_stop(); }
+
 static const mapp_api_t _api = {
     .size = sizeof(mapp_api_t),
     .version = MAPP_API_VERSION,
@@ -389,6 +545,23 @@ static const mapp_api_t _api = {
     .network_available = _network_available,
     .network_resolve = _network_resolve,
     .network_http_get = _network_http_get,
+    .capabilities = _capabilities,
+    .yield = _yield,
+    .gfx_create = _gfx_create,
+    .gfx_destroy = _gfx_destroy,
+    .gfx_clear = _gfx_clear,
+    .gfx_pixel = _gfx_pixel,
+    .gfx_hline = _gfx_hline,
+    .gfx_vline = _gfx_vline,
+    .gfx_rect = _gfx_rect,
+    .gfx_fill_rect = _gfx_fill_rect,
+    .gfx_char = _gfx_char,
+    .gfx_blit = _gfx_blit,
+    .gfx_palette = _gfx_palette,
+    .gfx_invalidate = _gfx_invalidate,
+    .gfx_present = _gfx_present,
+    .audio_tone = _audio_tone,
+    .audio_stop = _audio_stop,
 };
 
 static bool _bytecode_run(const uint8_t *code, uint32_t length) {
@@ -554,10 +727,12 @@ void mapp_launch(const mapp_app_t *app) {
         }
         memset(_file_slots, 0, sizeof _file_slots);
         _mapp_running = true;
+        gfx_palette_reset();
         if (!_load_mapp(path)) ui_error("app", "invalid or incompatible .mapp file");
         for (uint32_t i = 0; i < MAPP_FILE_HANDLES; i++) {
             if (_file_slots[i].open) (void)_file_close((int32_t)i);
         }
+        _gfx_release_all();
         _mapp_running = false;
         break;
     case MAPP_APP_BASIC:

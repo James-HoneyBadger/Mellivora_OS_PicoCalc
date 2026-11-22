@@ -68,6 +68,7 @@ set(MELLIVORA_SOURCES
     src/core/theme_file.c
     src/core/mapp_image.c
     src/core/filehash.c
+    src/core/gfx.c
     src/core/pinmap.c
     src/core/vt100.c
     src/core/xmodem.c

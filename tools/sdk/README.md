@@ -6,9 +6,10 @@ Build the included sample in seconds with an ARM GNU toolchain and Python 3:
 make -C tools/sdk
 ```
 
-The generated `tools/sdk/build/hello.mapp` can be copied to `/apps/` on the
-FAT32 microSD card. Build another standalone C app by placing `name.c` here
-and running `make -C tools/sdk APP=name APP_NAME="Display title"`.
+`make` builds both samples (`hello` and `plasma`); `make APP=plasma` builds
+just one. Either `.mapp` can be copied to `/apps/` on the FAT32 microSD card
+and appears in the launcher. Build your own standalone C app by placing
+`name.c` here and running `make APP=name`.
 
 Include `mapp.h`, define `mapp_main(const mapp_api_t *, int32_t, char **)`, and
 use only the API table for firmware services. The target is freestanding and
@@ -17,11 +18,40 @@ has no libc; compile for Cortex-M0+ Thumb. The packer applies the ELF
 read-only data, initialized data, and BSS can be moved together into the
 firmware's 16 KiB SRAM arena. Do not retain pointers after returning.
 
-The versioned ABI currently exposes display control/output, blocking and
-nonblocking keyboard input, line input, FAT-backed file read/write/create/delete
-operations, millisecond timers, and network availability/DNS/HTTP GET where
-the board supports Wi-Fi. The ABI is append-only; check `api->size` and
-`api->version` before using it.
+The ABI is append-only. Accept a loader at or above your build's minimum and
+test for the calls you use:
+
+```c
+if (!api || api->version < MAPP_API_VERSION_MIN) return -1;
+if (api->size < sizeof(mapp_api_t)) return -1;
+if (!api->capabilities || !(api->capabilities() & MAPP_CAP_GFX)) return -1;
+```
+
+**v1** exposes display control/output, blocking and nonblocking keyboard input,
+line input, FAT-backed file read/write/create/delete operations, millisecond
+timers, and network availability/DNS/HTTP GET where the board supports Wi-Fi.
+
+**v2** adds capabilities, `yield()`, an indexed-colour graphics surface API
+(`gfx_create`/`destroy`, `pixel`/`hline`/`vline`/`rect`/`fill_rect`/`char`,
+`blit` with a transparent index, `palette`, `invalidate`, `present`), and
+non-blocking `audio_tone`/`audio_stop`. See `plasma.c` for the whole loop.
+
+## Graphics surfaces
+
+Surfaces are 8-bit indexed, one palette per app (256 entries, xterm-style
+default). Presenting only sends the dirty rectangle, because a full 320x320
+frame is ~307 KiB of SPI traffic:
+
+| Surface | Bytes | Fits |
+| --- | ---: | --- |
+| 320 x 320 | 102,400 | RP2350 only |
+| 160 x 160 | 25,600 | both boards |
+| 80 x 80 | 6,400 | both boards |
+
+`gfx_present(surface, x, y)` copies the changed region to the panel and resets
+the dirty box; `gfx_invalidate(surface)` forces a full resend, which is what a
+palette-only animation needs. Surfaces are freed automatically when
+`mapp_main` returns.
 
 To package a bytecode instruction stream, use
 `python3 tools/sdk/mapp_pack.py --bytecode --name "Title" input.bin output.mapp`.

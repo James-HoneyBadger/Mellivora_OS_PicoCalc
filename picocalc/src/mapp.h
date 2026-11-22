@@ -1,11 +1,28 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define MAPP_FORMAT_VERSION 1u
 #define MAPP_KIND_THUMB 1u
 #define MAPP_KIND_BYTECODE 2u
-#define MAPP_API_VERSION 1u
+/* The API table grows by appending. An app compiled against v1 keeps working
+   on a v2 loader: it only reads the fields it knows about, and `size` tells
+   it how much of the table exists. Never reorder or remove a field. */
+#define MAPP_API_VERSION 2u
+#define MAPP_API_VERSION_MIN 1u
+
+/* Capability bits reported by mapp_api_t::capabilities. An app must test the
+   bit (and the matching function pointer) before using an optional call. */
+#define MAPP_CAP_DISPLAY (1u << 0)
+#define MAPP_CAP_FILES (1u << 1)
+#define MAPP_CAP_KEYS (1u << 2)
+#define MAPP_CAP_NETWORK (1u << 3)
+#define MAPP_CAP_TIMER (1u << 4)
+#define MAPP_CAP_GFX (1u << 5)
+#define MAPP_CAP_AUDIO (1u << 6)
+#define MAPP_CAP_YIELD (1u << 7)
+
 #define MAPP_HEADER_SIZE 60u
 
 #define MAPP_FILE_READ 0u
@@ -66,7 +83,58 @@ typedef struct {
     int32_t (*network_resolve)(const char *hostname, uint32_t *address, int32_t timeout_ms);
     int32_t (*network_http_get)(const char *host, uint16_t port, const char *path,
                                 char *buffer, uint32_t capacity, int32_t timeout_ms);
+
+    /* ---- v2: capabilities and lifecycle ------------------------------ */
+
+    /* MAPP_CAP_* bits describing what this loader actually implements. */
+    uint32_t (*capabilities)(void);
+
+    /* Service the watchdog and the background workers. Call it at least
+       every couple of seconds inside long loops; frame-paced apps that use
+       audio or the network should call it every frame. */
+    void (*yield)(void);
+
+    /* ---- v2: graphics ------------------------------------------------ */
+
+    /* Allocate an indexed surface. Returns NULL when the arena is exhausted.
+       The buffer is freed for you when the app returns; gfx_destroy() only
+       releases it early. */
+    void *(*gfx_create)(uint16_t width, uint16_t height);
+    void (*gfx_destroy)(void *surface);
+
+    void (*gfx_clear)(void *surface, uint8_t color);
+    void (*gfx_pixel)(void *surface, int32_t x, int32_t y, uint8_t color);
+    void (*gfx_hline)(void *surface, int32_t x, int32_t y, int32_t width, uint8_t color);
+    void (*gfx_vline)(void *surface, int32_t x, int32_t y, int32_t height, uint8_t color);
+    void (*gfx_rect)(void *surface, int32_t x, int32_t y, int32_t width, int32_t height,
+                     uint8_t color);
+    void (*gfx_fill_rect)(void *surface, int32_t x, int32_t y, int32_t width, int32_t height,
+                          uint8_t color);
+    /* Draw an 8x16 glyph of the built-in font at (x, y). */
+    void (*gfx_char)(void *surface, int32_t x, int32_t y, char ch, uint8_t color);
+    /* Copy `src` to `dst` at (x, y); `transparent` is a palette index to
+       skip, or -1 for an opaque copy. */
+    void (*gfx_blit)(void *dst, int32_t x, int32_t y, const void *src, int32_t transparent);
+    /* Recolour one palette entry; the index is global to the app. */
+    void (*gfx_palette)(uint8_t index, uint32_t rgb);
+    /* Mark the whole surface as changed (needed after palette-only animation). */
+    void (*gfx_invalidate)(void *surface);
+    /* Push only the region changed since the previous present to the panel. */
+    void (*gfx_present)(void *surface, int32_t x, int32_t y);
+
+    /* ---- v2: audio --------------------------------------------------- */
+
+    /* Queue a tone; returns 0 when accepted. Non-blocking. */
+    int32_t (*audio_tone)(int32_t freq_hz, int32_t duration_ms);
+    void (*audio_stop)(void);
 } mapp_api_t;
+
+/* The v1 prefix must never move. If either assert fires, an old binary would
+   read a new table through the wrong offsets. */
+/* size + version are two 32-bit words, then the pointer table begins. */
+_Static_assert(offsetof(mapp_api_t, display_clear) == 8, "mapp_api_t v1 prefix changed");
+_Static_assert(offsetof(mapp_api_t, capabilities) > offsetof(mapp_api_t, network_http_get),
+               "mapp_api_t v2 fields must follow the v1 prefix");
 
 typedef int32_t (*mapp_entry_fn)(const mapp_api_t *api, int32_t argc, char **argv);
 
