@@ -103,6 +103,79 @@ partition, or in a partitionless ("superfloppy") layout. exFAT and other
 filesystems are not supported. Persistent app data and saved Wi-Fi
 credentials are stored on the card; credential files are not encrypted.
 
+## Spare Pins and Peripheral Placement
+
+Everything in the pin map above is owned by a driver. The remaining GPIOs are
+available to the Hardware Workbench (`hw pins`, `gpio`, `pwm`, `i2cdetect`):
+
+| Board | Free GPIO |
+| --- | --- |
+| Pico / Pico 2 | GP2, GP3, GP4, GP5, GP8, GP9, GP20, GP21, GP24, GP25, GP28, GP29 |
+| Pico 2 W | GP2, GP3, GP4, GP5, GP8, GP9, GP20, GP21, GP28 |
+
+On Pico 2 W the radio owns GP24, GP25 and GP29. GP23 is shared: it is the
+board's power-stable pin and the radio enable line.
+
+`hw pins` reports the placement of each interface, including when a placement
+borrows the console:
+
+| Interface | Pins | Notes |
+| --- | --- | --- |
+| UART1 | TX GP4, RX GP5 | Fully free; used by `term` and file transfer by default |
+| UART0 | TX GP0, RX GP1 | The stdio console; reusing it drops shell output over UART |
+| I2C0 | SDA GP8, SCL GP9 | Fully free |
+| I2C1 | SDA GP2, SCL GP3 | Free mapping; the keyboard keeps GP6/GP7 at 10 kHz |
+| SPI0 | SCK GP2, MOSI GP3, MISO GP0, CS GP1 | Only free mapping; shares the console pins. SD keeps GP16-GP19 |
+| SPI1 | — | Every SPI1 pin set is used by the display or audio |
+
+Because all SPI0 and SPI1 pin options are consumed by the display, the SD
+card, and the audio PWM outputs, an external SPI device has to reuse the
+console UART pins. `hw pins` says so explicitly instead of silently
+reconfiguring them.
+
+## Serial Terminal
+
+`term` opens a full-screen VT100/ANSI terminal on UART1 (GP4/GP5) at 115200
+baud by default:
+
+```text
+term                 # uart1, 115200, no echo
+term -b 9600 -e      # 9600 baud with local echo
+term -p usb          # talk to the USB-CDC port instead
+term -l /TERM.LOG    # append the raw session to the card
+```
+
+Supported sequences include cursor addressing, erase/insert/delete, scroll
+regions, SGR colour and attributes, save/restore, device status replies, and
+OSC title suppression. Exit with **Ctrl-]** or **Ctrl-X**; every other key,
+including Ctrl-C, is sent to the far end.
+
+## SD Card Layout
+
+The starter pack (`sd_starter_pack.zip`, attached to each release) creates the
+directories the firmware looks for:
+
+| Path | Contents |
+| --- | --- |
+| `/apps` | `.mapp` modules and `.bas`, `.c`, `.fth` scripts shown in the launcher |
+| `/themes` | `NAME.thm` palettes read at boot and selectable with `theme NAME` |
+| `/bin` | Shell scripts installed by `mpkg` |
+| `/docs` | Offline copies of the user documentation |
+
+`mpkg` (Pico 2 W only) writes into `/apps`, `/themes`, and `/bin`, caches the
+repository index at `/apps/repo.json`, and keeps its install state in
+`/apps/.mpkg-state.json`. HTTPS needs a PEM certificate authority at
+`/CA.CRT`.
+
+## Browser Installer
+
+[docs/flasher/index.html](flasher/index.html) is a self-contained page that
+validates a UF2 (magic values, block count, family ID), shows its SHA-256
+digest, can copy it straight to the mounted `RPI-RP2` volume through the File
+System Access API, and opens a 115200-baud Web Serial console. It performs no
+network requests and works offline from the repository or a GitHub Pages
+deployment.
+
 ## Battery
 
 The PicoCalc co-processor manages battery charging and reports state of

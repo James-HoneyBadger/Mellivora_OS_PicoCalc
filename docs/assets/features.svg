@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 320" width="880" height="320" role="img" aria-labelledby="ftitle fdesc">
+  <title id="ftitle">Mellivora PicoCalc feature overview</title>
+  <desc id="fdesc">Feature groups: shell and storage, languages, apps, hardware workbench, networking, and packaging.</desc>
+  <defs>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5cc8c0"/>
+      <stop offset="1" stop-color="#e8c15a"/>
+    </linearGradient>
+    <style>
+      .t { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+      .h { fill: #d9e2e8; font-size: 14px; font-weight: 700; }
+      .i { fill: #8fa3af; font-size: 11.5px; }
+      .tag { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; }
+    </style>
+  </defs>
+
+  <rect width="880" height="320" rx="16" fill="#0b0f12"/>
+  <rect x="1" y="1" width="878" height="318" rx="15.5" fill="none" stroke="#243038"/>
+
+  <text x="26" y="34" class="t" fill="#d9e2e8" font-size="16" font-weight="700">Everything in one UF2</text>
+  <rect x="26" y="44" width="150" height="3" rx="1.5" fill="url(#bar)"/>
+
+  <!-- shell -->
+  <g>
+    <rect x="26" y="66" width="262" height="112" rx="12" fill="#121a1f" stroke="#243038"/>
+    <text x="42" y="90" class="t h">Shell &amp; storage</text>
+    <text x="42" y="112" class="t i">History, aliases, pipes, globbing, redirection</text>
+    <text x="42" y="130" class="t i">FAT16/FAT32, long names, editor, hex, backup</text>
+    <rect x="42" y="144" width="72" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="49" y="158" class="t tag" fill="#5cc8c0">grep</text>
+    <rect x="120" y="144" width="64" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="127" y="158" class="t tag" fill="#5cc8c0">pipe</text>
+    <rect x="190" y="144" width="76" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="197" y="158" class="t tag" fill="#5cc8c0">ramdisk</text>
+  </g>
+
+  <!-- languages -->
+  <g>
+    <rect x="302" y="66" width="262" height="112" rx="12" fill="#121a1f" stroke="#243038"/>
+    <text x="318" y="90" class="t h">Languages</text>
+    <text x="318" y="112" class="t i">BASIC, Tiny C, and Forth interpreters</text>
+    <text x="318" y="130" class="t i">Script files with launcher metadata headers</text>
+    <rect x="318" y="144" width="70" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="325" y="158" class="t tag" fill="#7bd88f">.bas</text>
+    <rect x="394" y="144" width="62" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="401" y="158" class="t tag" fill="#7bd88f">.c</text>
+    <rect x="462" y="144" width="66" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="469" y="158" class="t tag" fill="#7bd88f">.fth</text>
+  </g>
+
+  <!-- apps -->
+  <g>
+    <rect x="578" y="66" width="276" height="112" rx="12" fill="#121a1f" stroke="#243038"/>
+    <text x="594" y="90" class="t h">Apps</text>
+    <text x="594" y="112" class="t i">Notes, planner, journal, habits, bookmarks</text>
+    <text x="594" y="130" class="t i">Paint, sprite editor, games, dashboard</text>
+    <rect x="594" y="144" width="76" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="601" y="158" class="t tag" fill="#e8c15a">launcher</text>
+    <rect x="676" y="144" width="72" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="683" y="158" class="t tag" fill="#e8c15a">sysinfo</text>
+    <rect x="754" y="144" width="84" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="761" y="158" class="t tag" fill="#e8c15a">themes</text>
+  </g>
+
+  <!-- modules -->
+  <g>
+    <rect x="26" y="192" width="262" height="104" rx="12" fill="#121a1f" stroke="#243038"/>
+    <text x="42" y="216" class="t h">Relocatable modules</text>
+    <text x="42" y="238" class="t i">.mapp loads from SD into a RAM arena</text>
+    <text x="42" y="256" class="t i">Versioned C ABI: display, keys, FAT, timers, net</text>
+    <rect x="42" y="266" width="96" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="49" y="280" class="t tag" fill="#5cc8c0">tools/sdk</text>
+  </g>
+
+  <!-- networking -->
+  <g>
+    <rect x="302" y="192" width="262" height="104" rx="12" fill="#121a1f" stroke="#243038"/>
+    <text x="318" y="216" class="t h">Networking (Pico 2 W)</text>
+    <text x="318" y="238" class="t i">Wi-Fi, DNS, NTP, TLS, IRC, telnet, terminals</text>
+    <text x="318" y="256" class="t i">All Wi-Fi and lwIP work runs on Core 1</text>
+    <rect x="318" y="266" width="90" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="325" y="280" class="t tag" fill="#7bd88f">https</text>
+  </g>
+
+  <!-- packages -->
+  <g>
+    <rect x="578" y="192" width="276" height="104" rx="12" fill="#121a1f" stroke="#243038"/>
+    <text x="594" y="216" class="t h">Package manager</text>
+    <text x="594" y="238" class="t i">mpkg: HTTPS index, SHA-256 verified installs</text>
+    <text x="594" y="256" class="t i">.mapp to /apps, themes to /themes, scripts to /bin</text>
+    <rect x="594" y="266" width="84" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="601" y="280" class="t tag" fill="#e8c15a">mpkg</text>
+    <rect x="686" y="266" width="88" height="20" rx="5" fill="#0a1014" stroke="#1d2a31"/>
+    <text x="693" y="280" class="t tag" fill="#e8c15a">sha-256</text>
+  </g>
+</svg>

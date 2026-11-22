@@ -27,7 +27,8 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 |----------------------------|--------------------------------------------------------|
 | `version`                  | Print firmware version, build timestamp, project URL   |
 | `uname [-a]`               | OS name; with `-a` adds hardware/build details         |
-| `sysinfo`                  | Detailed system info (memory, clock, peripherals)      |
+| `sysinfo`                  | Live core, heap, SD throughput, and battery-gauge diagnostics |
+| `ramdisk [op ...]`         | In-memory files: `ls`, `cat NAME`, `write NAME TEXT`, `rm NAME` |
 | `dmesg`                    | Kernel-style boot log                                  |
 | `reboot`                   | Soft reset via watchdog                                |
 | `shutdown` / `halt` / `poweroff` | Flush state, blank display, halt CPU             |
@@ -156,7 +157,63 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `weather [LOCATION]`             | Fetch weather forecast                       |
 | `irc HOST PORT NICK CHAN`        | Minimal IRC client                           |
 | `telnet HOST PORT`               | Telnet client                                |
+| `mpkg`                           | Package manager (see below)                  |
 | `netstat`                        | Show open sockets                            |
+
+### mpkg — package manager
+
+`mpkg` fetches a JSON repository index over certificate-verified HTTPS,
+checks every artifact against its SHA-256 digest, and installs it on the SD
+card. It is compiled only into the Pico 2 W image; other builds answer with a
+one-line explanation and link no download or crypto code.
+
+| Command | Description |
+| --- | --- |
+| `mpkg repo [URL]` | Show or save the index URL in `/MPKG.CFG` |
+| `mpkg update` | Download and cache the index at `/apps/repo.json` |
+| `mpkg list [TEXT]` | List packages; `*` installed, `+` upgrade available |
+| `mpkg info NAME` | Version, size, kind, digest, and install status |
+| `mpkg install NAME [--force]` | Download, verify, and install |
+| `mpkg upgrade [NAME\|--all]` | Upgrade one package or everything installed |
+| `mpkg installed` | Packages recorded on this card |
+| `mpkg remove NAME` | Delete the file and its state entry |
+| `mpkg verify` | Re-hash installed files |
+
+Destinations are fixed by package kind: `mapp` → `/apps`, `theme` →
+`/themes`, `script` → `/bin`. Installation state lives in
+`/apps/.mpkg-state.json`. A TLS connection needs a PEM CA certificate at
+`/CA.CRT` and a set clock (`ntp` or `date`).
+
+#### Repository index format
+
+```json
+{
+  "schema": 1,
+  "name": "Example repository",
+  "packages": [
+    {
+      "name": "hello",
+      "version": "1.0.0",
+      "kind": "mapp",
+      "file": "hello.mapp",
+      "url": "https://example.org/pkgs/hello-1.0.0.mapp",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 4096,
+      "description": "Hello world module"
+    }
+  ]
+}
+```
+
+- `schema` must be `1`.
+- `kind` is `mapp`, `theme`, or `script`.
+- `file` is a bare name; path separators and `..` are rejected.
+- `sha256` is the lowercase or uppercase hex digest of the artifact.
+- `size` is optional but recommended: it aborts oversized downloads early.
+- Entries that fail validation are skipped and counted; the rest still load.
+
+The index is cached at `/apps/repo.json` and re-read on every command, so
+`mpkg update` is only needed when the repository changes.
 
 ## Personal Productivity
 
@@ -198,15 +255,72 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `pass [N]` / `password [N]`| Generate a random password of N characters        |
 | `home` / `launcher` / `dashboard` | Visual launchers                            |
 | `sysmon` / `monitor` / `status` | System monitor                               |
-| `terminal` / `term` / `tty` / `serial` | UART pass-through                      |
+| `term` / `terminal` / `tty` / `serial` | Full-screen VT100/ANSI serial terminal |
+| `rawterm`                  | Minimal byte pass-through (no emulation)          |
 | `theme`                    | Choose color theme (`noir`, `paper`, `green`, ...) |
+| `hw` / `workbench`         | Hardware Workbench overview and pin map           |
 
 ## File Transfer
 
+Both protocols stream straight to and from the SD card, so file size is
+limited by the card rather than RAM. Transfers run over USB-CDC (`-p usb`) or
+a hardware UART (`-p uart1` on GP4/GP5 by default, `-p uart0` for the console
+pins).
+
 | Command         | Description                                              |
 |-----------------|----------------------------------------------------------|
-| `xmodem send <file>` | Send file via XMODEM                                |
-| `xmodem recv <file>` | Receive file via XMODEM                             |
+| `xmodem send FILE [-p usb\|uart0\|uart1] [-b BAUD]` | Send over XMODEM |
+| `xmodem recv FILE [-p ...] [-b BAUD]` | Receive to FILE                       |
+| `ymodem send FILE [-p ...]` | Send with a name/size header                   |
+| `ymodem recv [FILE] [-p ...]` | Receive; FILE is optional with YMODEM         |
+
+CRC-16 mode is requested first and falls back to the 8-bit checksum when the
+far end sends a NAK. With YMODEM the announced file name and size are used, so
+the received file is not padded out to a block boundary.
+
+## Hardware Workbench
+
+| Command | Description |
+| --- | --- |
+| `hw` / `workbench` | Command overview |
+| `hw pins` | GPIO ownership, free pins, and peripheral placement |
+| `gpio PIN high\|low` | Drive a GPIO (claims it as an output) |
+| `gpio read PIN` | Sample a pin |
+| `gpio mode PIN in\|out` | Claim and configure a pin |
+| `gpio pull PIN up\|down\|none` | Set the internal pull |
+| `gpio free PIN` | Release a pin and stop any PWM on it |
+| `gpio list` | List free pins |
+| `pwm PIN FREQ_HZ DUTY` | Start a PWM output (duty 0-100) |
+| `pwm PIN DUTY` | Change the duty of a running output |
+| `pwm PIN off` | Stop the output |
+| `i2cdetect` / `i2c` | Scan a bus (`[--bus N] [first[-last]]`) |
+
+Pins that belong to the display, microSD, keyboard, audio, radio, or the
+serial console are refused; add `--force` to override deliberately. The
+`i2cdetect` grid follows the classic `i2cdetect -y` layout with `--` for
+"no device" and the address for "present". I2C0 uses GP8/GP9, I2C1 uses
+GP2/GP3, and the keyboard bus is restored to 10 kHz after a scan.
+
+### Script bindings
+
+BASIC adds three statements:
+
+```basic
+GPIO 5, 1              : REM drive GP5 high
+GPIO READ 5            : REM prints "GPIO 5 = 1"
+PWM 5, 1000, 50        : REM 1 kHz at 50% (duty -1 stops)
+I2CDETECT              : REM print the bus map
+```
+
+Forth adds four words:
+
+```forth
+1 5 gpio!       \ ( value pin -- )
+5 gpio@ .       \ ( pin -- value )
+50 1000 5 pwm!  \ ( duty freq pin -- )
+250 ms          \ ( delay in milliseconds -- )
+i2cdetect
+```
 
 ## Settings
 

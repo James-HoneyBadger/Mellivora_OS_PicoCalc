@@ -1,0 +1,8 @@
+REM @app-name: Hello Mellivora
+10 REM The simplest possible BASIC app.
+20 PRINT "HELLO FROM MELLIVORA"
+30 PRINT ""
+40 LET A = 7
+50 PRINT "SEVEN SQUARED IS"
+60 PRINT A * A
+70 END

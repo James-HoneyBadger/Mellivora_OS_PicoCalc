@@ -1,0 +1,17 @@
+# Ocean — cool blues and teal accents.
+# Install to /themes/OCEAN.THM, then run:  theme ocean
+name = ocean
+bg = 06121C
+text = D8E8F0
+muted = 6A8496
+accent = 3FB8C8
+success = 5BD9A0
+warning = E8C15A
+error = FF7A7A
+border = 17313D
+panel = 0B1B26
+panel_text = CFE2EC
+select_bg = 14384A
+select_text = EAF6FB
+status_bg = 0B1B26
+status_text = 84A7B8

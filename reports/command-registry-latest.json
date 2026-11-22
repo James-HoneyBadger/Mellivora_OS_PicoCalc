@@ -208,6 +208,10 @@
     "source": "shell completion"
   },
   {
+    "name": "gpio",
+    "source": "shell completion"
+  },
+  {
     "name": "grep",
     "source": "shell completion"
   },
@@ -261,6 +265,18 @@
   },
   {
     "name": "home",
+    "source": "shell completion"
+  },
+  {
+    "name": "hw",
+    "source": "shell completion"
+  },
+  {
+    "name": "i2c",
+    "source": "shell completion"
+  },
+  {
+    "name": "i2cdetect",
     "source": "shell completion"
   },
   {
@@ -348,6 +364,10 @@
     "source": "shell completion"
   },
   {
+    "name": "mpkg",
+    "source": "shell completion"
+  },
+  {
     "name": "mv",
     "source": "shell completion"
   },
@@ -413,6 +433,14 @@
   },
   {
     "name": "pwd",
+    "source": "shell completion"
+  },
+  {
+    "name": "pwm",
+    "source": "shell completion"
+  },
+  {
+    "name": "ramdisk",
     "source": "shell completion"
   },
   {
@@ -672,6 +700,10 @@
     "source": "shell completion"
   },
   {
+    "name": "workbench",
+    "source": "shell completion"
+  },
+  {
     "name": "write",
     "source": "shell completion"
   },
@@ -685,6 +717,10 @@
   },
   {
     "name": "yes",
+    "source": "shell completion"
+  },
+  {
+    "name": "ymodem",
     "source": "shell completion"
   }
 ]

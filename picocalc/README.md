@@ -12,6 +12,8 @@ This directory contains the active firmware implementation for Mellivora on Pico
 - mini games including snake, dice, coin, and guess
 - calculator, BASIC, and Tiny C environments
 - WiFi networking with TCP, DNS, NTP, HTTP, IRC, and telnet (Pico 2W only)
+- removable `/apps/` launcher apps (`.mapp`, BASIC, Tiny C, and Forth scripts)
+- bounded RAM disk (up to 8 KiB on RP2040 and 64 KiB on RP2350, allocated from available heap)
 
 ## Build
 
@@ -49,6 +51,9 @@ Useful entry points:
 - `games`
 - `basic`
 - `tcc`
+
+Third-party applications can be built with `make -C tools/sdk`; see
+[the SDK guide](../tools/sdk/README.md) for the `.mapp` format and C ABI.
 
 ## Documentation
 

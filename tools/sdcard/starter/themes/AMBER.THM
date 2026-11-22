@@ -1,0 +1,16 @@
+# Amber — warm terminal glow for late-night sessions.
+name = amber
+bg = 140F06
+text = F2DDB2
+muted = A08A5C
+accent = FFB000
+success = A8D46A
+warning = FFC94A
+error = FF7A5C
+border = 3A2C12
+panel = 1D1608
+panel_text = ECD9AE
+select_bg = 4A3712
+select_text = FFF3D6
+status_bg = 1D1608
+status_text = C0A468

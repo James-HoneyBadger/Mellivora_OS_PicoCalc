@@ -1,0 +1,17 @@
+REM @app-name: PWM Fade
+10 REM Sweep a PWM output on GP5 (a spare pin).
+20 REM Wire an LED and resistor from GP5 to GND.
+30 PRINT "PWM FADE ON GP5"
+40 FOR I = 0 TO 20
+50 LET D = I * 5
+60 PWM 5, 1000, D
+70 WAIT 40
+80 NEXT I
+90 FOR I = 0 TO 20
+100 LET D = 100 - I * 5
+110 PWM 5, 1000, D
+120 WAIT 40
+130 NEXT I
+140 PWM 5, 1000, 0
+150 PRINT "DONE - RUN AGAIN OR GPIO 5, 1"
+160 END

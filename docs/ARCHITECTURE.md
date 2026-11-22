@@ -1,9 +1,9 @@
 # Mellivora OS Architecture
 
-A single-image, bare-metal C11 firmware for the Clockwork PicoCalc. The
-RP2040 build runs on one core; RP2350 builds also use the second core for
-periodic status-bar refresh. Hardware interfaces include the LCD, keyboard
-controller, SD card, and (on Pico 2 W) Wi-Fi.
+A single-image, bare-metal C11 firmware for the Clockwork PicoCalc. All builds
+use Core 1 for background services; RP2350 builds provide more SRAM for the
+heap and RAM disk. Hardware interfaces include the LCD, keyboard controller,
+SD card, and (on Pico 2 W) Wi-Fi.
 
 ## Boot Flow
 
@@ -54,9 +54,11 @@ shell loop:
 | `apps/app_system.c` | Calendar, clock, dashboard, launcher, timers |
 | `apps/app_builtins.c` | Small standalone commands, backup, and environment storage |
 | `apps/app_tools.c` | File/system tools, media toys, Forth |
+| `apps/app_mpkg.c` | Package manager: HTTPS index, SHA-256 verification, SD installs (Pico 2 W only) |
+| `apps/app_hw.c` | Hardware Workbench: VT100 terminal, GPIO/PWM/I2C commands, XMODEM/YMODEM |
 | `apps/text.c`, `apps/fs.c`, `apps/hex.c` | Text, filesystem, and hex utilities |
-| `core/`        | Portable logic with host tests: expressions, shell parsing, paths, names, regex, globs, text, history, and date conversion |
-| `ui/ui.c/.h`   | Semantic colour roles, themed palettes, header/footer, menus, notifications |
+| `core/`        | Portable logic with host tests: expressions, shell parsing, paths, names, regex, globs, text, history, date conversion, JSON, SHA-256, package planning, theme files, pin map, VT100, XMODEM, i2cdetect, and workbench commands |
+| `ui/ui.c/.h`   | Semantic colour roles, built-in and card-loaded palettes, header/footer, menus, notifications |
 | `pipe.c/.h`    | Bounded in-RAM pipeline input/output                         |
 | `console.c/.h` | Blocking line input shared by apps and the HAL                |
 | `audio.c/.h`   | PWM tone output on the stereo pins                            |
@@ -67,17 +69,33 @@ shell loop:
 | `net.c/.h`     | TCP/UDP/DNS/NTP/HTTP and verified HTTPS over lwIP (CYW43 only) |
 | `netapps.c/.h`| User-facing network commands (`wifi`, `ping`, `ntp`, ...)      |
 | `syscall.c/.h`| Cross-module facade: `sys_print`, time, RTC, interrupt flag    |
+| `hal/hal.h`   | Display, filesystem, time, and audio function table            |
+| `hal/hw_ops.h`| Mockable UART/I2C/GPIO/PWM/CDC operation table                 |
+| `hal/hw_pico.c`| RP2040/RP2350 implementation of the workbench operations      |
 | `picocalc_hw.h`| Pin map and board constants                                   |
 | `lwipopts.h`  | lwIP build configuration                                       |
 
 ## Cores
 
-- **Core 0**: shell, all apps, all I/O. Single-threaded; cooperative.
-- **Core 1**: only on RP2350. Refreshes the status bar every 2 seconds so the
-  shell never has to repaint it inline.
+- **Core 0**: shell, apps, keyboard input, and SD/FAT access.
+- **Core 1**: all board targets. A bounded lock-free SPSC request queue owns
+  synchronous CYW43/lwIP calls on Pico 2 W, services queued audio events,
+  polls Wi-Fi, and owns LCD rendering and status-bar composition after service
+  startup. LCD API calls are marshalled synchronously through the
+  queue, preserving call ordering and caller buffer lifetimes.
 
-LCD locking protects display updates shared between the shell and the
-RP2350 status-bar task.
+The Core 1 queue is single-producer/single-consumer: Core 0 submits a request
+and waits for completion while Core 1 runs it. Network APIs use this queue so
+the polling CYW43/lwIP stack is not concurrently accessed from both cores.
+Audio uses a separate asynchronous ring so note playback does not block shell
+work. Load figures shown by `sysinfo` are activity estimates based on timed
+work and measured idle sleeps, not hardware performance counters.
+
+Memory-backed RAM disk capacity is allocated from the runtime heap: up to
+8 KiB on RP2040 and 64 KiB on RP2350, with smaller fallback allocations when
+the current heap cannot satisfy the preferred size. The linker supplies the
+target-specific heap limit, so RP2350's larger SRAM also increases available
+heap without changing the allocator.
 
 ## Pipelines
 
@@ -150,6 +168,36 @@ netapps  -> net.c high-level (sync wrappers)
         cyw43_arch (CYW43439 driver, SDIO over PIO)
 ```
 
+## Hardware Workbench
+
+The workbench is split into three layers so the interesting behaviour is
+testable without hardware:
+
+```text
+core/pinmap.c      which GPIO belongs to which driver, where a new
+                   UART/I2C/SPI can be placed
+core/workbench.c   the actual commands (gpio, pwm, i2cdetect, hw pins)
+core/vt100.c       terminal emulator over a caller-owned cell buffer
+core/xmodem.c      XMODEM/YMODEM engines driven entirely by callbacks
+core/i2cdetect.c   scan bookkeeping and the i2cdetect grid
+        |
+        v
+hal/hw_ops.h       function-pointer table: uart_*, i2c_*, gpio_*, pwm_*, cdc_*
+hal/hw_pico.c      the only file that calls the Pico SDK for these
+```
+
+`g_hw` is installed by `hw_init()` in the firmware and by
+`tests/mock_peripherals.c` on the host. The mock keeps real state: output
+latches, direction bits, pull registers, PWM frequency/duty per pin, UART
+FIFOs, and an I2C device table per bus. `test_workbench.c` drives
+`wb_gpio("5 high")` and friends and then asserts on those registers, so the
+shell-facing logic is covered without a board.
+
+Reserved pins are refused by the command layer (`pinmap_is_reserved`), which
+is why `gpio 10 high` fails but `gpio --force 10 high` works. The terminal
+renders only the rows reported dirty by the emulator and reserves the last
+LCD row for its own status line.
+
 ## Persistence
 
 Persistent shell and app state is stored on the SD card when it is mounted:
@@ -170,12 +218,43 @@ Persistent shell and app state is stored on the SD card when it is mounted:
 | `/HABITS.CFG`    | Habit tracker                               |
 | `/BOOKMARKS.CFG` | Bookmark + CWD pairs                        |
 | `/HISCORE.TXT`   | Snake high score                            |
+| `/MPKG.CFG`      | Package repository URL (Pico 2 W)           |
+| `/apps/repo.json`| Cached package index (Pico 2 W)             |
+| `/apps/.mpkg-state.json` | Installed package names, versions, digests |
+| `/themes/NAME.thm` | User palettes loaded at boot              |
+| `/CA.CRT`        | PEM certificate authority for HTTPS         |
 
 The shell can run without an SD card, but persistence and storage-backed
 apps are unavailable until a card is mounted. Wi-Fi passwords in
 `/WIFI.CFG` are not encrypted; backups preserve that file and should be
 protected accordingly. Backup snapshots use a `FORMAT.TXT` version marker
 and restore only missing files.
+
+## Packages and user themes
+
+`mpkg` is split so the non-Wi-Fi images stay identical in size:
+
+- `core/json.c` parses the repository index and the install state inside a
+  caller-provided arena, so a document is released in one step.
+- `core/mpkg.c` owns the data model: version ordering, kind-to-directory
+  mapping, install-state serialisation, and upgrade planning. It has no
+  network, filesystem, or display dependency and is covered by host tests.
+- `core/sha256.c` verifies artifacts. It is self-contained rather than
+  routed through the TLS library so the digest is independent of the
+  mbedTLS configuration.
+- `apps/app_mpkg.c` performs the downloads. Its entire body is inside
+  `#if defined(PICO_CYW43_SUPPORTED)`; the RP2040 and Pico 2 images link
+  only a short stub, and `mpkg` is not advertised in their help registry.
+
+Downloads reuse `net_https_get`, which already runs on the Core 1 network
+queue. Buffers are heap allocated per command (arena, index, artifact), so
+the package manager adds no permanent SRAM.
+
+User themes are data, not code. `core/theme_file.c` parses
+`/themes/NAME.thm` (`role = RRGGBB` lines) and `ui_theme_register()`
+appends up to four user palettes after the built-ins. Loading happens in
+`app_boot()` because the card must be mounted first; the saved theme is
+re-applied afterwards.
 
 ## Watchdog & Recovery
 

@@ -12,6 +12,10 @@
 # ISO / packaging artifacts
 *.iso
 .build/
+/build/
+
+# Host SDK sample output
+tools/sdk/build/
 
 # PicoCalc build directories
 picocalc/build/

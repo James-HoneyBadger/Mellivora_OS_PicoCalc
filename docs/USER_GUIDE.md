@@ -418,6 +418,8 @@ BASIC supports:
 - `DATA`/`READ`, `DIM`, and string variables such as `R$(1)`
 - `RANDOMIZE [seed]`, plus `RND` (0-32767) and `TIMER` (seconds) in
   expressions
+- `WAIT MS` to pause, and the hardware statements `GPIO`, `PWM`, and
+  `I2CDETECT` (see the Hardware Workbench section)
 
 Example:
 
@@ -503,7 +505,129 @@ ifconfig
 wifi disconnect
 ```
 
-## 13. Additional Shell Commands
+### Install packages with mpkg
+
+`mpkg` installs verified `.mapp` modules, themes, and scripts from a
+repository you trust. It needs a PEM certificate authority at `/CA.CRT` and a
+valid clock, because every transfer is certificate-verified HTTPS.
+
+```text
+ntp                                        # set the clock first
+mpkg repo https://example.org/index.json   # saved in /MPKG.CFG
+mpkg update                                # cache the index in /apps/repo.json
+mpkg list
+mpkg info hello
+mpkg install hello
+mpkg upgrade --all
+mpkg verify                                # re-hash everything installed
+mpkg remove hello
+```
+
+In `mpkg list`, a `*` marks an installed package and `+` marks one with a
+newer version available. Every artifact is checked against the SHA-256 in the
+index before it is written, so a truncated or tampered download is rejected
+and nothing is installed. The package manager is not present in the RP2040 or
+plain Pico 2 images.
+
+### User themes
+
+Drop `NAME.thm` files into `/themes` and they appear in `theme` alongside the
+built-in palettes:
+
+```text
+theme          # list everything available
+theme ocean    # apply a card-loaded palette
+```
+
+A theme file is a list of `role = RRGGBB` lines. Roles are `bg`, `text`,
+`muted`, `accent`, `success`, `warning`, `error`, `border`, `panel`,
+`panel_text`, `select_bg`, `select_text`, `status_bg`, and `status_text`.
+Omitted roles inherit from the `noir` palette. The starter pack includes
+`OCEAN.THM` and `AMBER.THM` as examples.
+
+## 13. Hardware Workbench
+
+The workbench turns the PicoCalc into a pocket diagnostic tool. All of it is
+available from the shell, and the pin tools are also callable from BASIC and
+Forth.
+
+### Serial terminal
+
+```text
+term                  # UART1 on GP4/GP5 at 115200 baud
+term -b 9600 -e       # 9600 baud, local echo
+term -p usb           # use the USB-CDC port instead
+term -l /TERM.LOG     # append the raw session to the SD card
+```
+
+`term` is a real VT100/ANSI screen: cursor addressing, colours, scroll
+regions, and full-screen apps from routers, switches, and Linux boxes render
+correctly. Leave the terminal with **Ctrl-]** or **Ctrl-X**; every other key,
+including Ctrl-C, is forwarded to the remote device. The bottom row shows the
+port, baud rate, and whether logging is on.
+
+### Pin map and availability
+
+```text
+hw pins
+```
+
+This prints which driver owns each GPIO, the pins that are free, and where a
+new UART, I2C, or SPI instance can be placed. On the base Pico and Pico 2 you
+have GP2-GP5, GP8, GP9, GP20, GP21, GP24, GP25, GP28, and GP29 to play with;
+Pico 2 W gives up GP24, GP25, and GP29 to the radio.
+
+### GPIO, PWM, and I2C
+
+```text
+gpio list                # free pins
+gpio mode 5 out          # claim GP5 as an output
+gpio 5 high              # drive it high
+gpio read 5              # sample any pin
+gpio pull 9 up           # internal pull-up
+gpio free 5              # release it again
+
+pwm 5 1000 50            # 1 kHz square wave at 50% on GP5
+pwm 5 10                 # change the duty cycle
+pwm 5 off                # stop
+
+i2cdetect                # scan I2C0 (GP8/GP9)
+i2cdetect --bus 1 0x50-0x5f
+```
+
+Pins that belong to the display, storage, keyboard, audio, radio, or the
+serial console are refused; add `--force` when you really mean it.
+
+### File transfer
+
+```text
+xmodem recv /LOGS/ROUTER.CFG -p uart1
+xmodem send /NOTES.TXT -p usb
+ymodem send /CFG.BIN
+ymodem recv
+```
+
+Both protocols stream directly to and from the card, so file size is limited
+by the SD card rather than RAM. YMODEM carries the file name and size, so
+`ymodem recv` needs no argument and does not leave block padding on the end.
+
+### From BASIC and Forth
+
+```basic
+10 GPIO 5, 1
+20 PRINT GPIO READ 5
+30 PWM 5, 1000, 50
+40 I2CDETECT
+```
+
+```forth
+1 5 gpio!         \ value pin --
+5 gpio@ .         \ pin -- value
+50 1000 5 pwm!    \ duty freq pin --
+i2cdetect
+```
+
+## 14. Additional Shell Commands
 
 These smaller built-in commands are useful in scripts and day-to-day work:
 
@@ -524,7 +648,7 @@ These smaller built-in commands are useful in scripts and day-to-day work:
 | `which CMD` | Locate a command, alias, or file |
 | `expr EXPR` | Evaluate an integer expression |
 
-## 14. Suggested Daily Workflow
+## 15. Suggested Daily Workflow
 
 A practical device-first session often looks like this:
 
@@ -536,14 +660,14 @@ A practical device-first session often looks like this:
 6. edit scripts or text with `edit`
 7. use `calc`, `basic`, or `tcc` for quick work
 
-## 15. If Something Fails
+## 16. If Something Fails
 
 - run `mount` again if storage commands stop working
 - use `pwd` and `ls` to confirm your location
 - use `help fs` or `man TOPIC` for syntax reminders
 - reboot if an interactive tool becomes unresponsive
 
-## 16. Current Limitations
+## 17. Current Limitations
 
 - Utilities focus on compact embedded behavior rather than full desktop compatibility
 - Interactive language support is integer-oriented and intentionally small

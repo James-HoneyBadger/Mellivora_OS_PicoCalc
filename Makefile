@@ -15,7 +15,7 @@ PICO_ELF = $(PICO_BUILD_DIR)/mellivora_picocalc.elf
 PICO_UF2 = $(PICO_BUILD_DIR)/mellivora_picocalc.uf2
 PICOTOOL = $(PICO_BUILD_DIR)/_deps/picotool/picotool
 
-.PHONY: all all-targets picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean baseline-report doc-consistency-check command-registry-report command-registry-check quality-check test lint format-check size-report size-baseline size-gate clean
+.PHONY: all all-targets picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean baseline-report doc-consistency-check command-registry-report command-registry-check quality-check test lint format-check size-report size-baseline size-gate starter-pack flasher-check clean
 
 all: picocalc
 
@@ -135,6 +135,17 @@ test:
 	@echo "=== Running host unit tests ==="
 	@$(MAKE) --no-print-directory -C picocalc/tests
 
+# Validate the self-contained browser installer page.
+flasher-check:
+	@echo "=== Checking docs/flasher/index.html ==="
+	@python3 tools/quality/flasher_check.py
+
+# SD card starter pack: sample programs, themes, and offline documentation.
+starter-pack:
+	@echo "=== Building SD card starter pack ==="
+	@chmod +x tools/sdcard/build_starter_pack.py
+	@python3 tools/sdcard/build_starter_pack.py --out build/sd_starter_pack.zip
+
 lint:
 	@echo "=== Running static analysis ==="
 	@chmod +x tools/quality/static_analysis.sh
@@ -164,3 +175,4 @@ quality-check: baseline-report doc-consistency-check command-registry-check size
 
 clean: picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean
 	@find . -maxdepth 1 -name "*.lst" -delete
+	@rm -rf build

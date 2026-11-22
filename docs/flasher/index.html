@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mellivora PicoCalc — Installer</title>
+<meta name="description" content="Flash Mellivora PicoCalc firmware to a Raspberry Pi Pico, Pico 2, or Pico 2 W and prepare an SD card starter pack.">
+<style>
+  :root {
+    --bg: #0b0f12;
+    --panel: #121a1f;
+    --panel-2: #172127;
+    --border: #243038;
+    --text: #d9e2e8;
+    --muted: #7a8b96;
+    --accent: #5cc8c0;
+    --success: #7bd88f;
+    --warning: #e8c15a;
+    --error: #ff6b6b;
+    --radius: 14px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 15% -10%, rgba(92,200,192,.13), transparent 60%),
+      radial-gradient(900px 500px at 90% 0%, rgba(232,193,90,.09), transparent 55%),
+      var(--bg);
+    color: var(--text);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 32px 20px 72px; }
+  header.brand { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+  header.brand svg { flex: 0 0 auto; }
+  h1 { font-size: clamp(1.6rem, 4vw, 2.2rem); margin: 0; letter-spacing: -.02em; }
+  .sub { color: var(--muted); margin: 2px 0 0; }
+  .pill {
+    display: inline-block; font: 600 11px/1 var(--mono); letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent);
+    border: 1px solid rgba(92,200,192,.4); border-radius: 999px;
+    padding: 6px 10px; background: rgba(92,200,192,.08);
+  }
+  .grid { display: grid; gap: 16px; }
+  @media (min-width: 800px) { .grid.two { grid-template-columns: 1fr 1fr; } }
+  .card {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px; margin-top: 20px;
+  }
+  .card h2 { margin: 0 0 4px; font-size: 1.05rem; }
+  .card h2 .num {
+    display: inline-grid; place-items: center; width: 24px; height: 24px;
+    border-radius: 50%; background: rgba(92,200,192,.15); color: var(--accent);
+    font: 700 12px/1 var(--mono); margin-right: 8px; vertical-align: 2px;
+  }
+  .card p.help { color: var(--muted); font-size: .9rem; margin: 0 0 14px; }
+  .boards { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  .board {
+    text-align: left; cursor: pointer; color: inherit;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px; transition: border-color .15s, transform .15s;
+  }
+  .board:hover { transform: translateY(-1px); border-color: #33505a; }
+  .board[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(92,200,192,.35) inset; }
+  .board strong { display: block; font-size: .98rem; }
+  .board span { display: block; color: var(--muted); font-size: .8rem; margin-top: 2px; }
+  .board code { font: 11px var(--mono); color: var(--accent); }
+  .drop {
+    border: 2px dashed var(--border); border-radius: 12px; padding: 28px 18px;
+    text-align: center; color: var(--muted); transition: .15s; cursor: pointer;
+    background: rgba(255,255,255,.012);
+  }
+  .drop.hover { border-color: var(--accent); color: var(--text); background: rgba(92,200,192,.07); }
+  .drop strong { color: var(--text); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button, .btn {
+    font: 600 .88rem/1 inherit; cursor: pointer; border-radius: 9px; padding: 11px 15px;
+    border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+    transition: .15s;
+  }
+  button:hover:not(:disabled), .btn:hover { border-color: #3d5a66; background: #1b2730; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06231f; }
+  button.primary:hover:not(:disabled) { background: #74d6cf; border-color: #74d6cf; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .status { font-size: .86rem; color: var(--muted); margin: 10px 0 0; min-height: 1.3em; }
+  .status.ok { color: var(--success); }
+  .status.warn { color: var(--warning); }
+  .status.err { color: var(--error); }
+  dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 14px 0 0; font-size: .84rem; }
+  dl.meta dt { color: var(--muted); }
+  dl.meta dd { margin: 0; font-family: var(--mono); word-break: break-all; }
+  .console {
+    background: #060a0c; border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px; height: 210px; overflow: auto; white-space: pre-wrap;
+    font: 12.5px/1.5 var(--mono); color: #a9e6c8;
+  }
+  .console:empty::before { content: "Serial console output appears here."; color: var(--muted); }
+  input[type="text"], input[type="number"] {
+    background: #0a1014; border: 1px solid var(--border); color: var(--text);
+    border-radius: 9px; padding: 10px 12px; font: 13px var(--mono); width: 100%;
+  }
+  .send { display: flex; gap: 8px; margin-top: 10px; }
+  .foot { margin-top: 36px; color: var(--muted); font-size: .85rem; }
+  .foot ul { padding-left: 18px; }
+  .badge { font: 600 11px var(--mono); color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; }
+  .steps ol { margin: 8px 0 0; padding-left: 20px; color: var(--muted); font-size: .89rem; }
+  .steps ol li { margin-bottom: 6px; }
+  .steps strong { color: var(--text); }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--accent); font-size: .88rem; }
+  details p, details li { color: var(--muted); font-size: .86rem; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="brand">
+    <svg width="48" height="48" viewBox="0 0 48 48" aria-hidden="true">
+      <defs>
+        <linearGradient id="hg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#5cc8c0"/><stop offset="1" stop-color="#e8c15a"/>
+        </linearGradient>
+      </defs>
+      <path d="M24 3 42 13.5v21L24 45 6 34.5v-21L24 3Z" fill="none" stroke="url(#hg)" stroke-width="2.5"/>
+      <path d="M17 18h14v10H17zM20.5 22.5h7v10h-7z" fill="none" stroke="url(#hg)" stroke-width="2"/>
+      <circle cx="24" cy="14" r="1.7" fill="#e8c15a"/>
+    </svg>
+    <div>
+      <h1>Mellivora PicoCalc Installer</h1>
+      <p class="sub">Flash firmware, then build your SD card starter pack.</p>
+    </div>
+  </header>
+
+  <span class="pill">Runs entirely in your browser</span>
+
+  <section class="card" aria-labelledby="s1">
+    <h2 id="s1"><span class="num">1</span>Choose your board</h2>
+    <p class="help">The UF2 family ID must match the board, otherwise the bootloader ignores the file.</p>
+    <div class="boards" role="group" aria-label="Board selection">
+      <button class="board" data-board="pico" aria-pressed="false">
+        <strong>Pico</strong>
+        <span>RP2040 · 264 KB SRAM</span>
+        <code>0xe48bff56</code>
+      </button>
+      <button class="board" data-board="pico2" aria-pressed="false">
+        <strong>Pico 2</strong>
+        <span>RP2350 · 520 KB SRAM</span>
+        <code>0xe48bff59</code>
+      </button>
+      <button class="board" data-board="pico2w" aria-pressed="false">
+        <strong>Pico 2 W</strong>
+        <span>RP2350 + Wi-Fi · adds mpkg</span>
+        <code>0xe48bff59</code>
+      </button>
+    </div>
+    <p class="status" id="boardStatus" role="status">No board selected yet.</p>
+  </section>
+
+  <section class="card" aria-labelledby="s2">
+    <h2 id="s2"><span class="num">2</span>Pick the firmware</h2>
+    <p class="help">
+      Download a UF2 from
+      <a id="releaseLink" href="https://github.com/James-HoneyBadger/Mellivora_OS_PicoCalc/releases/latest" rel="noopener">GitHub Releases</a>,
+      then drop it here. The file is inspected locally and never uploaded.
+    </p>
+    <div class="drop" id="drop" tabindex="0" role="button" aria-describedby="dropHelp">
+      <strong>Drop a .uf2 file</strong> or click to browse
+      <div id="dropHelp" class="badge" style="margin-top:10px">UF2 · max 4 MB</div>
+    </div>
+    <input class="sr" id="file" type="file" accept=".uf2,application/octet-stream">
+    <dl class="meta" hidden id="meta">
+      <dt>File</dt><dd id="mName">—</dd>
+      <dt>Size</dt><dd id="mSize">—</dd>
+      <dt>Blocks</dt><dd id="mBlocks">—</dd>
+      <dt>Family</dt><dd id="mFamily">—</dd>
+      <dt>SHA-256</dt><dd id="mSha">computing…</dd>
+    </dl>
+    <p class="status" id="fileStatus" role="status">Waiting for a firmware file.</p>
+    <details>
+      <summary>Verify against a published checksum</summary>
+      <p>Paste the digest from the release's <code>SHA256SUMS</code> to confirm the download is intact.</p>
+      <div class="row">
+        <input type="text" id="expectSha" placeholder="64 hex characters" aria-label="Expected SHA-256" style="flex:1 1 320px">
+        <button id="checkSha">Compare</button>
+      </div>
+      <p class="status" id="shaStatus" role="status"></p>
+    </details>
+  </section>
+
+  <section class="card" aria-labelledby="s3">
+    <h2 id="s3"><span class="num">3</span>Flash it</h2>
+    <div class="grid two">
+      <div class="steps">
+        <h3 style="font-size:.95rem;margin:0 0 6px">Drag-and-drop (all boards)</h3>
+        <ol>
+          <li>Unplug the PicoCalc.</li>
+          <li>Hold <strong>BOOTSEL</strong> and reconnect USB.</li>
+          <li>Release when an <code>RPI-RP2</code> drive appears.</li>
+          <li>Copy the UF2 to that drive — the board reboots automatically.</li>
+        </ol>
+        <p class="help" style="margin-top:12px">
+          On Chromium browsers you can write the file directly to the mounted drive.
+        </p>
+        <button id="writeDrive" class="primary" disabled>Select RPI-RP2 drive and copy</button>
+        <p class="status" id="driveStatus" role="status"></p>
+      </div>
+      <div>
+        <h3 style="font-size:.95rem;margin:0 0 6px">Serial console (Web Serial)</h3>
+        <p class="help">Confirm the board is running Mellivora, or send shell commands. 115200 baud, as configured by the firmware.</p>
+        <div class="row">
+          <button id="serialConnect">Connect</button>
+          <button id="serialDisconnect" disabled>Disconnect</button>
+          <span class="badge" id="serialState">disconnected</span>
+        </div>
+        <div class="console" id="console" aria-live="polite" aria-label="Serial console"></div>
+        <div class="send">
+          <input type="text" id="cmd" placeholder="sysinfo" aria-label="Command to send" disabled>
+          <button id="send" disabled>Send</button>
+        </div>
+      </div>
+    </div>
+    <p class="status" id="flashStatus" role="status"></p>
+  </section>
+
+  <section class="card" aria-labelledby="s4">
+    <h2 id="s4"><span class="num">4</span>Prepare the SD card</h2>
+    <p class="help">
+      The starter pack adds sample BASIC, Tiny C, and Forth programs, user themes,
+      and offline documentation. Copy its contents to a FAT16/FAT32 card.
+    </p>
+    <div class="row">
+      <a class="btn" id="packLink" href="https://github.com/James-HoneyBadger/Mellivora_OS_PicoCalc/releases/latest" rel="noopener">Download sd_starter_pack.zip</a>
+      <a class="btn" href="https://github.com/James-HoneyBadger/Mellivora_OS_PicoCalc/blob/main/docs/HARDWARE.md" rel="noopener">Hardware reference</a>
+      <a class="btn" href="https://github.com/James-HoneyBadger/Mellivora_OS_PicoCalc/blob/main/docs/USER_GUIDE.md" rel="noopener">User guide</a>
+    </div>
+    <details>
+      <summary>What is on the card?</summary>
+      <ul>
+        <li><code>/apps</code> — .mapp modules plus BASIC, Tiny C, and Forth scripts</li>
+        <li><code>/themes</code> — <code>NAME.thm</code> palettes used by <code>theme NAME</code></li>
+        <li><code>/bin</code> — scripts installed by <code>mpkg</code></li>
+        <li><code>/apps/repo.json</code> — package index cached by <code>mpkg update</code></li>
+      </ul>
+    </details>
+  </section>
+
+  <footer class="foot">
+    <p>
+      Works offline. Firmware files are parsed with the UF2 block format
+      (magic <code>0x0A324655</code>, family ID check) and hashed with the
+      Web Crypto API. Nothing is transmitted to a server.
+    </p>
+    <ul>
+      <li>Web Serial needs Chrome, Edge, or another Chromium browser and a secure context (https or localhost).</li>
+      <li>Direct-to-drive copying uses the File System Access API; otherwise use your file manager.</li>
+      <li>If the bootloader rejects the file, the board model and UF2 family do not match.</li>
+    </ul>
+  </footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const UF2_MAGIC0 = 0x0A324655;
+  const UF2_MAGIC1 = 0x9E5D5157;
+  const UF2_MAGIC_END = 0x0AB16F30;
+  const UF2_FLAG_FAMILY_ID = 0x00002000;
+  const BLOCK = 512;
+
+  const FAMILIES = {
+    0xe48bff56: "rp2040",
+    0xe48bff59: "rp2350-arm-s",
+    0xe48bff5a: "rp2350-arm-ns",
+    0xe48bff5b: "rp2350-riscv"
+  };
+
+  const BOARDS = {
+    pico:   { label: "Pico",     family: "rp2040" },
+    pico2:  { label: "Pico 2",   family: "rp2350-arm-s" },
+    pico2w: { label: "Pico 2 W", family: "rp2350-arm-s" }
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const state = { board: null, file: null, buffer: null, sha: null, family: null, port: null, writer: null, reader: null };
+
+  const setStatus = (el, text, kind) => {
+    el.textContent = text;
+    el.className = "status" + (kind ? " " + kind : "");
+  };
+
+  /* ---------- board selection ---------- */
+
+  document.querySelectorAll(".board").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.board = btn.dataset.board;
+      document.querySelectorAll(".board").forEach((other) => {
+        other.setAttribute("aria-pressed", String(other === btn));
+      });
+      const board = BOARDS[state.board];
+      setStatus($("boardStatus"), `Selected ${board.label} (UF2 family ${board.family}).`, "ok");
+      validate();
+    });
+  });
+
+  /* ---------- file handling ---------- */
+
+  const drop = $("drop");
+  const fileInput = $("file");
+
+  const openPicker = () => fileInput.click();
+  drop.addEventListener("click", openPicker);
+  drop.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPicker(); }
+  });
+  ["dragenter", "dragover"].forEach((name) =>
+    drop.addEventListener(name, (e) => { e.preventDefault(); drop.classList.add("hover"); }));
+  ["dragleave", "drop"].forEach((name) =>
+    drop.addEventListener(name, (e) => { e.preventDefault(); drop.classList.remove("hover"); }));
+  drop.addEventListener("drop", (e) => {
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) accept(file);
+  });
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files && fileInput.files[0]) accept(fileInput.files[0]);
+  });
+
+  async function accept(file) {
+    state.file = file;
+    state.buffer = null;
+    state.sha = null;
+    state.family = null;
+    setStatus($("fileStatus"), `Reading ${file.name}…`);
+
+    if (file.size === 0 || file.size % BLOCK !== 0) {
+      $("meta").hidden = false;
+      $("mName").textContent = file.name;
+      $("mSize").textContent = `${file.size} bytes`;
+      $("mBlocks").textContent = "—";
+      $("mFamily").textContent = "—";
+      $("mSha").textContent = "not computed";
+      setStatus($("fileStatus"), "Not a valid UF2: size is not a multiple of 512 bytes.", "err");
+      $("writeDrive").disabled = true;
+      return;
+    }
+
+    let buffer;
+    try {
+      buffer = await file.arrayBuffer();
+    } catch (err) {
+      setStatus($("fileStatus"), `Could not read the file: ${err.message}`, "err");
+      return;
+    }
+    state.buffer = buffer;
+
+    const view = new DataView(buffer);
+    const blocks = Math.floor(buffer.byteLength / BLOCK);
+    let family = null;
+    let bad = 0;
+    let declaredBlocks = blocks;
+
+    for (let i = 0; i < blocks; i++) {
+      const base = i * BLOCK;
+      if (view.getUint32(base, true) !== UF2_MAGIC0 ||
+          view.getUint32(base + 4, true) !== UF2_MAGIC1 ||
+          view.getUint32(base + 508, true) !== UF2_MAGIC_END) {
+        bad++;
+        continue;
+      }
+      if (i === 0) {
+        const flags = view.getUint32(base + 8, true);
+        if (flags & UF2_FLAG_FAMILY_ID) family = view.getUint32(base + 28, true) >>> 0;
+        const declared = view.getUint32(base + 24, true);
+        if (declared) declaredBlocks = declared;
+      }
+    }
+    state.family = family;
+
+    $("meta").hidden = false;
+    $("mName").textContent = file.name;
+    $("mSize").textContent = `${buffer.byteLength.toLocaleString()} bytes`;
+    $("mBlocks").textContent = `${blocks}${declaredBlocks !== blocks ? ` (header declares ${declaredBlocks})` : ""}`;
+    $("mFamily").textContent = family === null
+      ? "not declared"
+      : `0x${family.toString(16).padStart(8, "0")} · ${FAMILIES[family] || "unknown"}`;
+
+    if (bad > 0) {
+      $("mSha").textContent = "not computed (corrupt file)";
+      setStatus($("fileStatus"), `${bad} of ${blocks} blocks failed the UF2 magic check. The file is corrupt.`, "err");
+      $("writeDrive").disabled = true;
+      return;
+    }
+
+    setStatus($("fileStatus"), "UF2 structure OK. Computing SHA-256…");
+    try {
+      const digest = await crypto.subtle.digest("SHA-256", buffer);
+      state.sha = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+      $("mSha").textContent = state.sha;
+    } catch (err) {
+      state.sha = null;
+      $("mSha").textContent = "unavailable (needs https or localhost)";
+    }
+    validate();
+  }
+
+  function validate() {
+    $("writeDrive").disabled = !state.buffer;
+    if (!state.buffer) return;
+
+    if (!state.board) {
+      $("writeDrive").disabled = true;
+      setStatus($("fileStatus"), "Choose a board above to check the UF2 family.", "warn");
+      return;
+    }
+
+    const expected = BOARDS[state.board].family;
+    if (state.family === null) {
+      $("writeDrive").disabled = true;
+      setStatus($("fileStatus"), "The UF2 does not declare a family; verify it matches your board before flashing.", "warn");
+      return;
+    }
+    if (FAMILIES[state.family] !== expected) {
+      $("writeDrive").disabled = true;
+      setStatus($("fileStatus"),
+        `Family mismatch: this UF2 targets ${FAMILIES[state.family] || "an unknown board"}, ` +
+        `but ${BOARDS[state.board].label} needs ${expected}.`, "err");
+      return;
+    }
+    setStatus($("fileStatus"), `Ready to flash ${BOARDS[state.board].label}.`, "ok");
+  }
+
+  /* ---------- checksum comparison ---------- */
+
+  $("checkSha").addEventListener("click", () => {
+    const expected = $("expectSha").value.trim().toLowerCase();
+    if (!state.sha) {
+      setStatus($("shaStatus"), "Load a UF2 first.", "warn");
+      return;
+    }
+    if (!/^[0-9a-f]{64}$/.test(expected)) {
+      setStatus($("shaStatus"), "Enter exactly 64 hexadecimal characters.", "err");
+      return;
+    }
+    const match = expected === state.sha;
+    setStatus($("shaStatus"), match ? "Checksum matches the published digest." : "Checksum does NOT match.",
+      match ? "ok" : "err");
+  });
+
+  /* ---------- write to the mounted bootloader drive ---------- */
+
+  $("writeDrive").addEventListener("click", async () => {
+    if (!state.buffer || !state.file) return;
+    setStatus($("driveStatus"), "");
+    if (!window.showDirectoryPicker) {
+      setStatus($("driveStatus"), "This browser cannot write to a drive. Use your file manager.", "warn");
+      return;
+    }
+    let dir;
+    try {
+      dir = await window.showDirectoryPicker({ mode: "readwrite", id: "rpi-rp2", startIn: "desktop" });
+    } catch (err) {
+      if (err.name !== "AbortError") setStatus($("driveStatus"), err.message, "err");
+      return;
+    }
+    try {
+      const handle = await dir.getFileHandle(state.file.name, { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(state.buffer);
+      await writable.close();
+      setStatus($("driveStatus"), `Copied ${state.file.name}. The board should reboot shortly.`, "ok");
+    } catch (err) {
+      setStatus($("driveStatus"), `Write failed: ${err.message}`, "err");
+    }
+  });
+
+  /* ---------- Web Serial console ---------- */
+
+  const log = (text) => {
+    const el = $("console");
+    el.textContent += text;
+    el.scrollTop = el.scrollHeight;
+  };
+
+  const serialUi = (connected) => {
+    $("serialConnect").disabled = connected;
+    $("serialDisconnect").disabled = !connected;
+    $("cmd").disabled = !connected;
+    $("send").disabled = !connected;
+    $("serialState").textContent = connected ? "connected" : "disconnected";
+    $("serialState").style.color = connected ? "var(--success)" : "";
+  };
+
+  $("serialConnect").addEventListener("click", async () => {
+    if (!("serial" in navigator)) {
+      setStatus($("flashStatus"), "Web Serial is not available. Use Chrome or Edge over https or localhost.", "err");
+      return;
+    }
+    try {
+      state.port = await navigator.serial.requestPort();
+      await state.port.open({ baudRate: 115200 });
+      state.writer = state.port.writable.getWriter();
+      serialUi(true);
+      setStatus($("flashStatus"), "Serial port open at 115200 baud.", "ok");
+      readLoop();
+    } catch (err) {
+      setStatus($("flashStatus"), `Could not open the port: ${err.message}`, "err");
+      state.port = null;
+    }
+  });
+
+  async function readLoop() {
+    const decoder = new TextDecoder();
+    try {
+      while (state.port && state.port.readable) {
+        state.reader = state.port.readable.getReader();
+        try {
+          for (;;) {
+            const { value, done } = await state.reader.read();
+            if (done) break;
+            if (value) log(decoder.decode(value, { stream: true }));
+          }
+        } finally {
+          state.reader.releaseLock();
+        }
+      }
+    } catch (err) {
+      if (err && err.name !== "NetworkError") log(`\n[serial error: ${err.message}]`);
+    }
+  }
+
+  async function teardown() {
+    try { if (state.reader) await state.reader.cancel(); } catch (_) { /* ignore */ }
+    try { if (state.writer) state.writer.releaseLock(); } catch (_) { /* ignore */ }
+    state.reader = null;
+    state.writer = null;
+    try { if (state.port) await state.port.close(); } catch (_) { /* ignore */ }
+    state.port = null;
+    serialUi(false);
+  }
+
+  $("serialDisconnect").addEventListener("click", async () => {
+    await teardown();
+    setStatus($("flashStatus"), "Serial port closed.", "ok");
+  });
+
+  const sendLine = async () => {
+    const text = $("cmd").value;
+    if (!state.writer || !text) return;
+    try {
+      await state.writer.write(new TextEncoder().encode(text + "\r\n"));
+      $("cmd").value = "";
+    } catch (err) {
+      setStatus($("flashStatus"), `Send failed: ${err.message}`, "err");
+    }
+  };
+  $("send").addEventListener("click", sendLine);
+  $("cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") sendLine(); });
+
+  if (!("serial" in navigator)) {
+    $("serialConnect").disabled = true;
+    $("serialState").textContent = "unsupported";
+  }
+
+  const repo = "James-HoneyBadger/Mellivora_OS_PicoCalc";
+  $("releaseLink").href = `https://github.com/${repo}/releases/latest`;
+  $("packLink").href = `https://github.com/${repo}/releases/latest`;
+})();
+</script>
+</body>
+</html>
