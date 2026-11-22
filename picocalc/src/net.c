@@ -415,15 +415,17 @@ struct net_tcp {
     volatile bool   connected;
     volatile bool   error;
     volatile bool   closed;
-    uint8_t        *rxbuf;
-    volatile int    rxlen;
-    int             rxcap;
+    /* The current segment is owned by lwIP until it has been copied out.
+       Holding it (with recv callbacks paused) is what gives the TCP window
+       backpressure, instead of copying into a fixed ring and dropping the
+       overflow. */
+    struct pbuf    *pending;
+    uint16_t        pending_off;
 };
 
 /* Statically allocate a small pool of connections */
 #define NET_TCP_POOL 4
 static struct net_tcp _tcp_pool[NET_TCP_POOL];
-static uint8_t _tcp_rxbuf[NET_TCP_POOL][2048];
 
 static err_t _tcp_connected_cb(void *arg, struct tcp_pcb *tpcb, err_t err) {
     (void)tpcb;
@@ -440,16 +442,45 @@ static err_t _tcp_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t
         if (p) pbuf_free(p);
         return ERR_OK;
     }
-    int avail = c->rxcap - c->rxlen;
-    int copy = (int)p->tot_len;
-    if (copy > avail) copy = avail;
-    if (copy > 0) {
-        pbuf_copy_partial(p, c->rxbuf + c->rxlen, (u16_t)copy, 0);
-        c->rxlen += copy;
+    if (c->pending) {
+        /* Exactly one segment is held at a time, so this cannot normally
+           happen. Dropping the connection beats silently losing bytes. */
+        pbuf_free(p);
+        c->error = true;
+        return ERR_OK;
     }
-    tcp_recved(tpcb, p->tot_len);
-    pbuf_free(p);
+    c->pending = p;
+    c->pending_off = 0;
+    tcp_recv(tpcb, NULL); /* pause until the caller drains this segment */
     return ERR_OK;
+}
+
+/* Copy up to `cap` bytes out of the held segment, acknowledging only what was
+   actually handed to the caller. Returns the number of bytes copied. */
+static int _tcp_drain(net_tcp_t *conn, void *buf, size_t cap) {
+    if (!conn || !conn->pending || !buf || cap == 0) return 0;
+
+    uint16_t offset = conn->pending_off;
+    uint16_t total = conn->pending->tot_len;
+    if (offset >= total) return 0;
+
+    size_t take = (size_t)(total - offset);
+    if (take > cap) take = cap;
+    pbuf_copy_partial(conn->pending, buf, (u16_t)take, offset);
+    conn->pending_off = (uint16_t)(offset + take);
+
+    if (conn->pending_off >= total) {
+        if (conn->pcb) {
+            tcp_recved(conn->pcb, total);
+            tcp_recv(conn->pcb, _tcp_recv_cb); /* accept the next segment */
+        }
+        pbuf_free(conn->pending);
+        conn->pending = NULL;
+        conn->pending_off = 0;
+    } else if (conn->pcb) {
+        tcp_recved(conn->pcb, (u16_t)take);
+    }
+    return (int)take;
 }
 
 static void _tcp_err_cb(void *arg, err_t err) {
@@ -466,16 +497,12 @@ static net_tcp_t *_net_tcp_connect_impl(uint32_t ip, uint16_t port,
     for (int i = 0; i < NET_TCP_POOL; i++) {
         if (!_tcp_pool[i].pcb && !_tcp_pool[i].connected) {
             c = &_tcp_pool[i];
-            c->rxbuf = _tcp_rxbuf[i];
-            c->rxcap = (int)sizeof(_tcp_rxbuf[i]);
             break;
         }
     }
     if (!c) return NULL;
 
     memset(c, 0, sizeof(*c));
-    c->rxbuf = _tcp_rxbuf[c - _tcp_pool];
-    c->rxcap = (int)sizeof(_tcp_rxbuf[0]);
 
     struct tcp_pcb *pcb = tcp_new();
     if (!pcb) return NULL;
@@ -524,27 +551,26 @@ static int _net_tcp_send_impl(net_tcp_t *conn, const void *data, size_t len) {
 
 static int _net_tcp_recv_status(net_tcp_t *conn, void *buf, size_t cap,
                                 int timeout_ms) {
-    if (!conn) return -1;
-
-    /* Reset receive buffer */
-    conn->rxlen = 0;
+    if (!conn || !buf) return -1;
 
     absolute_time_t deadline = make_timeout_time_ms(timeout_ms);
-    while (conn->rxlen == 0 && !conn->closed && !conn->error) {
-        if (absolute_time_diff_us(get_absolute_time(), deadline) < 0) break;
-        net_poll();
-        sleep_ms(5);
-    }
+    for (;;) {
+        int n = _tcp_drain(conn, buf, cap);
+        if (n > 0) return n;
 
-    int n = conn->rxlen;
-    if (n > (int)cap) n = (int)cap;
-    if (n > 0) memcpy(buf, conn->rxbuf, (size_t)n);
-    if (n == 0) {
-        if (conn->closed) return 0;
+        /* A close may still have data queued in lwIP; poll once more before
+           reporting end of stream. */
+        if (conn->closed) {
+            net_poll();
+            n = _tcp_drain(conn, buf, cap);
+            if (n > 0) return n;
+            return 0;
+        }
         if (conn->error) return -1;
-        return -2;
+        if (absolute_time_diff_us(get_absolute_time(), deadline) < 0) return -2;
+        net_poll();
+        sleep_ms(1);
     }
-    return n;
 }
 
 static int _net_tcp_recv_impl(net_tcp_t *conn, void *buf, size_t cap,
@@ -556,6 +582,11 @@ static int _net_tcp_recv_impl(net_tcp_t *conn, void *buf, size_t cap,
 
 static void _net_tcp_close_impl(net_tcp_t *conn) {
     if (!conn) return;
+    if (conn->pending) {
+        pbuf_free(conn->pending);
+        conn->pending = NULL;
+        conn->pending_off = 0;
+    }
     if (conn->pcb) {
         tcp_arg(conn->pcb, NULL);
         tcp_recv(conn->pcb, NULL);
@@ -566,7 +597,6 @@ static void _net_tcp_close_impl(net_tcp_t *conn) {
     conn->connected = false;
     conn->closed = false;
     conn->error = false;
-    conn->rxlen = 0;
 }
 
 /* ============================================================
