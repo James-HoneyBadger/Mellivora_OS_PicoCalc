@@ -11,6 +11,8 @@
 
 CC ?= cc
 APP ?= plasma
+# Set APP_SRC to build a source file outside tools/sdk (Hub app templates).
+APP_SRC ?=
 run ?= 1
 CFLAGS ?= -O2 -g -Wall -Wextra -Wshadow -Wundef -Werror
 CPPFLAGS += -I../../picocalc/src -I.
@@ -26,9 +28,11 @@ BIN := build/$(APP)
 all: $(BIN)
 	@if [ "$(run)" = "1" ]; then ./$(BIN); fi
 
-$(BIN): runtime.c ../sdk/$(APP).c $(CORE) ../../picocalc/src/mapp.h
+APP_SOURCE := $(if $(APP_SRC),$(APP_SRC),../sdk/$(APP).c)
+
+$(BIN): runtime.c $(APP_SOURCE) $(CORE) ../../picocalc/src/mapp.h
 	@mkdir -p build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ runtime.c ../sdk/$(APP).c $(CORE) $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ runtime.c $(APP_SOURCE) $(CORE) $(LDLIBS)
 
 clean:
 	rm -rf build shots

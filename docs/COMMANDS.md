@@ -216,6 +216,19 @@ Destinations are fixed by package kind: `mapp` → `/apps`, `theme` →
 The index is cached at `/apps/repo.json` and re-read on every command, so
 `mpkg update` is only needed when the repository changes.
 
+#### Community hub
+
+`tools/hub/` builds such an index from GitHub without any server: app
+repositories tagged with the `mellivora-app` topic are discovered, their
+release assets indexed, and the result published to Pages. Point a device at
+it with `mpkg repo https://<owner>.github.io/<repo>/index.json`.
+
+`sha256` is mandatory on every entry; the loader silently drops packages
+without one, so the indexer always records a digest (from a published
+`.sha256` sidecar, or by hashing the artifact itself). See
+[`tools/hub/README.md`](../tools/hub/README.md) and the ready-to-use
+[`tools/hub/template/`](../tools/hub/template) app repository.
+
 ## Personal Productivity
 
 | Command                | Description                                          |

@@ -1,0 +1,64 @@
+# Build the community package index and publish it alongside a gallery.
+#
+# Repositories tagged with the `mellivora-app` topic are discovered through
+# GitHub search, their latest release assets are indexed, and the resulting
+# index.json plus a static gallery are deployed to Pages. There is no server
+# to run: the index is a static file that `mpkg` already knows how to read,
+# and anyone can fork this workflow to curate their own repository.
+#
+# Point a device at it with:
+#   mpkg repo https://<owner>.github.io/<repo>/index.json
+
+name: hub
+
+on:
+  schedule:
+    - cron: '17 4 * * *'   # daily, off the hour
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - 'tools/hub/**'
+      - '.github/workflows/hub.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: hub
+  cancel-in-progress: true
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify the indexer against the firmware parser
+        run: make hub-test
+
+      - name: Build the package index
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A brand new hub legitimately has no packages yet, so an empty
+          # index is published rather than failing the scheduled run.
+          python3 tools/hub/indexer.py --out build/hub/index.json --allow-empty
+
+      - name: Render the gallery
+        run: python3 tools/hub/gallery.py --index build/hub/index.json --out build/hub
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload index and gallery
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/hub
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

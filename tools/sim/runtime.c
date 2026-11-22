@@ -448,6 +448,11 @@ static int _write_png(const char *path, uint16_t width, uint16_t height, const u
     return 0;
 }
 
+static const char *_shots_dir(void) {
+    const char *from_env = getenv("MAPP_SHOTS_DIR");
+    return (from_env && *from_env) ? from_env : MAPP_SHOTS_DIR;
+}
+
 static void _screenshot(const char *app_name) {
     if (!_last_frame) return;
     gfx_surface_t frame;
@@ -457,9 +462,9 @@ static void _screenshot(const char *app_name) {
         (void)gfx_row_to_rgb888(&frame, y, 0, _last_frame_w,
                                 rgb + (size_t)y * _last_frame_w * 3u);
     }
-    (void)mkdir(MAPP_SHOTS_DIR, 0755);
+    (void)mkdir(_shots_dir(), 0755);
     char path[512];
-    snprintf(path, sizeof path, MAPP_SHOTS_DIR "/%s.png", app_name);
+    snprintf(path, sizeof path, "%s/%s.png", _shots_dir(), app_name);
     if (_write_png(path, _last_frame_w, _last_frame_h, rgb) == 0)
         fprintf(stderr, "sim: screenshot %s (%ux%u)\n", path, _last_frame_w, _last_frame_h);
 }

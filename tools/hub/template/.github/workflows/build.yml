@@ -1,0 +1,57 @@
+# Build, screenshot, and publish this app on every version tag.
+#
+# A tag such as v1.0.0 produces a GitHub release containing:
+#   NAME.mapp           the installable artifact
+#   NAME.mapp.sha256    its digest (the Hub indexer prefers this sidecar)
+#   screenshot.png      the app's first frame, rendered by the simulator
+#
+# The Hub indexer finds the repository through the `mellivora-app` topic and
+# reads the release, so nothing else needs configuring.
+
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the ARM toolchain and host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi zlib1g-dev
+
+      - name: Fetch the Mellivora SDK
+        run: |
+          git clone --depth 1 https://github.com/James-HoneyBadger/Mellivora_OS_PicoCalc.git .mellivora
+
+      - name: Build the app
+        run: make MELLIVORA=.mellivora release
+
+      - name: Render a screenshot with the simulator
+        run: make MELLIVORA=.mellivora sim
+
+      - name: Verify the artifact is a valid .mapp
+        run: |
+          test -s build/*.mapp
+          # The packer wrote a MAPP header; check the magic so a broken
+          # artifact never reaches a release.
+          head -c 4 build/*.mapp | grep -q MAPP
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/*.mapp
+            build/*.mapp.sha256
+            shots/*.png
+          generate_release_notes: true
+          fail_on_unmatched_files: true

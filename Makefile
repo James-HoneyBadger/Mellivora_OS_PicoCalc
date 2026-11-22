@@ -15,7 +15,7 @@ PICO_ELF = $(PICO_BUILD_DIR)/mellivora_picocalc.elf
 PICO_UF2 = $(PICO_BUILD_DIR)/mellivora_picocalc.uf2
 PICOTOOL = $(PICO_BUILD_DIR)/_deps/picotool/picotool
 
-.PHONY: all all-targets picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean baseline-report doc-consistency-check command-registry-report command-registry-check quality-check test lint format-check size-report size-baseline size-gate starter-pack flasher-check sim sim-check mdev-test clean
+.PHONY: all all-targets picocalc picocalc-pico2 pico2 picocalc-pico2w pico2w picocalc-sdk picocalc-config picocalc-build picocalc-uf2 picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean baseline-report doc-consistency-check command-registry-report command-registry-check quality-check test lint format-check size-report size-baseline size-gate starter-pack flasher-check sim sim-check mdev-test hub-test hub-index clean
 
 all: picocalc
 
@@ -186,7 +186,17 @@ mdev-test:
 	@echo "=== Testing the mdev XMODEM sender ==="
 	@python3 tools/mdev/test_mdev.py
 
-quality-check: baseline-report doc-consistency-check command-registry-check size-report test sim-check mdev-test
+hub-test:
+	@echo "=== Testing the Hub indexer against the firmware parser ==="
+	@python3 tools/hub/test_hub.py
+
+# Build a repository index for the community hub. Needs network access and,
+# for a useful rate limit, GITHUB_TOKEN.
+hub-index:
+	@echo "=== Building the community package index ==="
+	@python3 tools/hub/indexer.py --out build/index.json
+
+quality-check: baseline-report doc-consistency-check command-registry-check size-report test sim-check mdev-test hub-test
 	@echo "=== Quality checks passed ==="
 
 clean: picocalc-clean picocalc-pico2-clean picocalc-pico2w-clean

@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`mdev` deploy tool** — builds, simulates, and pushes `.mapp` files over
   USB with a tested XMODEM sender; the shell now launches `/apps` files by
   name.
+- **Forth graphics and sound** — `gr`/`text`, `pset`, `line`, `rect`,
+  `frect`, `circle`, `fcircle`, `color`, `pen!`, `show`, `sound`, `noise`,
+  `nosound`, and the `ms` delay word the documentation had promised.
+- **Community hub** — `tools/hub/` indexes `mellivora-app` repositories and
+  publishes `index.json` plus a static gallery to Pages; `tools/hub/template/`
+  is a complete app repository whose tag publishes the `.mapp`, its digest,
+  and a simulator screenshot.
 
 ## [2.6.0] - 2026-11-02
 

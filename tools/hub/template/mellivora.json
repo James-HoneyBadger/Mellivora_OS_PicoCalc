@@ -1,0 +1,7 @@
+{
+  "name": "myapp",
+  "title": "My App",
+  "description": "One line describing what this app does.",
+  "kind": "mapp",
+  "entry": "src/myapp.c"
+}

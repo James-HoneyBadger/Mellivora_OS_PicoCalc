@@ -329,6 +329,24 @@ FAT driver's shared sector buffer, so a visitor may not read files. The
 `app_settings_load_user_themes()` loads the palettes once the enumeration
 has finished.
 
+## Community hub
+
+`tools/hub/` turns GitHub into the package registry, so there is no server to
+run or pay for:
+
+- `indexer.py` discovers repositories with the `mellivora-app` topic, reads
+  each latest release, and emits the same `index.json` schema `mpkg` already
+  parses. Digests come from a published `.sha256` sidecar when present and
+  from hashing the artifact otherwise, because `core/mpkg.c` rejects an entry
+  without one.
+- `gallery.py` renders a static catalogue from that index.
+- `mpkg_check.c` links `core/json.c` and `core/mpkg.c` on the host, so the
+  Hub tests load generated output through the firmware's own parser. That
+  caught a schema mismatch (unsigned entries being silently dropped) before
+  a card ever saw the file.
+- `template/` is a complete app repository: `make`, `make sim`, and a tag
+  that publishes the `.mapp`, its digest, and a simulator screenshot.
+
 ## Watchdog & Recovery
 
 A hardware watchdog with an 8-second timeout is enabled after startup. The
