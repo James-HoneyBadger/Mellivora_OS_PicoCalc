@@ -20,6 +20,7 @@
 #include <string.h>
 
 #include "apps/app_internal.h"
+#include "core/filehash.h"
 #include "core/json.h"
 #include "core/mpkg.h"
 #include "core/sha256.h"
@@ -210,21 +211,7 @@ static bool mpkg_hash_file(const char *path, uint8_t out_digest[SHA256_DIGEST_SI
                            uint32_t *out_size) {
     fat_file_t file;
     if (fat_open(path, &file) != FAT_OK) return false;
-    sha256_ctx_t hash;
-    sha256_init(&hash);
-    uint8_t chunk[512];
-    uint32_t total = 0;
-    for (;;) {
-        int32_t n = fat_read(&file, chunk, sizeof chunk);
-        if (n == FAT_ERR_EOF) break;
-        if (n < 0) return false;
-        if (n == 0) break;
-        sha256_update(&hash, chunk, (size_t)n);
-        total += (uint32_t)n;
-    }
-    sha256_final(&hash, out_digest);
-    if (out_size) *out_size = total;
-    return true;
+    return filehash_fat_file(&file, out_digest, out_size);
 }
 
 /* ------------------------------------------------------------------ */

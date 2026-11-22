@@ -1,3 +1,5 @@
+#include "core/filehash.h"
+#include "core/sha256.h"
 #include "fat.h"
 #include "sd.h"
 #include "test_util.h"
@@ -135,6 +137,49 @@ void test_fat(void) {
     CHECK_EQ(fat_rename("/DOCS/RENAMED.TXT", "/OTHER/RENAMED.TXT"), FAT_ERR_UNSUPPORTED);
     CHECK_EQ(fat_unlink("/DOCS/RENAMED.TXT"), FAT_OK);
     CHECK_EQ(fat_unlink("/DOCS"), FAT_OK);
+
+    /* Hashing a file on the card. "mpkg verify" digests what is installed, so
+       end-of-file has to be a normal exit and the byte count must match. */
+    uint8_t big[4096];
+    for (size_t i = 0; i < sizeof big; i++)
+        big[i] = (uint8_t)(i * 7u + 3u);
+    CHECK_EQ(fat_create("/BIG.BIN", big, sizeof big), FAT_OK);
+    CHECK_EQ(fat_create("/ODD.BIN", big, 1000), FAT_OK);
+
+    uint8_t expected[SHA256_DIGEST_SIZE];
+    uint8_t digest[SHA256_DIGEST_SIZE];
+    uint32_t hashed = 0;
+    sha256_ctx_t ctx;
+    sha256_init(&ctx);
+    sha256_update(&ctx, big, sizeof big);
+    sha256_final(&ctx, expected);
+
+    CHECK_EQ(fat_open("/BIG.BIN", &file), FAT_OK);
+    CHECK(filehash_fat_file(&file, digest, &hashed));
+    CHECK_EQ(hashed, sizeof big);
+    CHECK(memcmp(digest, expected, sizeof digest) == 0);
+    /* A file that is an exact multiple of the read chunk must not be
+       reported as a failure when the next read hits end-of-file. */
+    CHECK_EQ(fat_read(&file, received, 1), FAT_ERR_EOF);
+
+    /* Two digests of the same file agree; a different length does not. */
+    sha256_ctx_t short_ctx;
+    sha256_init(&short_ctx);
+    sha256_update(&short_ctx, big, 1000);
+    sha256_final(&short_ctx, expected);
+    CHECK_EQ(fat_open("/ODD.BIN", &file), FAT_OK);
+    CHECK(filehash_fat_file(&file, digest, &hashed));
+    CHECK_EQ(hashed, 1000);
+    CHECK(memcmp(digest, expected, sizeof digest) == 0);
+
+    /* The size is optional, and a null file is rejected. */
+    CHECK_EQ(fat_open("/BIG.BIN", &file), FAT_OK);
+    CHECK(filehash_fat_file(&file, digest, NULL));
+    CHECK(!filehash_fat_file(NULL, digest, &hashed));
+    CHECK(!filehash_fat_file(&file, NULL, &hashed));
+
+    CHECK_EQ(fat_unlink("/BIG.BIN"), FAT_OK);
+    CHECK_EQ(fat_unlink("/ODD.BIN"), FAT_OK);
 
     fake_read_error_lba = ROOT_DIR_LBA;
     CHECK_EQ(fat_ls("/", capture_entry, &listing), FAT_ERR_IO);

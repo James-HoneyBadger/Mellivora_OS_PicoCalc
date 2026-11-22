@@ -5,6 +5,7 @@
 #include "core/theme_file.h"
 #include "test_util.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static const char *THEME_TEXT = "# Ocean palette\n"
@@ -72,4 +73,60 @@ void test_theme_file(void) {
     pos += 15;
     CHECK(theme_file_parse(&theme, long_text, pos));
     CHECK_EQ(strlen(theme.name), THEME_FILE_NAME_MAX - 1);
+
+    /* ---- Discovery of /themes ------------------------------------------ */
+
+    theme_scan_t scan;
+    theme_scan_reset(&scan);
+    CHECK_EQ(scan.count, 0);
+
+    /* A palette is queued with its full path and a name derived from the
+       stem, so a file without a "name =" line still gets a label. */
+    CHECK(theme_scan_visit(&scan, "OCEAN.THM", NULL, false));
+    CHECK_EQ(scan.count, 1);
+    CHECK_STR_EQ(scan.path[0], "/themes/OCEAN.THM");
+    CHECK_STR_EQ(scan.name[0], "OCEAN");
+
+    /* The long name wins when both are present, and the extension match is
+       case-insensitive. */
+    CHECK(theme_scan_visit(&scan, "OCEAN~1.THM", "Ocean Blue.ThM", false));
+    CHECK_EQ(scan.count, 2);
+    CHECK_STR_EQ(scan.path[1], "/themes/Ocean Blue.ThM");
+    CHECK_STR_EQ(scan.name[1], "Ocean Blue");
+
+    /* Directories and other extensions are ignored. */
+    CHECK(!theme_scan_visit(&scan, "PALETTES", "palettes", true));
+    CHECK(!theme_scan_visit(&scan, "NOTES.TXT", NULL, false));
+    CHECK(!theme_scan_visit(&scan, "THM", NULL, false));
+    CHECK(!theme_scan_visit(&scan, "THEME.THMX", NULL, false));
+    CHECK_EQ(scan.count, 2);
+
+    /* A name too long for the path buffer is skipped rather than truncated
+       into a path that would fail to open. */
+    char wide[THEME_SCAN_PATH_MAX];
+    memset(wide, 'a', sizeof wide - 5);
+    wide[sizeof wide - 5] = '\0';
+    strcat(wide, ".thm");
+    CHECK(!theme_scan_visit(&scan, wide, NULL, false));
+    CHECK_EQ(scan.count, 2);
+
+    /* The table is capped; extra palettes are dropped, not overrun. */
+    while (scan.count < THEME_SCAN_MAX) {
+        char name[16];
+        snprintf(name, sizeof name, "T%d.THM", scan.count);
+        CHECK(theme_scan_visit(&scan, name, NULL, false));
+    }
+    CHECK_EQ(scan.count, THEME_SCAN_MAX);
+    CHECK(!theme_scan_visit(&scan, "OVER.THM", NULL, false));
+    CHECK_EQ(scan.count, THEME_SCAN_MAX);
+
+    /* Resetting is how the caller restarts a scan. */
+    theme_scan_reset(&scan);
+    CHECK_EQ(scan.count, 0);
+    CHECK(theme_scan_visit(&scan, "A.THM", NULL, false));
+    CHECK_STR_EQ(scan.path[0], "/themes/A.THM");
+
+    /* A NULL scan or name is tolerated. */
+    CHECK(!theme_scan_visit(NULL, "A.THM", NULL, false));
+    CHECK(!theme_scan_visit(&scan, NULL, NULL, false));
 }

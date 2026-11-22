@@ -10,6 +10,7 @@
 
 #include "apps/app_internal.h"
 #include "console.h"
+#include "core/mapp_image.h"
 #include "fat.h"
 #include "kbd.h"
 #include "lcd.h"
@@ -18,8 +19,8 @@
 #include "ui/ui.h"
 
 #define MAPP_CATALOG_MAX 24u
-#define MAPP_ARENA_SIZE (16u * 1024u)
-#define MAPP_RELOC_MAX 512u
+#define MAPP_ARENA_SIZE MAPP_IMAGE_ARENA_MAX
+#define MAPP_RELOC_MAX MAPP_IMAGE_RELOC_MAX
 #define MAPP_FILE_HANDLES 4u
 #define MAPP_METADATA_BYTES 256u
 
@@ -103,13 +104,6 @@ static uint16_t _read_u16(const uint8_t *p) {
 static uint32_t _read_u32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static void _write_u32(uint8_t *p, uint32_t value) {
-    p[0] = (uint8_t)value;
-    p[1] = (uint8_t)(value >> 8);
-    p[2] = (uint8_t)(value >> 16);
-    p[3] = (uint8_t)(value >> 24);
 }
 
 static bool _read_header_name(const char *filename, char *out, size_t capacity) {
@@ -506,33 +500,23 @@ static bool _load_mapp(const char *path) {
     if (fat_open(path, &file) != FAT_OK || file.size < MAPP_HEADER_SIZE) goto done;
     uint8_t raw_header[MAPP_HEADER_SIZE];
     if (!_read_exact(&file, raw_header, sizeof raw_header)) goto done;
-    if (memcmp(raw_header, "MAPP", 4) != 0 ||
-        _read_u16(raw_header + 4) != MAPP_FORMAT_VERSION) goto done;
 
-    uint16_t kind = _read_u16(raw_header + 6);
-    uint32_t header_size = _read_u32(raw_header + 8);
-    uint32_t image_size = _read_u32(raw_header + 12);
-    uint32_t bss_size = _read_u32(raw_header + 16);
-    uint32_t entry_offset = _read_u32(raw_header + 20);
-    uint32_t relocation_count = _read_u32(raw_header + 24);
-    uint64_t image_total = (uint64_t)image_size + bss_size;
-    uint64_t expected_file_size = (uint64_t)header_size +
-        (uint64_t)relocation_count * sizeof(uint32_t) + image_size;
-    if (header_size != MAPP_HEADER_SIZE || image_size == 0 ||
-        image_total > MAPP_ARENA_SIZE || relocation_count > MAPP_RELOC_MAX ||
-        expected_file_size != file.size || entry_offset >= image_size) goto done;
-    if ((kind == MAPP_KIND_THUMB && (entry_offset & 1u)) ||
-        (kind == MAPP_KIND_BYTECODE && (relocation_count != 0 || bss_size != 0)) ||
-        (kind != MAPP_KIND_THUMB && kind != MAPP_KIND_BYTECODE)) goto done;
+    mapp_image_header_t image;
+    mapp_image_parse_header(&image, raw_header);
+    image.file_size = file.size;
+    if (mapp_image_validate(&image) != MAPP_IMAGE_OK) goto done;
+
+    uint16_t kind = image.kind;
+    uint32_t image_size = image.image_size;
+    uint32_t bss_size = image.bss_size;
+    uint32_t entry_offset = image.entry_offset;
+    uint32_t relocation_count = image.relocation_count;
 
     uint8_t reloc_raw[MAPP_RELOC_MAX * sizeof(uint32_t)];
     uint32_t reloc_bytes = relocation_count * (uint32_t)sizeof(uint32_t);
     if (reloc_bytes && !_read_exact(&file, reloc_raw, reloc_bytes)) goto done;
-    for (uint32_t i = 0; i < relocation_count; i++) {
+    for (uint32_t i = 0; i < relocation_count; i++)
         _relocations[i] = _read_u32(reloc_raw + i * sizeof(uint32_t));
-        if ((_relocations[i] & 3u) != 0 ||
-            (uint64_t)_relocations[i] + sizeof(uint32_t) > image_size) goto done;
-    }
     if (!_read_exact(&file, arena, image_size)) goto done;
     memset(arena + image_size, 0, bss_size);
 
@@ -541,13 +525,10 @@ static bool _load_mapp(const char *path) {
         goto done;
     }
 
-    uint32_t arena_address = (uint32_t)(uintptr_t)arena;
-    for (uint32_t i = 0; i < relocation_count; i++) {
-        uint32_t offset = _relocations[i];
-        uint32_t value = _read_u32(arena + offset);
-        if ((uint64_t)value > image_total) goto done;
-        _write_u32(arena + offset, value + arena_address);
-    }
+    if (mapp_image_apply_relocations(arena, image_size, bss_size, _relocations,
+                                     relocation_count,
+                                     (uint32_t)(uintptr_t)arena) != MAPP_RELOC_OK)
+        goto done;
 
     mapp_entry_fn entry = (mapp_entry_fn)(uintptr_t)
         ((uintptr_t)(arena + entry_offset) | (uintptr_t)1u);

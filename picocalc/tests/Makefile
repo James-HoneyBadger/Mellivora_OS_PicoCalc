@@ -32,6 +32,8 @@ SOURCES := \
 	$(SRC_DIR)/core/sha256.c \
 	$(SRC_DIR)/core/mpkg.c \
 	$(SRC_DIR)/core/theme_file.c \
+	$(SRC_DIR)/core/mapp_image.c \
+	$(SRC_DIR)/core/filehash.c \
 	$(SRC_DIR)/core/pinmap.c \
 	$(SRC_DIR)/core/vt100.c \
 	$(SRC_DIR)/core/xmodem.c \

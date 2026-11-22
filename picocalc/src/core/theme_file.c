@@ -12,6 +12,7 @@
 
 #include "core/theme_file.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static const char *const _role_names[THEME_FILE_ROLE_COUNT] = {
@@ -147,4 +148,35 @@ bool theme_file_parse(theme_file_t *out, const char *text, size_t len) {
         out->set_mask |= (uint16_t)(1u << (unsigned)role);
     }
     return have_name && out->set_mask != 0;
+}
+
+/* ---- Discovery of /themes -------------------------------------------- */
+
+void theme_scan_reset(theme_scan_t *scan) {
+    if (scan) scan->count = 0;
+}
+
+bool theme_scan_visit(theme_scan_t *scan, const char *short_name, const char *long_name,
+                      bool is_dir) {
+    if (!scan || is_dir || scan->count >= THEME_SCAN_MAX) return false;
+
+    const char *name = (long_name && *long_name) ? long_name : short_name;
+    if (!name) return false;
+
+    size_t len = strlen(name);
+    if (len < 5) return false;
+    if (_cii(name + len - 4, ".thm") != 0) return false;
+
+    int slot = scan->count;
+    int written = snprintf(scan->path[slot], sizeof scan->path[slot], "/themes/%s", name);
+    if (written < 0 || (size_t)written >= sizeof scan->path[slot]) return false;
+
+    /* Strip the extension so a palette without a "name =" line still gets a
+       sensible name. */
+    size_t stem = len - 4;
+    if (stem >= sizeof scan->name[slot]) stem = sizeof scan->name[slot] - 1;
+    memcpy(scan->name[slot], name, stem);
+    scan->name[slot][stem] = '\0';
+    scan->count++;
+    return true;
 }

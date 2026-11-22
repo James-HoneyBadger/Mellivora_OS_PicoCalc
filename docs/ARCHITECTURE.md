@@ -57,7 +57,8 @@ shell loop:
 | `apps/app_mpkg.c` | Package manager: HTTPS index, SHA-256 verification, SD installs (Pico 2 W only) |
 | `apps/app_hw.c` | Hardware Workbench: VT100 terminal, GPIO/PWM/I2C commands, XMODEM/YMODEM |
 | `apps/text.c`, `apps/fs.c`, `apps/hex.c` | Text, filesystem, and hex utilities |
-| `core/`        | Portable logic with host tests: expressions, shell parsing, paths, names, regex, globs, text, history, date conversion, JSON, SHA-256, package planning, theme files, pin map, VT100, XMODEM, i2cdetect, and workbench commands |
+| `mapp.c`       | `.mapp` loader: discovery, RAM arena, relocation, and the app ABI jump table |
+| `core/`        | Portable logic with host tests: expressions, shell parsing, paths, names, regex, globs, text, history, date conversion, JSON, SHA-256, file hashing, package planning, theme files and discovery, `.mapp` image validation, pin map, VT100, XMODEM, i2cdetect, and workbench commands |
 | `ui/ui.c/.h`   | Semantic colour roles, built-in and card-loaded palettes, header/footer, menus, notifications |
 | `pipe.c/.h`    | Bounded in-RAM pipeline input/output                         |
 | `console.c/.h` | Blocking line input shared by apps and the HAL                |
@@ -230,6 +231,30 @@ apps are unavailable until a card is mounted. Wi-Fi passwords in
 protected accordingly. Backup snapshots use a `FORMAT.TXT` version marker
 and restore only missing files.
 
+## Loadable apps (`.mapp`)
+
+`/apps` is enumerated at boot; `.mapp` modules appear in the launcher next
+to the `.bas`, `.c`, and `.fth` scripts, which the loader also runs by
+delegating to the matching interpreter. A module is never linked into the
+firmware, so adding one needs no reflash.
+
+The loader is split so its memory-safety decisions are testable:
+
+- `core/mapp_image.c` decodes and validates the 60-byte header (magic,
+  version, sizes, entry point, relocation count) and applies Thumb
+  relocations. It owns no FAT, display, or allocator state. Every bounds
+  check uses 64-bit arithmetic so a crafted header cannot wrap an offset
+  past the arena, and a relocation writes nothing unless the whole table
+  validates.
+- `mapp.c` does the firmware half: it `malloc`s the 16 KiB arena per
+  launch (heap, not `.bss`, so the non-`.mapp` images do not pay for it),
+  reads the image, and calls the entry point with the API table.
+
+The ABI is a fixed jump table (`mapp_api_t`) of display, keyboard, file,
+timer, and network calls, versioned by `MAPP_API_VERSION`. Host-side
+developers use `tools/sdk/`: `make` produces `hello.mapp` from plain C,
+and the packer turns any linked ELF into the container format.
+
 ## Packages and user themes
 
 `mpkg` is split so the non-Wi-Fi images stay identical in size:
@@ -241,7 +266,10 @@ and restore only missing files.
   network, filesystem, or display dependency and is covered by host tests.
 - `core/sha256.c` verifies artifacts. It is self-contained rather than
   routed through the TLS library so the digest is independent of the
-  mbedTLS configuration.
+  mbedTLS configuration. `core/filehash.c` streams a whole file through it,
+  which is what `mpkg verify` digests installed artifacts with; the FAT
+  driver reports end-of-file as `FAT_ERR_EOF` rather than `0`, so that
+  conversion happens in one place.
 - `apps/app_mpkg.c` performs the downloads. Its entire body is inside
   `#if defined(PICO_CYW43_SUPPORTED)`; the RP2040 and Pico 2 images link
   only a short stub, and `mpkg` is not advertised in their help registry.
@@ -255,6 +283,12 @@ User themes are data, not code. `core/theme_file.c` parses
 appends up to four user palettes after the built-ins. Loading happens in
 `app_boot()` because the card must be mounted first; the saved theme is
 re-applied afterwards.
+
+`fat_ls_ex()` runs its visitor while the directory walk is borrowing the
+FAT driver's shared sector buffer, so a visitor may not read files. The
+`theme_scan_visit()` helper in `core/theme_file.c` only records names;
+`app_settings_load_user_themes()` loads the palettes once the enumeration
+has finished.
 
 ## Watchdog & Recovery
 

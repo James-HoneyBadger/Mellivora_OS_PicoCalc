@@ -26,6 +26,7 @@ void test_json(void);
 void test_sha256(void);
 void test_mpkg(void);
 void test_theme_file(void);
+void test_mapp_image(void);
 void test_pinmap(void);
 void test_i2cdetect(void);
 void test_vt100(void);
@@ -50,6 +51,7 @@ int main(void) {
     RUN(test_sha256);
     RUN(test_mpkg);
     RUN(test_theme_file);
+    RUN(test_mapp_image);
     RUN(test_pinmap);
     RUN(test_i2cdetect);
     RUN(test_vt100);

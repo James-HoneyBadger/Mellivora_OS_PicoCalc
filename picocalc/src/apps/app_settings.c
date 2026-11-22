@@ -272,49 +272,21 @@ static void theme_apply_file(const char *path, const char *fallback_name) {
 }
 
 /* The directory walk borrows the FAT driver's shared sector buffer, so the
-   visitor must not read files. Collect the paths here and load them once the
-   enumeration has finished. */
-#define THEME_SCAN_MAX 6
-#define THEME_PATH_MAX 48
-
-typedef struct {
-    char path[THEME_SCAN_MAX][THEME_PATH_MAX];
-    char name[THEME_SCAN_MAX][THEME_FILE_NAME_MAX];
-    int count;
-} theme_scan_t;
-
+   visitor only records names; the palettes are loaded once the enumeration
+   has finished (see core/theme_file.c). */
 static theme_scan_t _theme_scan;
 
 static void theme_scan_cb(const char *short_name, const char *long_name,
                           uint32_t size, bool is_dir, void *ctx) {
     (void)size;
-    theme_scan_t *scan = (theme_scan_t *)ctx;
-    if (is_dir || !scan || scan->count >= THEME_SCAN_MAX) return;
-
-    const char *name = (long_name && *long_name) ? long_name : short_name;
-    if (!name) return;
-    size_t len = strlen(name);
-    if (len < 5) return;
-    if (!ci_eq(name + len - 4, ".thm")) return;
-
-    int slot = scan->count;
-    int n = snprintf(scan->path[slot], sizeof scan->path[slot], "/themes/%s", name);
-    if (n < 0 || (size_t)n >= sizeof scan->path[slot]) return;
-
-    /* Strip the extension so a file without a "name =" line still gets a
-       sensible palette name. */
-    size_t stem = len - 4;
-    if (stem >= sizeof scan->name[slot]) stem = sizeof scan->name[slot] - 1;
-    memcpy(scan->name[slot], name, stem);
-    scan->name[slot][stem] = '\0';
-    scan->count++;
+    (void)theme_scan_visit((theme_scan_t *)ctx, short_name, long_name, is_dir);
 }
 
 void app_settings_load_user_themes(void) {
     ui_theme_clear_user();
     if (fat_is_dir("/themes") != FAT_OK) return;
 
-    _theme_scan.count = 0;
+    theme_scan_reset(&_theme_scan);
     (void)fat_ls_ex("/themes", theme_scan_cb, &_theme_scan);
     for (int i = 0; i < _theme_scan.count; i++)
         theme_apply_file(_theme_scan.path[i], _theme_scan.name[i]);
