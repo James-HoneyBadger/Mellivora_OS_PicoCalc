@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "apps/app_internal.h"
+#include "core/theme_file.h"
 #include "kbd.h"
 #include "lcd.h"
 #include "syscall.h"
@@ -243,4 +244,56 @@ void app_settings_init(void) {
     settings_reset_defaults();
     settings_load(false);
     settings_apply_live();
+}
+
+/* ---- User themes loaded from /themes ---------------------------------- */
+
+static void theme_apply_file(const char *path, const char *fallback_name) {
+    char text[2048];
+    int n = sys_fread(path, text, sizeof text - 1);
+    if (n <= 0) return;
+    text[n] = '\0';
+
+    theme_file_t parsed;
+    if (!theme_file_parse(&parsed, text, (size_t)n)) return;
+
+    uint32_t colors[UI_ROLE_COUNT];
+    for (int role = 0; role < UI_ROLE_COUNT; role++) {
+        if (parsed.set_mask & (1u << (unsigned)role)) {
+            colors[role] = parsed.color[role];
+        } else {
+            uint32_t base = LCD_WHITE;
+            (void)ui_theme_color(0, role, &base);
+            colors[role] = base;
+        }
+    }
+    const char *name = parsed.name[0] ? parsed.name : fallback_name;
+    (void)ui_theme_register(name, colors);
+}
+
+static void theme_scan_cb(const char *short_name, const char *long_name,
+                          uint32_t size, bool is_dir, void *ctx) {
+    (void)size;
+    (void)ctx;
+    if (is_dir) return;
+    const char *name = (long_name && *long_name) ? long_name : short_name;
+    if (!name) return;
+    size_t len = strlen(name);
+    if (len < 5) return;
+    if (!ci_eq(name + len - 4, ".thm")) return;
+
+    char path[APP_TOKEN_MAX];
+    int n = snprintf(path, sizeof path, "/themes/%s", name);
+    if (n < 0 || (size_t)n >= sizeof path) return;
+    theme_apply_file(path, name);
+}
+
+void app_settings_load_user_themes(void) {
+    ui_theme_clear_user();
+    if (fat_is_dir("/themes") != FAT_OK) return;
+    (void)fat_ls_ex("/themes", theme_scan_cb, NULL);
+}
+
+void app_settings_reload_theme(void) {
+    (void)theme_apply_by_name(*g_settings.theme ? g_settings.theme : "noir");
 }

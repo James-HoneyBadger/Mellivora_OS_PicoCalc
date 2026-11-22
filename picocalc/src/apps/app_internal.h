@@ -25,6 +25,8 @@ typedef struct {
 
 const app_settings_state_t *app_settings_get(void);
 void app_settings_init(void);
+void app_settings_load_user_themes(void);
+void app_settings_reload_theme(void);
 
 /* App registry entry used by apps.c. */
 typedef void (*app_handler_t)(const char *arg);
@@ -80,6 +82,20 @@ void app_life(const char *arg);
 void app_lock(const char *arg);
 void app_mandelbrot(const char *arg);
 void app_minesweeper(const char *arg);
+void app_mpkg(const char *arg);
+void app_hw(const char *arg);
+void app_term(const char *arg);
+void app_gpio(const char *arg);
+void app_pwm(const char *arg);
+void app_i2cdetect(const char *arg);
+void app_ymodem(const char *arg);
+
+/* Hardware bindings exposed to BASIC and Forth. Each returns 0 or -1. */
+int hw_binding_gpio_read(int pin);
+int hw_binding_gpio_write(int pin, int value);
+int hw_binding_pwm(int pin, int freq_hz, int duty);
+int hw_binding_i2c_scan(void);
+int hw_binding_xfer(int sending, const char *path, int ymodem);
 void app_notes(const char *arg);
 void app_paint(const char *arg);
 void app_pass(const char *arg);

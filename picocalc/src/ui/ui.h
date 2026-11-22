@@ -42,6 +42,13 @@ const char *ui_theme_current_name(void);
 bool        ui_theme_set(const char *name);
 bool        ui_theme_set_index(int index);
 
+/* User palettes loaded from /themes (NAME.thm) are appended after the built-ins.
+   Registering an existing user name replaces it in place. */
+int  ui_theme_register(const char *name, const uint32_t color[UI_ROLE_COUNT]);
+void ui_theme_clear_user(void);
+int  ui_theme_user_count(void);
+bool ui_theme_color(int index, int role, uint32_t *out);
+
 /* ---- Roles ------------------------------------------------------------ */
 
 uint32_t ui_color(ui_role_t role);

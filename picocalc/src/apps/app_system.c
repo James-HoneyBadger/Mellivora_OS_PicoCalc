@@ -12,6 +12,7 @@
 #include "apps/app_internal.h"
 #include "kbd.h"
 #include "lcd.h"
+#include "mapp.h"
 #include "syscall.h"
 #include "ui/ui.h"
 
@@ -168,12 +169,24 @@ void app_home(const char *arg) {
         app_journal, app_habits, app_bookmarks, app_games, app_clock,
         app_basic, app_tinyc, app_sprite, app_terminal, app_samples,
     };
-    const int count = (int)(sizeof items / sizeof items[0]);
+    enum { BUILTIN_COUNT = (int)(sizeof items / sizeof items[0]) };
+    const int discovered = mapp_discover();
+    const uint32_t app_count = discovered > 0 ? (uint32_t)discovered : 0;
+    const uint32_t menu_count = BUILTIN_COUNT + app_count;
+    const char *menu_items[BUILTIN_COUNT + 24];
+    for (uint32_t i = 0; i < BUILTIN_COUNT; i++) menu_items[i] = items[i];
+    for (uint32_t i = 0; i < app_count; i++) {
+        const mapp_app_t *app = mapp_catalog_get(i);
+        menu_items[BUILTIN_COUNT + i] = app ? app->title : "External app";
+    }
+    if (discovered < 0) ui_warn("SD /apps unavailable");
+    else if (mapp_catalog_truncated()) ui_warn("apps: showing first 24 matching files");
 
     for (;;) {
-        int sel = ui_menu("Mellivora", "home", items, count, 0);
+        int sel = ui_menu("Mellivora", "home", menu_items, (int)menu_count, 0);
         if (sel < 0) break;
-        actions[sel](NULL);
+        if (sel < BUILTIN_COUNT) actions[sel](NULL);
+        else mapp_launch(mapp_catalog_get((uint32_t)(sel - BUILTIN_COUNT)));
     }
     sys_clear();
 }

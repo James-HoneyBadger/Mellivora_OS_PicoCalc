@@ -80,8 +80,9 @@ void lcd_draw_cell(int col, int row, char c, uint32_t fg, uint32_t bg);
 /* Read a single text-buffer cell (returns ' ' for out-of-range). */
 char lcd_get_cell(int col, int row);
 
-/* Cross-core serialisation. Recursive: nested calls from the same core are
-   safe. Use to make multi-call drawing sequences atomic versus the core1
-   status-bar refresh on RP2350. */
+/* Cross-core serialisation. After Core 1 starts, public LCD operations are
+   executed there through its request queue. Use these to keep multi-call
+   drawing sequences atomic against background status-bar composition. */
 void lcd_lock(void);
 void lcd_unlock(void);
+bool lcd_batch_active(void);

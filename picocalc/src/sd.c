@@ -8,6 +8,7 @@
  */
 
 #include "sd.h"
+#include "metrics.h"
 #include "picocalc_hw.h"
 
 #include "pico/stdlib.h"
@@ -316,6 +317,7 @@ sd_result_t sd_read_block(uint32_t lba, uint8_t *buf) {
             _inited = 0;
             continue; /* retry on CRC mismatch */
         }
+        metrics_sd_record(false, SD_BLOCK_SIZE);
         return SD_OK;
     }
     return SD_TIMEOUT;
@@ -345,6 +347,9 @@ sd_result_t sd_write_block(uint32_t lba, const uint8_t *buf) {
     /* Wait for write to complete. */
     int done = _wait_ready(SD_WRITE_TIMEOUT);
     _deselect();
+    if (done) {
+        metrics_sd_record(true, SD_BLOCK_SIZE);
+    }
     return done ? SD_OK : SD_TIMEOUT;
 }
 

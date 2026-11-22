@@ -779,6 +779,25 @@ static bool basic_assign(const char *src) {
     return true;
 }
 
+
+/* Comma-separated integer arguments, used by the hardware statements. */
+static int _hw_args(const char *text, int *out, int max) {
+    int count = 0;
+    while (count < max) {
+        const char *p = skip_ws(text);
+        if (!*p) break;
+        char *end = NULL;
+        long value = strtol(p, &end, 0);
+        if (end == p) break;
+        out[count++] = (int)value;
+        text = end;
+        while (*text == ' ' || *text == '\t') text++;
+        if (*text == ',') text++;
+        else break;
+    }
+    return count;
+}
+
 static void basic_exec_stmt(const char *stmt, int *pc) {
     char tok[APP_TOKEN_MAX];
     const char *s = skip_ws(stmt);
@@ -823,6 +842,44 @@ static void basic_exec_stmt(const char *stmt, int *pc) {
                 print_line(out);
             }
         }
+    } else if (ci_eq(tok, "GPIO")) {
+        const char *p = skip_ws(rest);
+        char sub[8];
+        const char *after = next_token(p, sub, sizeof sub);
+        if (ci_eq(sub, "READ")) {
+            int pin = atoi(skip_ws(after));
+            int value = hw_binding_gpio_read(pin);
+            char out[48];
+            if (value < 0) {
+                print_line("GPIO: pin is reserved or invalid");
+            } else {
+                snprintf(out, sizeof out, "GPIO %d = %d", pin, value);
+                print_line(out);
+            }
+        } else {
+            int args[2];
+            int count = _hw_args(p, args, 2);
+            if (count < 2) {
+                print_line("usage: GPIO PIN, VALUE");
+            } else if (hw_binding_gpio_write(args[0], args[1]) < 0) {
+                print_line("GPIO: pin is reserved or invalid");
+            }
+        }
+    } else if (ci_eq(tok, "PWM")) {
+        int args[3];
+        int count = _hw_args(rest, args, 3);
+        if (count < 3) {
+            print_line("usage: PWM PIN, FREQ_HZ, DUTY  (DUTY -1 stops)");
+        } else if (hw_binding_pwm(args[0], args[1], args[2]) < 0) {
+            print_line("PWM: pin is reserved, or frequency/duty is invalid");
+        }
+    } else if (ci_eq(tok, "I2CDETECT")) {
+        if (hw_binding_i2c_scan() < 0) print_line("I2CDETECT: no I2C bus available");
+    } else if (ci_eq(tok, "WAIT") || ci_eq(tok, "SLEEP")) {
+        bool ok = false;
+        int delay = expr_eval(skip_ws(rest), expr_lookup_basic, &g_basic_env, &ok);
+        if (!ok || delay < 0) print_line("usage: WAIT MS");
+        else sys_sleep((uint32_t)delay);
     } else if (ci_eq(tok, "LET")) {
         if (!basic_assign(rest)) print_line("usage: LET A = EXPR");
     } else if (ci_eq(tok, "INPUT")) {

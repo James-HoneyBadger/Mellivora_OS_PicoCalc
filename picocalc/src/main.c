@@ -37,7 +37,9 @@
 #include "ui/ui.h"
 #include "apps.h"
 #include "apps/app_shared.h"
+#include "audio.h"
 #include "core/expr.h"
+#include "core1.h"
 #include "core/glob.h"
 #include "core/history.h"
 #include "core/datetime.h"
@@ -46,6 +48,8 @@
 #include "core/lfn.h"
 #include "hal/hal.h"
 #include "pipe.h"
+#include "metrics.h"
+#include "ramdisk.h"
 #include "shell.h"
 #ifdef PICO_CYW43_SUPPORTED
 #include "net.h"
@@ -876,7 +880,7 @@ static void cmd_help(const char *arg) {
         out_role(UI_MUTED, "Search commands with: help -k KEYWORD\n\n");
 
         out_role(UI_ACCENT, "[system]");
-        out_str("  help man uname sysinfo uptime clear battery backlight\n");
+        out_str("  help man uname sysinfo uptime clear battery backlight ramdisk\n");
         out_str("          echo date reboot screenshot version lock sleep dmesg id\n\n");
 
         out_role(UI_ACCENT, "[shell]");
@@ -1161,40 +1165,121 @@ static void cmd_dmesg(const char *arg) {
 }
 
 static void cmd_sysinfo(void) {
-    out_str("  Mellivora OS v" MELLIVORA_VERSION " for PicoCalc\n");
-    out_str("  ====================================\n");
+    for (;;) {
+        runtime_metrics_t stats;
+        metrics_snapshot(&stats);
+        sys_clear();
+        out_str("  Mellivora OS v" MELLIVORA_VERSION " diagnostics\n");
+        out_str("  --------------------------------------\n");
 #if defined(PICO_CYW43_SUPPORTED)
-    out_str("  Platform: RP2350 + CYW43 (Pico 2W)\n");
-    out_str("  RAM:      520 KB SRAM\n");
-    out_str("  Flash:    4 MB XIP\n");
-    out_str("  WiFi:     CYW43439 802.11n 2.4 GHz\n");
+        out_str("  Platform: RP2350 + CYW43 (Pico 2W)\n");
 #elif defined(PICO_RP2350A) || defined(PICO_RP2350)
-    out_str("  Platform: RP2350 (Pico 2)\n");
-    out_str("  RAM:      520 KB SRAM\n");
-    out_str("  Flash:    4 MB XIP\n");
-    out_str("  WiFi:     none\n");
+        out_str("  Platform: RP2350 (Pico 2)\n");
 #else
-    out_str("  Platform: RP2040 (Pico)\n");
-    out_str("  RAM:      264 KB SRAM\n");
-    out_str("  Flash:    2 MB XIP\n");
-    out_str("  WiFi:     none\n");
+        out_str("  Platform: RP2040 (Pico)\n");
 #endif
-    out_str("  LCD:      ILI9488 320x320 SPI1\n");
-    out_str("  KBD:      STM32 co-proc I2C1\n");
-    out_str("  SD:       SPI0 FAT\n");
-    out_fmt("  Clock:    %lu MHz\n",
-            (unsigned long)(clock_get_hz(clk_sys) / 1000000));
-    out_fmt("  SD:       %s\n", _fat_mounted ? "mounted" : "not mounted");
-    out_fmt("  Status:   bar %s\n", _statusbar_enabled ? "on" : "off");
-    int64_t us = absolute_time_diff_us(g_boot_time, get_absolute_time());
-    int64_t sec = us / 1000000LL;
-    int64_t days = sec / 86400, hours = (sec % 86400) / 3600;
-    int64_t mins = (sec % 3600) / 60, secs = sec % 60;
-    if (days > 0)
-        out_fmt("  Uptime:   %lldd %02lldh %02lldm %02llds\n", days, hours, mins, secs);
-    else
-        out_fmt("  Uptime:   %02lldh %02lldm %02llds\n", hours, mins, secs);
-    out_str("  Built:    " __DATE__ " " __TIME__ "\n");
+        out_str("  Clock:    ");
+        out_fmt("%lu MHz    uptime %lu s\n",
+                (unsigned long)(clock_get_hz(clk_sys) / 1000000),
+                (unsigned long)(sys_time_ms() / 1000u));
+        out_fmt("  Core 0 load (estimated): %u%%\n", stats.core0_load_percent);
+        out_fmt("  Core 1 load (estimated): %u%%\n", stats.core1_load_percent);
+        out_fmt("  Heap: %lu used, %lu free, %u%% fragmented\n",
+                (unsigned long)stats.heap_used_bytes,
+                (unsigned long)stats.heap_free_bytes,
+                stats.heap_fragmentation_percent);
+        out_fmt("  RAM disk: %lu / %lu bytes, %lu files\n",
+                (unsigned long)stats.ramdisk_used_bytes,
+                (unsigned long)stats.ramdisk_capacity_bytes,
+                (unsigned long)ramdisk_file_count());
+        out_fmt("  SD throughput: read %lu KiB/s, write %lu KiB/s\n",
+                (unsigned long)stats.sd_read_kib_per_second,
+                (unsigned long)stats.sd_write_kib_per_second);
+        if (stats.battery_percent <= 100) {
+            out_fmt("  Battery gauge: %u%%%s\n", stats.battery_percent,
+                    stats.battery_charging ? " charging" : "");
+        } else {
+            out_str("  Battery gauge: unavailable\n");
+        }
+        out_str("  Battery gauge history (percent, 1 min/sample): ");
+        if (stats.battery_history_count == 0) {
+            out_str("no samples");
+        } else {
+            static const char levels[] = " .:-=+*#";
+            for (uint8_t i = 0; i < stats.battery_history_count; i++) {
+                uint8_t level = (uint8_t)((stats.battery_history[i] * 7u) / 100u);
+                out_char(levels[level]);
+            }
+        }
+        out_str("\n\n  Refresh: 1 second     Q: return to shell\n");
+
+        int key = getchar_timeout_us(0);
+        if (key == PICO_ERROR_TIMEOUT) key = kbd_getc();
+        if (key == 'q' || key == 'Q' || key == 0x03) break;
+        sys_sleep(1000);
+    }
+    sys_clear();
+}
+
+static void _ramdisk_list_entry(const char *name, uint32_t size, void *context) {
+    (void)context;
+    out_fmt("  %-28s %lu bytes\n", name, (unsigned long)size);
+}
+
+static void cmd_ramdisk(const char *arg) {
+    while (arg && (*arg == ' ' || *arg == '\t')) arg++;
+    if (!arg || !*arg || !strncmp(arg, "info", 4)) {
+        out_fmt("RAM disk: %lu / %lu bytes used, %lu files\n",
+                (unsigned long)ramdisk_used(),
+                (unsigned long)ramdisk_capacity(),
+                (unsigned long)ramdisk_file_count());
+        out_str("Usage: ramdisk [ls | cat NAME | write NAME TEXT | rm NAME]\n");
+        return;
+    }
+    if (!strncmp(arg, "ls", 2) && (arg[2] == '\0' || arg[2] == ' ')) {
+        ramdisk_list(_ramdisk_list_entry, NULL);
+        return;
+    }
+    bool remove = !strncmp(arg, "rm ", 3);
+    bool cat = !strncmp(arg, "cat ", 4);
+    bool write = !strncmp(arg, "write ", 6);
+    size_t prefix = remove ? 3u : (cat ? 4u : (write ? 6u : 0u));
+    if (prefix == 0) {
+        out_str("ramdisk: invalid operation\n");
+        return;
+    }
+    const char *args = arg + prefix;
+    char name[RAMDISK_NAME_MAX];
+    size_t name_len = 0;
+    while (args[name_len] && args[name_len] != ' ' && args[name_len] != '\t' &&
+           name_len < sizeof name - 1) name_len++;
+    if (name_len == 0 || (args[name_len] && args[name_len] != ' ' && args[name_len] != '\t')) {
+        out_str("ramdisk: invalid or overlong name\n");
+        return;
+    }
+    memcpy(name, args, name_len);
+    name[name_len] = '\0';
+    const char *value = args + name_len;
+    while (*value == ' ' || *value == '\t') value++;
+
+    if (remove) {
+        if (!ramdisk_remove(name)) out_str("ramdisk: file not found\n");
+    } else if (write) {
+        if (!*value) {
+            out_str("usage: ramdisk write NAME TEXT\n");
+        } else if (!ramdisk_write(name, value, (uint32_t)strlen(value))) {
+            out_str("ramdisk: full, invalid name, or too many files\n");
+        }
+    } else if (cat) {
+        uint32_t length = 0;
+        const uint8_t *data = ramdisk_get(name, &length);
+        if (!data) {
+            out_str("ramdisk: file not found\n");
+            return;
+        }
+        for (uint32_t i = 0; i < length; i++) out_char((char)data[i]);
+        if (length && data[length - 1] != '\n') out_char('\n');
+    }
 }
 
 static void cmd_status(const char *arg) {
@@ -1750,7 +1835,8 @@ bool sys_output_captured(void) {
     X("help", "system") X("man", "system") X("history", "shell") X("alias", "shell") \
     X("unalias", "shell") X("read", "shell") X("which", "shell") X("type", "shell") \
     X("expr", "shell") X("uname", "system") X("uptime", "system") X("clear", "system") \
-    X("battery", "system") X("backlight", "system") X("mount", "fs") X("ls", "fs") \
+    X("battery", "system") X("backlight", "system") X("ramdisk", "system") \
+    X("mount", "fs") X("ls", "fs") \
     X("dir", "fs") X("cd", "fs") X("pwd", "fs") X("cat", "fs") X("echo", "system") \
     X("touch", "fs") X("write", "fs") X("mkdir", "fs") X("rm", "fs") X("rename", "fs") \
     X("sdinfo", "fs") X("sdread", "fs") X("sdcheck", "fs") X("backup", "fs") \
@@ -1780,7 +1866,9 @@ bool sys_output_captured(void) {
     X("xxd", "apps") X("strings", "apps") X("yes", "apps") X("tee", "apps") X("life", "apps") \
     X("tetris", "apps") X("mandelbrot", "apps") X("fractal", "apps") X("piano", "apps") \
     X("forth", "apps") X("xmodem", "apps") X("theme", "apps") X("sysinfo", "system") \
-    X("cursor", "system") \
+    X("cursor", "system") X("hw", "system") X("workbench", "system") \
+    X("gpio", "system") X("pwm", "system") X("i2cdetect", "system") X("i2c", "system") \
+    X("ymodem", "system") \
     X("less", "apps") X("uniq", "apps") X("umount", "fs") X("unmount", "fs") \
     X("time", "shell") X("repeat", "shell") X("printf", "shell") \
     X("base64", "apps") X("crc32", "apps") X("units", "apps") X("pass", "apps") \
@@ -1791,7 +1879,7 @@ bool sys_output_captured(void) {
 #define NET_COMMAND_LIST(X) \
     X("wifi", "net") X("ping", "net") X("ifconfig", "net") X("ntp", "net") X("dns", "net") \
     X("fetch", "net") X("wget", "net") X("weather", "net") X("irc", "net") X("netstat", "net") \
-    X("telnet", "net")
+    X("telnet", "net") X("mpkg", "net")
 #else
 #define NET_COMMAND_LIST(X)
 #endif
@@ -2184,7 +2272,11 @@ static void dispatch_ex(char *line, bool record_history) {
         }
         char *seg = skip_spaces(segments[i]);
         trim_right(seg);
-        if (*seg) dispatch_single(seg);
+        if (*seg) {
+            uint32_t started_us = time_us_32();
+            dispatch_single(seg);
+            core1_metrics_add_core0_busy(time_us_32() - started_us);
+        }
     }
 
     /* Scripts keep the interrupt flag so their line loop can stop; the
@@ -2724,6 +2816,7 @@ static void dispatch_single_no_glob(char *line) {
     else if (!strcmp(line, "date"))      cmd_date(arg);
     else if (!strcmp(line, "dmesg"))     cmd_dmesg(arg);
     else if (!strcmp(line, "sysinfo"))   cmd_sysinfo();
+    else if (!strcmp(line, "ramdisk"))   cmd_ramdisk(arg);
     else if (!strcmp(line, "time"))      cmd_time(arg);
     else if (!strcmp(line, "repeat"))    cmd_repeat(arg);
     else if (!strcmp(line, "printf"))    cmd_printf(arg);
@@ -2824,7 +2917,7 @@ static int read_input(void) {
 static int read_input_blocking(void) {
     for (;;) {
         int ch = read_input();
-        if (ch < 0) { sleep_ms(20); continue; }
+        if (ch < 0) { sys_sleep(20); continue; }
         if (ch == 0x03 || ch == 0x1B) return 0; /* Ctrl-C / Esc */
         if (ch >= 'A' && ch <= 'Z') ch = ch - 'A' + 'a';
         return ch;
@@ -2860,9 +2953,10 @@ static bool parse_force_flag(const char **arg) {
 /* ------------------------------------------------------------------ */
 /* Status bar — last LCD row shows battery, cwd, uptime                 */
 /* ------------------------------------------------------------------ */
-static void _draw_status_bar(void) {
+static void _draw_status_bar_impl(void) {
     if (!_lcd_ready || !_statusbar_enabled || _screensaver_active) return;
     if (ui_fullscreen()) return;
+    if (lcd_batch_active()) return;
 
     /* Throttle redraws — the bar shows uptime in seconds, so refreshing more
        than once per second is wasted work and visible flicker. The two real
@@ -2881,9 +2975,7 @@ static void _draw_status_bar(void) {
     int bat = kbd_battery_percent();
     bool charging = kbd_is_charging();
 
-    /* Acquire the LCD lock so the entire bar redraw is atomic versus core0
-       output (recursive mutex — safe even though the lcd_* helpers below
-       also acquire it). */
+    /* Keep the complete redraw atomic against queued LCD operations. */
     lcd_lock();
 
     /* Save current fg/bg */
@@ -2982,6 +3074,18 @@ static void _draw_status_bar(void) {
     lcd_unlock();
 }
 
+static void _draw_status_bar_task(void *context) {
+    (void)context;
+    _draw_status_bar_impl();
+}
+
+static void _draw_status_bar(void) {
+    if (core1_is_running() && !core1_is_worker())
+        core1_call(_draw_status_bar_task, NULL);
+    else
+        _draw_status_bar_impl();
+}
+
 /* ------------------------------------------------------------------ */
 /* Idle screensaver — bouncing logo, any key wakes                    */
 /* ------------------------------------------------------------------ */
@@ -3024,15 +3128,37 @@ static void _run_screensaver(void) {
     _screensaver_active = false;
 }
 
-#if defined(PICO_RP2350A) || defined(PICO_RP2350)
-/* Core1 entry: periodically refresh the status bar */
+/* Core 1 owns periodic UI composition, audio output, and Wi-Fi polling. */
 static void _core1_entry(void) {
+    core1_service_set_running(true);
+    uint32_t last_status_ms = 0;
+    uint32_t last_battery_ms = 0;
     for (;;) {
-        _draw_status_bar();
-        sleep_ms(2000);
+        uint32_t started_us = time_us_32();
+        while (core1_service_process()) {
+            if (time_us_32() - started_us >= 2000u) break;
+        }
+#ifdef PICO_CYW43_SUPPORTED
+        net_poll();
+#endif
+        audio_service_poll();
+
+        uint32_t now_ms = sys_time_ms();
+        if (_statusbar_enabled &&
+            (last_status_ms == 0 || now_ms - last_status_ms >= 1000u)) {
+            _draw_status_bar_impl();
+            last_status_ms = now_ms;
+        }
+        if (last_battery_ms == 0 || now_ms - last_battery_ms >= 60000u) {
+            metrics_sample_battery();
+            last_battery_ms = now_ms;
+        }
+        core1_metrics_add_core1_busy(time_us_32() - started_us);
+        uint32_t idle_started = time_us_32();
+        sleep_ms(1);
+        core1_metrics_add_idle(time_us_32() - idle_started);
     }
 }
-#endif
 
 /* ------------------------------------------------------------------ */
 /* main                                                                 */
@@ -3063,10 +3189,12 @@ int main(void) {
 
     kbd_init();
     kbd_set_backlight(255);
-    sleep_ms(20);
+    sys_sleep(20);
     lcd_init();
     kbd_set_backlight(255);
     _lcd_ready = true;
+    (void)ramdisk_init();
+    multicore_launch_core1(_core1_entry);
 
     lcd_cls(LCD_BLACK);
     out_str("\x1b[2J\x1b[H");
@@ -3152,11 +3280,6 @@ int main(void) {
     /* Enable status bar on last LCD row */
     _statusbar_enabled = true;
     _draw_status_bar();
-
-#if defined(PICO_RP2350A) || defined(PICO_RP2350)
-    /* Pico 2: launch core1 for background status bar refresh */
-    multicore_launch_core1(_core1_entry);
-#endif
 
     out_prompt();
     lcd_cursor_enable(true, true);

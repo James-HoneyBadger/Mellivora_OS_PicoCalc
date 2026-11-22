@@ -7,6 +7,7 @@
 
 #include "kbd.h"
 #include "picocalc_hw.h"
+#include "core1.h"
 
 #include "pico/stdlib.h"
 #include "pico/mutex.h"
@@ -99,7 +100,9 @@ int kbd_getc(void) {
     if (ret < 0) { _kbd_i2c_recover(); goto kbd_getc_done; }
 
     /* The co-processor needs ~16 ms to prepare the response. */
+    uint32_t sleep_start = time_us_32();
     sleep_ms(16);
+    core1_metrics_add_idle(time_us_32() - sleep_start);
 
     uint16_t buf = 0;
     ret = i2c_read_timeout_us(KBD_I2C_PORT, KBD_I2C_ADDR, (uint8_t *)&buf, 2, false, 500000);

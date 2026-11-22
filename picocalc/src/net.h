@@ -62,6 +62,14 @@ int  net_https_get(const char *host, uint16_t port, const char *path,
                    const char *ca_pem, size_t ca_len, char *buf, size_t cap,
                    int timeout_ms);
 
+/* Streaming HTTPS GET: the response body is delivered to `sink` in chunks as
+   it arrives, so large downloads never sit in RAM. Return non-zero from the
+   sink to abort the transfer. Returns the body length or -1. */
+typedef int (*net_sink_fn)(void *ctx, const uint8_t *data, size_t len);
+int  net_https_get_stream(const char *host, uint16_t port, const char *path,
+                          const char *ca_pem, size_t ca_len,
+                          net_sink_fn sink, void *ctx, int timeout_ms);
+
 /* ---- Poll (call periodically to service lwIP) ---- */
 void net_poll(void);
 

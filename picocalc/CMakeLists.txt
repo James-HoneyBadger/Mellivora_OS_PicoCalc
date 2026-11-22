@@ -28,10 +28,14 @@ set(MELLIVORA_SOURCES
     src/sd.c
     src/fat.c
     src/syscall.c
+    src/core1.c
+    src/ramdisk.c
+    src/metrics.c
     src/console.c
     src/audio.c
     src/pipe.c
     src/apps.c
+    src/mapp.c
     src/ui/ui.c
     src/apps/app_shared.c
     src/apps/app_util.c
@@ -43,6 +47,8 @@ set(MELLIVORA_SOURCES
     src/apps/app_system.c
     src/apps/app_builtins.c
     src/apps/app_tools.c
+    src/apps/app_mpkg.c
+    src/apps/app_hw.c
     src/apps/text.c
     src/apps/hex.c
     src/apps/fs.c
@@ -56,9 +62,19 @@ set(MELLIVORA_SOURCES
     src/core/history.c
     src/core/datetime.c
     src/core/lfn.c
+    src/core/json.c
+    src/core/sha256.c
+    src/core/mpkg.c
+    src/core/theme_file.c
+    src/core/pinmap.c
+    src/core/vt100.c
+    src/core/xmodem.c
+    src/core/i2cdetect.c
+    src/core/workbench.c
     src/net.c
     src/netapps.c
     src/hal/hal_pico.c
+    src/hal/hw_pico.c
 )
 
 add_executable(mellivora_picocalc ${MELLIVORA_SOURCES})

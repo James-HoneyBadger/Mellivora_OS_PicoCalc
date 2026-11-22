@@ -9,6 +9,7 @@
 
 #include "lcd.h"
 #include "picocalc_hw.h"
+#include "core1.h"
 
 #include "pico/stdlib.h"
 #include "pico/mutex.h"
@@ -21,15 +22,12 @@
 #include <stdarg.h>
 
 /* ============================================================
- * Cross-core serialisation
- *
- * On RP2350 the status bar refresh runs on core1 while shell output runs
- * on core0; both touch the same SPI peripheral. A recursive mutex lets
- * nested public lcd_* calls (e.g. lcd_putc -> lcd_draw_char) share the
- * same critical section.
+ * Core 1 owns display operations after its service starts. A recursive
+ * mutex keeps nested public lcd_* calls and explicit drawing batches atomic.
  * ============================================================ */
 static recursive_mutex_t _lcd_mtx;
 static bool _lcd_mtx_inited = false;
+static uint32_t _lcd_core1_lock_depth;
 
 static inline void _lcd_lock(void) {
     if (_lcd_mtx_inited) recursive_mutex_enter_blocking(&_lcd_mtx);
@@ -38,8 +36,132 @@ static inline void _lcd_unlock(void) {
     if (_lcd_mtx_inited) recursive_mutex_exit(&_lcd_mtx);
 }
 
-void lcd_lock(void)   { _lcd_lock(); }
-void lcd_unlock(void) { _lcd_unlock(); }
+typedef enum {
+    LCD_OP_LOCK,
+    LCD_OP_UNLOCK,
+    LCD_OP_FILL,
+    LCD_OP_DRAW_PIXEL,
+    LCD_OP_DRAW_CHAR,
+    LCD_OP_DRAW_STR,
+    LCD_OP_CLEAR,
+    LCD_OP_CURSOR_ENABLED,
+    LCD_OP_CURSOR_IS_BLOCK,
+    LCD_OP_CURSOR_ENABLE,
+    LCD_OP_CURSOR_TICK,
+    LCD_OP_PUTC,
+    LCD_OP_PUTS,
+    LCD_OP_SPLASH,
+    LCD_OP_FILL_RECT,
+    LCD_OP_DRAW_HLINE,
+    LCD_OP_DRAW_VLINE,
+    LCD_OP_DRAW_RECT,
+    LCD_OP_SET_FG,
+    LCD_OP_SET_BG,
+    LCD_OP_GET_FG,
+    LCD_OP_GET_BG,
+    LCD_OP_SET_CURSOR,
+    LCD_OP_GET_COL,
+    LCD_OP_GET_ROW,
+    LCD_OP_DRAW_CELL,
+    LCD_OP_GET_CELL,
+} lcd_op_t;
+
+typedef struct {
+    lcd_op_t op;
+    int i, j;
+    int progress;
+    uint16_t x, y, w, h;
+    uint32_t color, fg, bg, result_color;
+    char ch, result_char;
+    bool enable, block, result_bool;
+    const char *text, *target;
+    int result_int;
+} lcd_request_t;
+
+static void _lcd_execute_request(void *context) {
+    lcd_request_t *request = (lcd_request_t *)context;
+    switch (request->op) {
+        case LCD_OP_LOCK: lcd_lock(); break;
+        case LCD_OP_UNLOCK: lcd_unlock(); break;
+        case LCD_OP_FILL: lcd_fill(request->color); break;
+        case LCD_OP_DRAW_PIXEL: lcd_draw_pixel(request->x, request->y, request->color); break;
+        case LCD_OP_DRAW_CHAR:
+            lcd_draw_char(request->x, request->y, request->ch, request->fg, request->bg);
+            break;
+        case LCD_OP_DRAW_STR:
+            lcd_draw_str(request->x, request->y, request->text, request->fg, request->bg);
+            break;
+        case LCD_OP_CLEAR: lcd_cls(request->bg); break;
+        case LCD_OP_CURSOR_ENABLED: request->result_bool = lcd_cursor_enabled(); break;
+        case LCD_OP_CURSOR_IS_BLOCK: request->result_bool = lcd_cursor_is_block(); break;
+        case LCD_OP_CURSOR_ENABLE: lcd_cursor_enable(request->enable, request->block); break;
+        case LCD_OP_CURSOR_TICK: lcd_cursor_tick(); break;
+        case LCD_OP_PUTC: lcd_putc(request->ch); break;
+        case LCD_OP_PUTS: lcd_puts(request->text); break;
+        case LCD_OP_SPLASH:
+            lcd_splash_show(request->text, request->target, request->progress);
+            break;
+        case LCD_OP_FILL_RECT:
+            lcd_fill_rect(request->x, request->y, request->w, request->h, request->color);
+            break;
+        case LCD_OP_DRAW_HLINE:
+            lcd_draw_hline(request->x, request->y, request->w, request->color);
+            break;
+        case LCD_OP_DRAW_VLINE:
+            lcd_draw_vline(request->x, request->y, request->h, request->color);
+            break;
+        case LCD_OP_DRAW_RECT:
+            lcd_draw_rect(request->x, request->y, request->w, request->h, request->color);
+            break;
+        case LCD_OP_SET_FG: lcd_set_fg(request->color); break;
+        case LCD_OP_SET_BG: lcd_set_bg(request->color); break;
+        case LCD_OP_GET_FG: request->result_color = lcd_get_fg(); break;
+        case LCD_OP_GET_BG: request->result_color = lcd_get_bg(); break;
+        case LCD_OP_SET_CURSOR: lcd_set_cursor(request->i, request->j); break;
+        case LCD_OP_GET_COL: request->result_int = lcd_get_col(); break;
+        case LCD_OP_GET_ROW: request->result_int = lcd_get_row(); break;
+        case LCD_OP_DRAW_CELL:
+            lcd_draw_cell(request->i, request->j, request->ch, request->fg, request->bg);
+            break;
+        case LCD_OP_GET_CELL:
+            request->result_char = lcd_get_cell(request->i, request->j);
+            break;
+    }
+}
+
+#define LCD_ROUTE_VOID(op_value, ...) \
+    do { \
+        if (core1_is_running() && !core1_is_worker()) { \
+            lcd_request_t request = { .op = (op_value), __VA_ARGS__ }; \
+            core1_call(_lcd_execute_request, &request); \
+            return; \
+        } \
+    } while (0)
+
+#define LCD_ROUTE_VALUE(op_value, result_field, ...) \
+    do { \
+        if (core1_is_running() && !core1_is_worker()) { \
+            lcd_request_t request = { .op = (op_value), __VA_ARGS__ }; \
+            core1_call(_lcd_execute_request, &request); \
+            return request.result_field; \
+        } \
+    } while (0)
+
+void lcd_lock(void) {
+    LCD_ROUTE_VOID(LCD_OP_LOCK);
+    _lcd_lock();
+    _lcd_core1_lock_depth++;
+}
+
+void lcd_unlock(void) {
+    LCD_ROUTE_VOID(LCD_OP_UNLOCK);
+    if (_lcd_core1_lock_depth) _lcd_core1_lock_depth--;
+    _lcd_unlock();
+}
+
+bool lcd_batch_active(void) {
+    return _lcd_core1_lock_depth != 0;
+}
 
 /* ============================================================
  * DMA acceleration (available on both RP2040 and RP2350)
@@ -285,6 +407,7 @@ void lcd_init(void) {
  * ============================================================ */
 
 void lcd_fill(uint32_t color) {
+    LCD_ROUTE_VOID(LCD_OP_FILL, .color = color);
     _lcd_lock();
     uint8_t r = (uint8_t)((color >> 16) & 0xFC);
     uint8_t g = (uint8_t)((color >>  8) & 0xFC);
@@ -306,6 +429,7 @@ void lcd_fill(uint32_t color) {
 }
 
 void lcd_draw_pixel(uint16_t x, uint16_t y, uint32_t color) {
+    LCD_ROUTE_VOID(LCD_OP_DRAW_PIXEL, .x = x, .y = y, .color = color);
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
     _lcd_lock();
     _set_window(x, y, x, y);
@@ -514,6 +638,8 @@ static const uint8_t _font8x16[95][16] = {
 };
 
 void lcd_draw_char(uint16_t x, uint16_t y, char c, uint32_t fg, uint32_t bg) {
+    LCD_ROUTE_VOID(LCD_OP_DRAW_CHAR,
+        .x = x, .y = y, .ch = c, .fg = fg, .bg = bg);
     if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) c = '?';
     const uint8_t *glyph = _font8x16[(uint8_t)c - 0x20];
     _lcd_lock();
@@ -544,6 +670,8 @@ void lcd_draw_char(uint16_t x, uint16_t y, char c, uint32_t fg, uint32_t bg) {
 }
 
 void lcd_draw_str(uint16_t x, uint16_t y, const char *s, uint32_t fg, uint32_t bg) {
+    LCD_ROUTE_VOID(LCD_OP_DRAW_STR,
+        .x = x, .y = y, .text = s, .fg = fg, .bg = bg);
     _lcd_lock();
     while (*s) {
         lcd_draw_char(x, y, *s++, fg, bg);
@@ -629,6 +757,7 @@ static void _scroll_up(void) {
 }
 
 void lcd_cls(uint32_t bg) {
+    LCD_ROUTE_VOID(LCD_OP_CLEAR, .bg = bg);
     _lcd_lock();
     _bg = bg;
     _clear_text_buf();
@@ -676,10 +805,18 @@ static void _lcd_cursor_erase_last(void) {
     _cursor_last_row = -1;
 }
 
-bool lcd_cursor_enabled(void) { return _cursor_enabled; }
-bool lcd_cursor_is_block(void) { return _cursor_block; }
+bool lcd_cursor_enabled(void) {
+    LCD_ROUTE_VALUE(LCD_OP_CURSOR_ENABLED, result_bool);
+    return _cursor_enabled;
+}
+
+bool lcd_cursor_is_block(void) {
+    LCD_ROUTE_VALUE(LCD_OP_CURSOR_IS_BLOCK, result_bool);
+    return _cursor_block;
+}
 
 void lcd_cursor_enable(bool enable, bool block) {
+    LCD_ROUTE_VOID(LCD_OP_CURSOR_ENABLE, .enable = enable, .block = block);
     _lcd_lock();
     if (_cursor_enabled && !enable) {
         _lcd_cursor_erase_last();
@@ -693,6 +830,7 @@ void lcd_cursor_enable(bool enable, bool block) {
 }
 
 void lcd_cursor_tick(void) {
+    LCD_ROUTE_VOID(LCD_OP_CURSOR_TICK);
     if (!_cursor_enabled) return;
     uint32_t now = (uint32_t)to_ms_since_boot(get_absolute_time());
     if (now - _cursor_last_ms < 500) return;
@@ -704,6 +842,7 @@ void lcd_cursor_tick(void) {
 }
 
 void lcd_putc(char c) {
+    LCD_ROUTE_VOID(LCD_OP_PUTC, .ch = c);
     _lcd_lock();
     if (_cursor_enabled) _lcd_cursor_render(false);
     if (c == '\n') {
@@ -745,6 +884,7 @@ void lcd_putc(char c) {
 }
 
 void lcd_puts(const char *s) {
+    LCD_ROUTE_VOID(LCD_OP_PUTS, .text = s);
     _lcd_lock();
     while (*s) lcd_putc(*s++);
     _lcd_unlock();
@@ -755,6 +895,8 @@ void lcd_puts(const char *s) {
  * ============================================================ */
 
 void lcd_splash_show(const char *version, const char *target, int progress_pct) {
+    LCD_ROUTE_VOID(LCD_OP_SPLASH,
+        .text = version, .target = target, .progress = progress_pct);
     _lcd_lock();
     uint32_t fg = LCD_AMBER;
     uint32_t bg = LCD_BLACK;
@@ -821,6 +963,8 @@ void lcd_splash_show(const char *version, const char *target, int progress_pct) 
  * ============================================================ */
 
 void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t color) {
+    LCD_ROUTE_VOID(LCD_OP_FILL_RECT,
+        .x = x, .y = y, .w = w, .h = h, .color = color);
     if (x >= LCD_WIDTH || y >= LCD_HEIGHT || w == 0 || h == 0) return;
     if (x + w > LCD_WIDTH)  w = LCD_WIDTH - x;
     if (y + h > LCD_HEIGHT) h = LCD_HEIGHT - y;
@@ -847,14 +991,18 @@ void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t colo
 }
 
 void lcd_draw_hline(uint16_t x, uint16_t y, uint16_t w, uint32_t color) {
+    LCD_ROUTE_VOID(LCD_OP_DRAW_HLINE, .x = x, .y = y, .w = w, .color = color);
     lcd_fill_rect(x, y, w, 1, color);
 }
 
 void lcd_draw_vline(uint16_t x, uint16_t y, uint16_t h, uint32_t color) {
+    LCD_ROUTE_VOID(LCD_OP_DRAW_VLINE, .x = x, .y = y, .h = h, .color = color);
     lcd_fill_rect(x, y, 1, h, color);
 }
 
 void lcd_draw_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t color) {
+    LCD_ROUTE_VOID(LCD_OP_DRAW_RECT,
+        .x = x, .y = y, .w = w, .h = h, .color = color);
     lcd_draw_hline(x, y, w, color);
     lcd_draw_hline(x, (uint16_t)(y + h - 1), w, color);
     lcd_draw_vline(x, y, h, color);
@@ -865,12 +1013,28 @@ void lcd_draw_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint32_t colo
  * Terminal color and cursor control
  * ============================================================ */
 
-void lcd_set_fg(uint32_t color) { _fg = color; }
-void lcd_set_bg(uint32_t color) { _bg = color; }
-uint32_t lcd_get_fg(void) { return _fg; }
-uint32_t lcd_get_bg(void) { return _bg; }
+void lcd_set_fg(uint32_t color) {
+    LCD_ROUTE_VOID(LCD_OP_SET_FG, .color = color);
+    _fg = color;
+}
+
+void lcd_set_bg(uint32_t color) {
+    LCD_ROUTE_VOID(LCD_OP_SET_BG, .color = color);
+    _bg = color;
+}
+
+uint32_t lcd_get_fg(void) {
+    LCD_ROUTE_VALUE(LCD_OP_GET_FG, result_color);
+    return _fg;
+}
+
+uint32_t lcd_get_bg(void) {
+    LCD_ROUTE_VALUE(LCD_OP_GET_BG, result_color);
+    return _bg;
+}
 
 void lcd_set_cursor(int col, int row) {
+    LCD_ROUTE_VOID(LCD_OP_SET_CURSOR, .i = col, .j = row);
     _lcd_lock();
     if (_cursor_enabled) _lcd_cursor_render(false);
     if (col >= 0 && col < LCD_COLS) _cur_col = col;
@@ -879,10 +1043,19 @@ void lcd_set_cursor(int col, int row) {
     _lcd_unlock();
 }
 
-int lcd_get_col(void) { return _cur_col; }
-int lcd_get_row(void) { return _cur_row; }
+int lcd_get_col(void) {
+    LCD_ROUTE_VALUE(LCD_OP_GET_COL, result_int);
+    return _cur_col;
+}
+
+int lcd_get_row(void) {
+    LCD_ROUTE_VALUE(LCD_OP_GET_ROW, result_int);
+    return _cur_row;
+}
 
 void lcd_draw_cell(int col, int row, char c, uint32_t fg, uint32_t bg) {
+    LCD_ROUTE_VOID(LCD_OP_DRAW_CELL,
+        .i = col, .j = row, .ch = c, .fg = fg, .bg = bg);
     if (col < 0 || col >= LCD_COLS || row < 0 || row >= LCD_ROWS) return;
     if ((uint8_t)c < 0x20 || (uint8_t)c > 0x7E) c = ' ';
     _lcd_lock();
@@ -893,6 +1066,7 @@ void lcd_draw_cell(int col, int row, char c, uint32_t fg, uint32_t bg) {
 }
 
 char lcd_get_cell(int col, int row) {
+    LCD_ROUTE_VALUE(LCD_OP_GET_CELL, result_char, .i = col, .j = row);
     if (col < 0 || col >= LCD_COLS || row < 0 || row >= LCD_ROWS) return ' ';
     return _text_buf[row][col];
 }

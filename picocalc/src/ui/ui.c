@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "core/theme_file.h"
 #include "lcd.h"
 #include "syscall.h"
 
@@ -123,31 +124,93 @@ static const ui_theme_t _themes[] = {
 
 #define THEME_COUNT ((int)(sizeof _themes / sizeof _themes[0]))
 
+/* Palettes installed from /themes (NAME.thm). The array is intentionally small:
+   each entry costs UI_ROLE_COUNT 32-bit colours of RAM. */
+#define UI_USER_THEMES_MAX 4
+
+typedef struct {
+    char     name[THEME_FILE_NAME_MAX];
+    uint32_t color[UI_ROLE_COUNT];
+    bool     used;
+} ui_user_theme_t;
+
+static ui_user_theme_t _user_themes[UI_USER_THEMES_MAX];
+static int _user_theme_count = 0;
+
+_Static_assert(THEME_FILE_ROLE_COUNT == UI_ROLE_COUNT,
+               "theme_file roles must match ui_role_t order");
+
 static int _current = 0;
 static char _notice[48];
 static uint32_t _notice_until = 0;
 static bool _fullscreen = false;
 
-int ui_theme_count(void) { return THEME_COUNT; }
+int ui_theme_count(void) { return THEME_COUNT + _user_theme_count; }
 
 const char *ui_theme_name(int index) {
-    if (index < 0 || index >= THEME_COUNT) return "";
-    return _themes[index].name;
+    if (index < 0) return "";
+    if (index < THEME_COUNT) return _themes[index].name;
+    index -= THEME_COUNT;
+    if (index >= _user_theme_count || !_user_themes[index].used) return "";
+    return _user_themes[index].name;
 }
 
 int ui_theme_current(void) { return _current; }
 
-const char *ui_theme_current_name(void) { return _themes[_current].name; }
+const char *ui_theme_current_name(void) { return ui_theme_name(_current); }
 
 uint32_t ui_color(ui_role_t role) {
     if (role >= UI_ROLE_COUNT) return LCD_WHITE;
-    return _themes[_current].color[role];
+    if (_current < THEME_COUNT) return _themes[_current].color[role];
+    int user = _current - THEME_COUNT;
+    if (user >= 0 && user < _user_theme_count && _user_themes[user].used)
+        return _user_themes[user].color[role];
+    return _themes[0].color[role];
 }
 
 uint32_t ui_bg(void) { return ui_color(UI_BG); }
 
+bool ui_theme_color(int index, int role, uint32_t *out) {
+    if (!out || role < 0 || role >= UI_ROLE_COUNT) return false;
+    if (index < 0 || index >= ui_theme_count()) return false;
+    if (index < THEME_COUNT) {
+        *out = _themes[index].color[role];
+        return true;
+    }
+    int user = index - THEME_COUNT;
+    if (user >= _user_theme_count || !_user_themes[user].used) return false;
+    *out = _user_themes[user].color[role];
+    return true;
+}
+
+int ui_theme_user_count(void) { return _user_theme_count; }
+
+void ui_theme_clear_user(void) {
+    for (int i = 0; i < UI_USER_THEMES_MAX; i++) _user_themes[i].used = false;
+    _user_theme_count = 0;
+    if (_current >= THEME_COUNT) _current = 0;
+}
+
+int ui_theme_register(const char *name, const uint32_t color[UI_ROLE_COUNT]) {
+    if (!name || !*name || !color) return -1;
+    for (int i = 0; i < _user_theme_count; i++) {
+        if (!_user_themes[i].used || strcmp(_user_themes[i].name, name) != 0) continue;
+        memcpy(_user_themes[i].color, color, sizeof _user_themes[i].color);
+        return THEME_COUNT + i;
+    }
+    if (_user_theme_count >= UI_USER_THEMES_MAX) return -1;
+    int slot = _user_theme_count++;
+    ui_user_theme_t *theme = &_user_themes[slot];
+    memset(theme, 0, sizeof *theme);
+    strncpy(theme->name, name, sizeof theme->name - 1);
+    theme->name[sizeof theme->name - 1] = '\0';
+    memcpy(theme->color, color, sizeof theme->color);
+    theme->used = true;
+    return THEME_COUNT + slot;
+}
+
 bool ui_theme_set_index(int index) {
-    if (index < 0 || index >= THEME_COUNT) return false;
+    if (index < 0 || index >= ui_theme_count()) return false;
     _current = index;
     lcd_set_fg(ui_color(UI_TEXT));
     lcd_set_bg(ui_color(UI_BG));
@@ -157,8 +220,9 @@ bool ui_theme_set_index(int index) {
 
 bool ui_theme_set(const char *name) {
     if (!name || !*name) return false;
-    for (int i = 0; i < THEME_COUNT; i++) {
-        if (strcmp(name, _themes[i].name) == 0) return ui_theme_set_index(i);
+    for (int i = 0; i < ui_theme_count(); i++) {
+        const char *candidate = ui_theme_name(i);
+        if (*candidate && strcmp(name, candidate) == 0) return ui_theme_set_index(i);
     }
     return false;
 }

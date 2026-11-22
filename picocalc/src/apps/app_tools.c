@@ -612,6 +612,29 @@ static void _forth_exec_body(const char *body,
         else if (strcmp(bw, "over") == 0) { if (sp >= 2 && sp < FORTH_STACK_SZ) { stack[sp] = stack[sp-2]; sp++; } }
         else if (strcmp(bw, "cr") == 0) { sys_putchar('\n'); }
         else if (strcmp(bw, "emit") == 0) { if (sp > 0) sys_putchar((char)stack[--sp]); }
+        else if (strcmp(bw, "gpio@") == 0) {
+            if (sp > 0) {
+                int value = hw_binding_gpio_read(stack[sp - 1]);
+                stack[sp - 1] = value < 0 ? 0 : value;
+            }
+        } else if (strcmp(bw, "gpio!") == 0) {
+            if (sp >= 2) {
+                int pin = stack[sp - 1];
+                int value = stack[sp - 2];
+                sp -= 2;
+                (void)hw_binding_gpio_write(pin, value);
+            }
+        } else if (strcmp(bw, "pwm!") == 0) {
+            if (sp >= 3) {
+                int pin = stack[sp - 1];
+                int freq = stack[sp - 2];
+                int duty = stack[sp - 3];
+                sp -= 3;
+                (void)hw_binding_pwm(pin, freq, duty);
+            }
+        } else if (strcmp(bw, "i2cdetect") == 0) {
+            (void)hw_binding_i2c_scan();
+        }
         else {
             /* Look up nested user-defined word */
             bool found = false;
@@ -634,8 +657,92 @@ static void _forth_exec_body(const char *body,
     *psp = sp;
 }
 
+static void _forth_run_file(const char *path) {
+    uint8_t source[APP_READ_MAX + 1];
+    uint32_t length = 0;
+    if (load_file_bytes(path, source, sizeof source, &length, "forth") < 0) return;
+    source[length] = '\0';
+
+    int32_t stack[FORTH_STACK_SZ];
+    int sp = 0;
+    forth_word_t dict[FORTH_DICT_SZ];
+    int nwords = 0;
+    char *cursor = (char *)source;
+
+    while (*cursor) {
+        while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+        if (!*cursor) break;
+        if (*cursor == '\\') {
+            while (*cursor && *cursor != '\n') cursor++;
+            continue;
+        }
+
+        char word[FORTH_WORD_MAX];
+        size_t wi = 0;
+        while (*cursor && !isspace((unsigned char)*cursor) && wi < sizeof word - 1)
+            word[wi++] = (char)tolower((unsigned char)*cursor++);
+        word[wi] = '\0';
+        while (*cursor && !isspace((unsigned char)*cursor)) cursor++;
+
+        if (strcmp(word, ":") == 0) {
+            char body[sizeof dict[0].body];
+            char name[FORTH_WORD_MAX];
+            size_t name_len = 0;
+            while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+            while (*cursor && !isspace((unsigned char)*cursor) && name_len < sizeof name - 1)
+                name[name_len++] = (char)tolower((unsigned char)*cursor++);
+            name[name_len] = '\0';
+            while (*cursor && !isspace((unsigned char)*cursor)) cursor++;
+            size_t body_len = 0;
+            bool closed = false;
+            while (*cursor) {
+                while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+                if (!*cursor) break;
+                char token[FORTH_WORD_MAX];
+                size_t token_len = 0;
+                while (*cursor && !isspace((unsigned char)*cursor) &&
+                       token_len < sizeof token - 1)
+                    token[token_len++] = (char)tolower((unsigned char)*cursor++);
+                token[token_len] = '\0';
+                while (*cursor && !isspace((unsigned char)*cursor)) cursor++;
+                if (strcmp(token, ";") == 0) {
+                    closed = true;
+                    break;
+                }
+                if (body_len && body_len + 1 < sizeof body) body[body_len++] = ' ';
+                if (token_len > sizeof body - body_len - 1) {
+                    body_len = sizeof body;
+                    break;
+                }
+                memcpy(body + body_len, token, token_len);
+                body_len += token_len;
+            }
+            if (!closed || body_len >= sizeof body || !name[0]) {
+                print_line("forth: invalid or oversized definition");
+                return;
+            }
+            if (nwords < FORTH_DICT_SZ) {
+                memcpy(dict[nwords].name, name, strlen(name) + 1);
+                memcpy(dict[nwords].body, body, body_len);
+                dict[nwords].body[body_len] = '\0';
+                nwords++;
+            } else {
+                print_line("forth: dictionary full");
+                return;
+            }
+            continue;
+        }
+        if (strcmp(word, "bye") == 0) break;
+        _forth_exec_body(word, stack, &sp, dict, nwords, 0);
+    }
+}
+
 void app_forth(const char *arg) {
-    (void)arg;
+    const char *path = skip_ws(arg);
+    if (*path) {
+        _forth_run_file(path);
+        return;
+    }
     int32_t stack[FORTH_STACK_SZ];
     int sp = 0;
     forth_word_t dict[FORTH_DICT_SZ];
@@ -783,108 +890,12 @@ void app_forth(const char *arg) {
             if (*endp == '\0' && wi > 0) {
                 if (sp < FORTH_STACK_SZ) stack[sp++] = (int32_t)val;
             } else {
-                char msg[48];
-                snprintf(msg, sizeof msg, "%s ?", word);
-                print_line(msg);
+                /* Shared executor: covers the hardware words and reports
+                   unknown words exactly as before. */
+                _forth_exec_body(word, stack, &sp, dict, nwords, 0);
             }
         }
         if (defining) print_line("  compiled");
     }
 }
 
-/* ============================================================
- * System: xmodem, theme
- * ============================================================ */
-
-/* XMODEM receive (128-byte blocks, checksum mode) over USB serial */
-#define XMODEM_SOH 0x01
-#define XMODEM_EOT 0x04
-#define XMODEM_ACK 0x06
-#define XMODEM_NAK 0x15
-#define XMODEM_CAN 0x18
-
-static int _xmodem_getc(uint32_t timeout_ms) {
-    uint32_t start = sys_time_ms();
-    while (sys_time_ms() - start < timeout_ms) {
-        int ch = getchar_timeout_us(1000);
-        if (ch != PICO_ERROR_TIMEOUT) return ch;
-    }
-    return -1;
-}
-
-void app_xmodem(const char *arg) {
-    const char *path = skip_ws(arg);
-    if (!*path) { print_line("usage: xmodem <filename>"); return; }
-
-    print_line("XMODEM receive: send file now...");
-    print_line("(Start transfer in your terminal)");
-
-#if defined(PICO_RP2350A) || defined(PICO_RP2350)
-    static uint8_t filebuf[65536]; /* 512 blocks on Pico 2 */
-#else
-    static uint8_t filebuf[16384]; /* 128 blocks on Pico 1 */
-#endif
-    int total = 0;
-    int expected_blk = 1;
-
-    /* Send NAK to initiate */
-    putchar_raw(XMODEM_NAK);
-
-    while (1) {
-        int header = _xmodem_getc(10000);
-        if (header == XMODEM_EOT) {
-            putchar_raw(XMODEM_ACK);
-            break;
-        }
-        if (header == XMODEM_CAN) {
-            print_line("Transfer cancelled by sender");
-            return;
-        }
-        if (header != XMODEM_SOH) {
-            print_line("XMODEM: bad header");
-            putchar_raw(XMODEM_NAK);
-            continue;
-        }
-
-        int blk = _xmodem_getc(1000);
-        int blk_inv = _xmodem_getc(1000);
-        if (blk < 0 || blk_inv < 0 || (blk + blk_inv) != 0xFF) {
-            putchar_raw(XMODEM_NAK);
-            continue;
-        }
-
-        uint8_t data[128];
-        uint8_t cksum = 0;
-        bool ok = true;
-        for (int i = 0; i < 128; i++) {
-            int b = _xmodem_getc(1000);
-            if (b < 0) { ok = false; break; }
-            data[i] = (uint8_t)b;
-            cksum += data[i];
-        }
-        int recv_ck = _xmodem_getc(1000);
-        if (!ok || recv_ck < 0 || (uint8_t)recv_ck != cksum) {
-            putchar_raw(XMODEM_NAK);
-            continue;
-        }
-
-        if (blk == (expected_blk & 0xFF)) {
-            if (total + 128 > (int)sizeof filebuf) {
-                putchar_raw(XMODEM_CAN);
-                putchar_raw(XMODEM_CAN);
-                ui_error("xmodem", "file exceeds receive buffer; transfer aborted");
-                return;
-            }
-            memcpy(filebuf + total, data, 128);
-            total += 128;
-            expected_blk++;
-        }
-        putchar_raw(XMODEM_ACK);
-    }
-
-    /* Write to file */
-    sys_fwrite(path, (const char *)filebuf, (uint32_t)total);
-    char msg[64];
-    snprintf(msg, sizeof msg, "Received %d bytes -> %s", total, path);
-    print_line(msg);
-}

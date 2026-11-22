@@ -29,6 +29,7 @@
 #include "fat.h"
 #include "lcd.h"
 #include "kbd.h"
+#include "core1.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -225,7 +226,11 @@ static inline void sys_setcolor(uint8_t color) {
 
 static inline int sys_getscreenw(void) { return LCD_COLS; }
 static inline int sys_getscreenh(void) { return LCD_ROWS; }
-static inline void sys_sleep(uint32_t ms) { sleep_ms(ms); }
+static inline void sys_sleep(uint32_t ms) {
+    uint32_t start = time_us_32();
+    sleep_ms(ms);
+    core1_metrics_add_idle(time_us_32() - start);
+}
 static inline uint32_t sys_time_ms(void) { return (uint32_t)to_ms_since_boot(get_absolute_time()); }
 
 /* Software RTC: epoch milliseconds, settable via `date` command.

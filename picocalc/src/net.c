@@ -8,6 +8,7 @@
 #ifdef PICO_CYW43_SUPPORTED
 
 #include "net.h"
+#include "core1.h"
 
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
@@ -57,7 +58,7 @@ static uint64_t _ntp_sync_us  = 0;        /* time_us_64() at sync */
 /* ============================================================
  * Init / poll
  * ============================================================ */
-int net_init(void) {
+static int _net_init_impl(void) {
     if (_net_inited) return 0;
     if (cyw43_arch_init_with_country(CYW43_COUNTRY_WORLDWIDE)) return -1;
     cyw43_arch_enable_sta_mode();
@@ -65,7 +66,7 @@ int net_init(void) {
     return 0;
 }
 
-void net_poll(void) {
+static void _net_poll_impl(void) {
     if (_net_inited) {
         cyw43_arch_poll();
         sys_check_timeouts();
@@ -75,13 +76,14 @@ void net_poll(void) {
 /* ============================================================
  * WiFi connect / disconnect
  * ============================================================ */
-bool net_is_connected(void) {
+static bool _net_is_connected_impl(void) {
     if (!_net_inited) return false;
     return _wifi_connected &&
            (cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_UP);
 }
 
-int net_wifi_connect(const char *ssid, const char *password, int timeout_ms) {
+static int _net_wifi_connect_impl(const char *ssid, const char *password,
+                                 int timeout_ms) {
     if (!_net_inited) { if (net_init() < 0) return -1; }
 
     int rc = cyw43_arch_wifi_connect_timeout_ms(ssid, password,
@@ -99,7 +101,7 @@ int net_wifi_connect(const char *ssid, const char *password, int timeout_ms) {
     return -1;
 }
 
-void net_wifi_disconnect(void) {
+static void _net_wifi_disconnect_impl(void) {
     if (_net_inited) {
         cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
         _wifi_connected = false;
@@ -132,7 +134,7 @@ static int _scan_result_cb(void *env, const cyw43_ev_scan_result_t *result) {
     return 0;
 }
 
-int net_wifi_scan(net_scan_cb_t cb, void *ctx) {
+static int _net_wifi_scan_impl(net_scan_cb_t cb, void *ctx) {
     if (!_net_inited) { if (net_init() < 0) return -1; }
 
     _scan_ctx_t sc = { .cb = cb, .ctx = ctx };
@@ -153,7 +155,7 @@ int net_wifi_scan(net_scan_cb_t cb, void *ctx) {
 /* ============================================================
  * IP info
  * ============================================================ */
-int net_get_ifinfo(net_ifinfo_t *info) {
+static int _net_get_ifinfo_impl(net_ifinfo_t *info) {
     if (!info) return -1;
     struct netif *nif = netif_list;
     if (!nif) return -1;
@@ -192,7 +194,8 @@ static void _dns_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
     dc->done = true;
 }
 
-int net_dns_resolve(const char *hostname, uint32_t *ip_out, int timeout_ms) {
+static int _net_dns_resolve_impl(const char *hostname, uint32_t *ip_out,
+                                 int timeout_ms) {
     if (!hostname || !ip_out) return -1;
 
     _dns_ctx_t dc = { .done = false, .ok = false };
@@ -241,7 +244,7 @@ static uint8_t _ping_recv_cb(void *arg, struct raw_pcb *pcb, struct pbuf *p,
     return 1;
 }
 
-int net_ping(uint32_t ip, int count, int timeout_ms) {
+static int _net_ping_impl(uint32_t ip, int count, int timeout_ms) {
     struct raw_pcb *pcb = raw_new(IP_PROTO_ICMP);
     if (!pcb) return -1;
 
@@ -330,7 +333,7 @@ static void _ntp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p,
     _ntp_done = true;
 }
 
-int net_ntp_sync(const char *server, int timeout_ms) {
+static int _net_ntp_sync_impl(const char *server, int timeout_ms) {
     if (!server) server = "pool.ntp.org";
 
     uint32_t ntp_ip;
@@ -367,9 +370,9 @@ int net_ntp_sync(const char *server, int timeout_ms) {
     return _ntp_valid ? 0 : -1;
 }
 
-bool net_ntp_valid(void) { return _ntp_valid; }
+static bool _net_ntp_valid_impl(void) { return _ntp_valid; }
 
-void net_ntp_time(int *hour, int *min, int *sec) {
+static void _net_ntp_time_impl(int *hour, int *min, int *sec) {
     if (!_ntp_valid) { *hour = *min = *sec = 0; return; }
     uint64_t now = _ntp_epoch_sec + (time_us_64() - _ntp_sync_us) / 1000000ULL;
     uint32_t tod = (uint32_t)(now % 86400);
@@ -378,7 +381,7 @@ void net_ntp_time(int *hour, int *min, int *sec) {
     *sec  = (int)(tod % 60);
 }
 
-void net_ntp_date(int *year, int *month, int *day) {
+static void _net_ntp_date_impl(int *year, int *month, int *day) {
     if (!_ntp_valid) { *year = 0; *month = 0; *day = 0; return; }
     uint64_t now = _ntp_epoch_sec + (time_us_64() - _ntp_sync_us) / 1000000ULL;
     /* Simplified date calculation from Unix epoch */
@@ -456,7 +459,8 @@ static void _tcp_err_cb(void *arg, err_t err) {
     c->pcb = NULL; /* pcb already freed by lwIP on error */
 }
 
-net_tcp_t *net_tcp_connect(uint32_t ip, uint16_t port, int timeout_ms) {
+static net_tcp_t *_net_tcp_connect_impl(uint32_t ip, uint16_t port,
+                                        int timeout_ms) {
     /* Find a free slot */
     net_tcp_t *c = NULL;
     for (int i = 0; i < NET_TCP_POOL; i++) {
@@ -510,7 +514,7 @@ net_tcp_t *net_tcp_connect(uint32_t ip, uint16_t port, int timeout_ms) {
     return c;
 }
 
-int net_tcp_send(net_tcp_t *conn, const void *data, size_t len) {
+static int _net_tcp_send_impl(net_tcp_t *conn, const void *data, size_t len) {
     if (!conn || !conn->pcb || conn->error) return -1;
     err_t err = tcp_write(conn->pcb, data, (u16_t)len, TCP_WRITE_FLAG_COPY);
     if (err != ERR_OK) return -1;
@@ -543,13 +547,14 @@ static int _net_tcp_recv_status(net_tcp_t *conn, void *buf, size_t cap,
     return n;
 }
 
-int net_tcp_recv(net_tcp_t *conn, void *buf, size_t cap, int timeout_ms) {
+static int _net_tcp_recv_impl(net_tcp_t *conn, void *buf, size_t cap,
+                              int timeout_ms) {
     if (!conn) return -1;
     int n = _net_tcp_recv_status(conn, buf, cap, timeout_ms);
     return n < 0 ? 0 : n;
 }
 
-void net_tcp_close(net_tcp_t *conn) {
+static void _net_tcp_close_impl(net_tcp_t *conn) {
     if (!conn) return;
     if (conn->pcb) {
         tcp_arg(conn->pcb, NULL);
@@ -567,8 +572,8 @@ void net_tcp_close(net_tcp_t *conn) {
 /* ============================================================
  * HTTP GET (simple — no TLS)
  * ============================================================ */
-int net_http_get(const char *host, uint16_t port, const char *path,
-                 char *buf, size_t cap, int timeout_ms) {
+static int _net_http_get_impl(const char *host, uint16_t port, const char *path,
+                              char *buf, size_t cap, int timeout_ms) {
     if (!host || !path || !buf || cap == 0) return -1;
 
     uint32_t ip;
@@ -624,22 +629,19 @@ static int _https_recv(void *ctx, unsigned char *buf, size_t len) {
     return n;
 }
 
-static int _https_body(char *buf, int total, size_t cap) {
-    char *body = strstr(buf, "\r\n\r\n");
-    if (!body) return total;
-    body += 4;
-    int body_len = total - (int)(body - buf);
-    if (body_len < 0 || (size_t)body_len >= cap) return -1;
-    memmove(buf, body, (size_t)body_len);
-    buf[body_len] = '\0';
-    return body_len;
-}
+/* HTTP/1.0 responses have a Content-Length body with no transfer encoding, so
+   stripping everything up to the blank line is enough. The scan is done on a
+   byte stream so binary payloads never need to be NUL-terminated or buffered
+   in full. */
+#define _HTTPS_TERM "\r\n\r\n"
 
-int net_https_get(const char *host, uint16_t port, const char *path,
-                  const char *ca_pem, size_t ca_len, char *buf, size_t cap,
-                  int timeout_ms) {
-    if (!host || !*host || !path || !buf || cap < 2 ||
-        !ca_pem || ca_len == 0 || timeout_ms <= 0) return -1;
+static int _net_https_fetch_impl(const char *host, uint16_t port, const char *path,
+                                 const char *ca_pem, size_t ca_len, char *buf,
+                                 size_t cap, net_sink_fn sink, void *sink_ctx,
+                                 int timeout_ms) {
+    if (!host || !*host || !path || !ca_pem || ca_len == 0 || timeout_ms <= 0)
+        return -1;
+    if (!sink && (!buf || cap < 2)) return -1;
 
     uint32_t ip;
     if (net_dns_resolve(host, &ip, 5000) < 0) return -1;
@@ -665,8 +667,7 @@ int net_https_get(const char *host, uint16_t port, const char *path,
     if (mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy,
                               (const unsigned char *)"Mellivora HTTPS", 15) != 0)
         goto cleanup;
-    if (mbedtls_x509_crt_parse(&ca, (const unsigned char *)ca_pem,
-                               ca_len + 1) != 0)
+    if (mbedtls_x509_crt_parse(&ca, (const unsigned char *)ca_pem, ca_len + 1) != 0)
         goto cleanup;
     if (mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT,
                                     MBEDTLS_SSL_TRANSPORT_STREAM,
@@ -709,16 +710,44 @@ int net_https_get(const char *host, uint16_t port, const char *path,
         } else goto cleanup;
     }
 
-    int total = 0;
-    while ((size_t)total < cap - 1) {
-        int n = mbedtls_ssl_read(&ssl, (unsigned char *)buf + total,
-                                 cap - 1 - (size_t)total);
+    uint8_t chunk[512];
+    size_t total = 0;
+    bool body_started = false;
+    size_t matched = 0;
+    while (true) {
+        int n = mbedtls_ssl_read(&ssl, chunk, sizeof chunk);
         if (n > 0) {
-            total += n;
+            size_t offset = 0;
+            if (!body_started) {
+                while (offset < (size_t)n) {
+                    uint8_t byte = chunk[offset++];
+                    if (byte == (uint8_t)_HTTPS_TERM[matched]) {
+                        matched++;
+                        if (matched == sizeof _HTTPS_TERM - 1) {
+                            body_started = true;
+                            break;
+                        }
+                    } else {
+                        matched = (byte == '\r') ? 1u : 0u;
+                    }
+                }
+                if (!body_started) continue;
+            }
+            size_t remain = (size_t)n - offset;
+            if (remain == 0) continue;
+
+            if (sink) {
+                if (sink(sink_ctx, chunk + offset, remain) != 0) goto cleanup;
+                total += remain;
+            } else {
+                if (remain >= cap - total) goto cleanup;
+                memcpy(buf + total, chunk + offset, remain);
+                total += remain;
+            }
             continue;
         }
         if (n == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) break;
-        if (n == 0 || n == MBEDTLS_ERR_SSL_CONN_EOF) goto cleanup;
+        if (n == 0 || n == MBEDTLS_ERR_SSL_CONN_EOF) break;
         if (n == MBEDTLS_ERR_SSL_WANT_READ || n == MBEDTLS_ERR_SSL_WANT_WRITE) {
             if (absolute_time_diff_us(get_absolute_time(), deadline) < 0)
                 goto cleanup;
@@ -727,10 +756,9 @@ int net_https_get(const char *host, uint16_t port, const char *path,
         }
         goto cleanup;
     }
-    if ((size_t)total == cap - 1) goto cleanup;
-    buf[total] = '\0';
-    result = _https_body(buf, total, cap);
-    if (result >= 0) ssl_ready = true;
+    if (buf) buf[total] = '\0';
+    result = (int)total;
+    ssl_ready = true;
 
 cleanup:
     if (ssl_ready) (void)mbedtls_ssl_close_notify(&ssl);
@@ -741,6 +769,342 @@ cleanup:
     mbedtls_entropy_free(&entropy);
     net_tcp_close(conn);
     return result;
+}
+
+static int _net_https_get_impl(const char *host, uint16_t port, const char *path,
+                               const char *ca_pem, size_t ca_len, char *buf,
+                               size_t cap, int timeout_ms) {
+    return _net_https_fetch_impl(host, port, path, ca_pem, ca_len, buf, cap,
+                                 NULL, NULL, timeout_ms);
+}
+
+static int _net_https_get_stream_impl(const char *host, uint16_t port, const char *path,
+                                      const char *ca_pem, size_t ca_len,
+                                      net_sink_fn sink, void *sink_ctx,
+                                      int timeout_ms) {
+    return _net_https_fetch_impl(host, port, path, ca_pem, ca_len, NULL, 0,
+                                 sink, sink_ctx, timeout_ms);
+}
+
+/*
+ * All public network entry points marshal their work synchronously to Core 1.
+ * The worker dispatches to the implementation functions directly, so internal
+ * calls made while servicing an RPC do not enqueue another RPC.
+ */
+typedef enum {
+    NET_RPC_INIT,
+    NET_RPC_POLL,
+    NET_RPC_IS_CONNECTED,
+    NET_RPC_WIFI_CONNECT,
+    NET_RPC_WIFI_DISCONNECT,
+    NET_RPC_WIFI_SCAN,
+    NET_RPC_GET_IFINFO,
+    NET_RPC_DNS_RESOLVE,
+    NET_RPC_PING,
+    NET_RPC_NTP_SYNC,
+    NET_RPC_NTP_VALID,
+    NET_RPC_NTP_TIME,
+    NET_RPC_NTP_DATE,
+    NET_RPC_TCP_CONNECT,
+    NET_RPC_TCP_SEND,
+    NET_RPC_TCP_RECV,
+    NET_RPC_TCP_CLOSE,
+    NET_RPC_HTTP_GET,
+    NET_RPC_HTTPS_GET,
+    NET_RPC_HTTPS_STREAM
+} _net_rpc_op_t;
+
+typedef struct {
+    _net_rpc_op_t op;
+    const char *s1;
+    const char *s2;
+    const char *s3;
+    void *p1;
+    void *p2;
+    void *p3;
+    const void *const_p1;
+    net_scan_cb_t scan_cb;
+    net_sink_fn sink;
+    uint32_t u32;
+    uint16_t u16;
+    size_t size1;
+    size_t size2;
+    int i1;
+    int i2;
+    int result_int;
+    bool result_bool;
+    net_tcp_t *result_conn;
+} _net_rpc_t;
+
+static void _net_rpc_dispatch(void *context) {
+    _net_rpc_t *rpc = (_net_rpc_t *)context;
+    switch (rpc->op) {
+    case NET_RPC_INIT:
+        rpc->result_int = _net_init_impl();
+        break;
+    case NET_RPC_POLL:
+        _net_poll_impl();
+        break;
+    case NET_RPC_IS_CONNECTED:
+        rpc->result_bool = _net_is_connected_impl();
+        break;
+    case NET_RPC_WIFI_CONNECT:
+        rpc->result_int = _net_wifi_connect_impl(rpc->s1, rpc->s2, rpc->i1);
+        break;
+    case NET_RPC_WIFI_DISCONNECT:
+        _net_wifi_disconnect_impl();
+        break;
+    case NET_RPC_WIFI_SCAN:
+        rpc->result_int = _net_wifi_scan_impl(rpc->scan_cb, rpc->p1);
+        break;
+    case NET_RPC_GET_IFINFO:
+        rpc->result_int = _net_get_ifinfo_impl((net_ifinfo_t *)rpc->p1);
+        break;
+    case NET_RPC_DNS_RESOLVE:
+        rpc->result_int = _net_dns_resolve_impl(rpc->s1, (uint32_t *)rpc->p1,
+                                                rpc->i1);
+        break;
+    case NET_RPC_PING:
+        rpc->result_int = _net_ping_impl(rpc->u32, rpc->i1, rpc->i2);
+        break;
+    case NET_RPC_NTP_SYNC:
+        rpc->result_int = _net_ntp_sync_impl(rpc->s1, rpc->i1);
+        break;
+    case NET_RPC_NTP_VALID:
+        rpc->result_bool = _net_ntp_valid_impl();
+        break;
+    case NET_RPC_NTP_TIME:
+        _net_ntp_time_impl((int *)rpc->p1, (int *)rpc->p2, (int *)rpc->p3);
+        break;
+    case NET_RPC_NTP_DATE:
+        _net_ntp_date_impl((int *)rpc->p1, (int *)rpc->p2, (int *)rpc->p3);
+        break;
+    case NET_RPC_TCP_CONNECT:
+        rpc->result_conn = _net_tcp_connect_impl(rpc->u32, rpc->u16, rpc->i1);
+        break;
+    case NET_RPC_TCP_SEND:
+        rpc->result_int = _net_tcp_send_impl((net_tcp_t *)rpc->p1,
+                                             rpc->const_p1, rpc->size1);
+        break;
+    case NET_RPC_TCP_RECV:
+        rpc->result_int = _net_tcp_recv_impl((net_tcp_t *)rpc->p1, rpc->p2,
+                                             rpc->size1, rpc->i1);
+        break;
+    case NET_RPC_TCP_CLOSE:
+        _net_tcp_close_impl((net_tcp_t *)rpc->p1);
+        break;
+    case NET_RPC_HTTP_GET:
+        rpc->result_int = _net_http_get_impl(rpc->s1, rpc->u16, rpc->s2,
+                                              (char *)rpc->p1, rpc->size1,
+                                              rpc->i1);
+        break;
+    case NET_RPC_HTTPS_GET:
+        rpc->result_int = _net_https_get_impl(rpc->s1, rpc->u16, rpc->s2,
+                                               rpc->s3, rpc->size2,
+                                               (char *)rpc->p1, rpc->size1,
+                                               rpc->i1);
+        break;
+    case NET_RPC_HTTPS_STREAM:
+        rpc->result_int = _net_https_get_stream_impl(rpc->s1, rpc->u16, rpc->s2,
+                                                      rpc->s3, rpc->size2,
+                                                      rpc->sink, rpc->p1, rpc->i1);
+        break;
+    }
+}
+
+int net_init(void) {
+    if (core1_is_worker()) return _net_init_impl();
+    _net_rpc_t rpc = { .op = NET_RPC_INIT };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
+}
+
+void net_poll(void) {
+    if (core1_is_worker()) {
+        _net_poll_impl();
+        return;
+    }
+    _net_rpc_t rpc = { .op = NET_RPC_POLL };
+    core1_call(_net_rpc_dispatch, &rpc);
+}
+
+bool net_is_connected(void) {
+    if (core1_is_worker()) return _net_is_connected_impl();
+    _net_rpc_t rpc = { .op = NET_RPC_IS_CONNECTED };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_bool;
+}
+
+int net_wifi_connect(const char *ssid, const char *password, int timeout_ms) {
+    if (core1_is_worker())
+        return _net_wifi_connect_impl(ssid, password, timeout_ms);
+    _net_rpc_t rpc = {
+        .op = NET_RPC_WIFI_CONNECT, .s1 = ssid, .s2 = password,
+        .i1 = timeout_ms
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
+}
+
+void net_wifi_disconnect(void) {
+    if (core1_is_worker()) {
+        _net_wifi_disconnect_impl();
+        return;
+    }
+    _net_rpc_t rpc = { .op = NET_RPC_WIFI_DISCONNECT };
+    core1_call(_net_rpc_dispatch, &rpc);
+}
+
+int net_wifi_scan(net_scan_cb_t cb, void *ctx) {
+    if (core1_is_worker()) return _net_wifi_scan_impl(cb, ctx);
+    _net_rpc_t rpc = { .op = NET_RPC_WIFI_SCAN, .scan_cb = cb, .p1 = ctx };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
+}
+
+int net_get_ifinfo(net_ifinfo_t *info) {
+    if (core1_is_worker()) return _net_get_ifinfo_impl(info);
+    _net_rpc_t rpc = { .op = NET_RPC_GET_IFINFO, .p1 = info };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
+}
+
+int net_dns_resolve(const char *hostname, uint32_t *ip_out, int timeout_ms) {
+    if (core1_is_worker())
+        return _net_dns_resolve_impl(hostname, ip_out, timeout_ms);
+    _net_rpc_t rpc = {
+        .op = NET_RPC_DNS_RESOLVE, .s1 = hostname, .p1 = ip_out,
+        .i1 = timeout_ms
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
+}
+
+int net_ping(uint32_t ip, int count, int timeout_ms) {
+    if (core1_is_worker()) return _net_ping_impl(ip, count, timeout_ms);
+    _net_rpc_t rpc = {
+        .op = NET_RPC_PING, .u32 = ip, .i1 = count, .i2 = timeout_ms
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
+}
+
+int net_ntp_sync(const char *server, int timeout_ms) {
+    if (core1_is_worker()) return _net_ntp_sync_impl(server, timeout_ms);
+    _net_rpc_t rpc = {
+        .op = NET_RPC_NTP_SYNC, .s1 = server, .i1 = timeout_ms
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
+}
+
+bool net_ntp_valid(void) {
+    if (core1_is_worker()) return _net_ntp_valid_impl();
+    _net_rpc_t rpc = { .op = NET_RPC_NTP_VALID };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_bool;
+}
+
+void net_ntp_time(int *hour, int *min, int *sec) {
+    if (core1_is_worker()) {
+        _net_ntp_time_impl(hour, min, sec);
+        return;
+    }
+    _net_rpc_t rpc = {
+        .op = NET_RPC_NTP_TIME, .p1 = hour, .p2 = min, .p3 = sec
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+}
+
+void net_ntp_date(int *year, int *month, int *day) {
+    if (core1_is_worker()) {
+        _net_ntp_date_impl(year, month, day);
+        return;
+    }
+    _net_rpc_t rpc = {
+        .op = NET_RPC_NTP_DATE, .p1 = year, .p2 = month, .p3 = day
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+}
+
+net_tcp_t *net_tcp_connect(uint32_t ip, uint16_t port, int timeout_ms) {
+    if (core1_is_worker()) return _net_tcp_connect_impl(ip, port, timeout_ms);
+    _net_rpc_t rpc = {
+        .op = NET_RPC_TCP_CONNECT, .u32 = ip, .u16 = port, .i1 = timeout_ms
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_conn;
+}
+
+int net_tcp_send(net_tcp_t *conn, const void *data, size_t len) {
+    if (core1_is_worker()) return _net_tcp_send_impl(conn, data, len);
+    _net_rpc_t rpc = {
+        .op = NET_RPC_TCP_SEND, .p1 = conn, .const_p1 = data, .size1 = len
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
+}
+
+int net_tcp_recv(net_tcp_t *conn, void *buf, size_t cap, int timeout_ms) {
+    if (core1_is_worker()) return _net_tcp_recv_impl(conn, buf, cap, timeout_ms);
+    _net_rpc_t rpc = {
+        .op = NET_RPC_TCP_RECV, .p1 = conn, .p2 = buf, .size1 = cap,
+        .i1 = timeout_ms
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
+}
+
+void net_tcp_close(net_tcp_t *conn) {
+    if (core1_is_worker()) {
+        _net_tcp_close_impl(conn);
+        return;
+    }
+    _net_rpc_t rpc = { .op = NET_RPC_TCP_CLOSE, .p1 = conn };
+    core1_call(_net_rpc_dispatch, &rpc);
+}
+
+int net_http_get(const char *host, uint16_t port, const char *path,
+                 char *buf, size_t cap, int timeout_ms) {
+    if (core1_is_worker())
+        return _net_http_get_impl(host, port, path, buf, cap, timeout_ms);
+    _net_rpc_t rpc = {
+        .op = NET_RPC_HTTP_GET, .s1 = host, .s2 = path, .p1 = buf,
+        .u16 = port, .size1 = cap, .i1 = timeout_ms
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
+}
+
+int net_https_get(const char *host, uint16_t port, const char *path,
+                  const char *ca_pem, size_t ca_len, char *buf, size_t cap,
+                  int timeout_ms) {
+    if (core1_is_worker())
+        return _net_https_get_impl(host, port, path, ca_pem, ca_len, buf, cap,
+                                   timeout_ms);
+    _net_rpc_t rpc = {
+        .op = NET_RPC_HTTPS_GET, .s1 = host, .s2 = path, .s3 = ca_pem,
+        .p1 = buf, .u16 = port, .size1 = cap, .size2 = ca_len,
+        .i1 = timeout_ms
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
+}
+
+int net_https_get_stream(const char *host, uint16_t port, const char *path,
+                         const char *ca_pem, size_t ca_len,
+                         net_sink_fn sink, void *sink_ctx, int timeout_ms) {
+    if (!sink) return -1;
+    if (core1_is_worker())
+        return _net_https_get_stream_impl(host, port, path, ca_pem, ca_len,
+                                          sink, sink_ctx, timeout_ms);
+    _net_rpc_t rpc = {
+        .op = NET_RPC_HTTPS_STREAM, .s1 = host, .s2 = path, .s3 = ca_pem,
+        .p1 = sink_ctx, .sink = sink, .u16 = port, .size2 = ca_len,
+        .i1 = timeout_ms
+    };
+    core1_call(_net_rpc_dispatch, &rpc);
+    return rpc.result_int;
 }
 
 #endif /* PICO_CYW43_SUPPORTED */

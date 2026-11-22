@@ -12,13 +12,20 @@
 #include <string.h>
 
 #include "apps/app_internal.h"
+#include "hal/hw_ops.h"
 #include "ui/ui.h"
 
 void app_init(void) {
+    hw_init();
     app_settings_init();
 }
 
 void app_boot(void) {
+    /* Palettes live on the SD card, so they can only be registered once the
+       card is mounted. Re-apply the saved theme afterwards. */
+    app_settings_load_user_themes();
+    app_settings_reload_theme();
+
     const app_settings_state_t *st = app_settings_get();
     if (*st->autorun_path) {
         print_line("Running autorun script...");
@@ -65,8 +72,8 @@ static app_cmd_entry_t *app_table(size_t *out_count) {
         {"habits-export", app_habits_export},
         {"games", app_games}, {"game", app_games}, {"dice", app_dice},
         {"coin", app_coin}, {"guess", app_guess}, {"snake", app_snake},
-        {"sprite", app_sprite}, {"terminal", app_terminal}, {"term", app_terminal},
-        {"tty", app_terminal}, {"serial", app_terminal},
+        {"sprite", app_sprite}, {"terminal", app_term}, {"term", app_term},
+        {"tty", app_term}, {"serial", app_term}, {"rawterm", app_terminal},
         {"home", app_home}, {"launcher", app_home},
         {"dashboard", app_dashboard}, {"status", app_dashboard},
         {"sysmon", app_sysmon}, {"monitor", app_sysmon},
@@ -91,6 +98,11 @@ static app_cmd_entry_t *app_table(size_t *out_count) {
         {"minesweeper", app_minesweeper}, {"mines", app_minesweeper},
         {"2048", app_2048},
         {"xmodem", app_xmodem}, {"theme", app_theme},
+        {"mpkg", app_mpkg}, {"packages", app_mpkg}, {"pkg", app_mpkg},
+        {"hw", app_hw}, {"workbench", app_hw},
+        {"gpio", app_gpio}, {"pwm", app_pwm},
+        {"i2cdetect", app_i2cdetect}, {"i2c", app_i2cdetect},
+        {"ymodem", app_ymodem},
     };
     static const size_t n = sizeof table / sizeof table[0];
     static bool sorted = false;
