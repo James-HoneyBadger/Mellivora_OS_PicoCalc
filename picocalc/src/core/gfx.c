@@ -163,6 +163,75 @@ void gfx_rect(gfx_surface_t *surface, int32_t x, int32_t y, int32_t width, int32
     if (width > 1) gfx_vline(surface, x + width - 1, y, height, color);
 }
 
+void gfx_line(gfx_surface_t *surface, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+              uint8_t color) {
+    if (!surface) return;
+    int32_t dx = x1 >= x0 ? x1 - x0 : x0 - x1;
+    int32_t dy = y1 >= y0 ? y1 - y0 : y0 - y1;
+    int32_t sx = x0 < x1 ? 1 : -1;
+    int32_t sy = y0 < y1 ? 1 : -1;
+    int32_t err = dx - dy;
+
+    for (;;) {
+        gfx_pixel(surface, x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        int32_t e2 = 2 * err;
+        if (e2 > -dy) {
+            err -= dy;
+            x0 += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+void gfx_circle(gfx_surface_t *surface, int32_t cx, int32_t cy, int32_t radius, uint8_t color) {
+    if (!surface || radius < 0) return;
+    int32_t x = radius;
+    int32_t y = 0;
+    int32_t err = 1 - radius;
+    while (x >= y) {
+        gfx_pixel(surface, cx + x, cy + y, color);
+        gfx_pixel(surface, cx - x, cy + y, color);
+        gfx_pixel(surface, cx + x, cy - y, color);
+        gfx_pixel(surface, cx - x, cy - y, color);
+        gfx_pixel(surface, cx + y, cy + x, color);
+        gfx_pixel(surface, cx - y, cy + x, color);
+        gfx_pixel(surface, cx + y, cy - x, color);
+        gfx_pixel(surface, cx - y, cy - x, color);
+        y++;
+        if (err < 0) {
+            err += 2 * y + 1;
+        } else {
+            x--;
+            err += 2 * (y - x) + 1;
+        }
+    }
+}
+
+void gfx_fill_circle(gfx_surface_t *surface, int32_t cx, int32_t cy, int32_t radius,
+                     uint8_t color) {
+    if (!surface || radius < 0) return;
+    int32_t x = radius;
+    int32_t y = 0;
+    int32_t err = 1 - radius;
+    while (x >= y) {
+        gfx_hline(surface, cx - x, cy + y, 2 * x + 1, color);
+        gfx_hline(surface, cx - x, cy - y, 2 * x + 1, color);
+        gfx_hline(surface, cx - y, cy + x, 2 * y + 1, color);
+        gfx_hline(surface, cx - y, cy - x, 2 * y + 1, color);
+        y++;
+        if (err < 0) {
+            err += 2 * y + 1;
+        } else {
+            x--;
+            err += 2 * (y - x) + 1;
+        }
+    }
+}
+
 void gfx_blit(gfx_surface_t *dst, int32_t x, int32_t y, const gfx_surface_t *src,
               int32_t transparent) {
     if (!dst || !src || !src->pixels) return;

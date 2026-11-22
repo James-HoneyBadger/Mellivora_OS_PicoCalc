@@ -275,6 +275,11 @@ Version 2 added the graphics layer, and version 3 the polyphonic audio:
   them when `mapp_main` returns, so a leak cannot survive a launch; the ABI
   exposes `gfx_*`, `audio_tone`, and the v3 `audio_note`/`audio_voice_stop`
   voices. `gfxbench` measures the real panel throughput behind those calls.
+- BASIC exposes the same layers as statements: `GR`/`TEXT` manage a surface
+  and `PSET`/`LINE`/`RECT`/`FRECT`/`CIRCLE`/`FCIRCLE`/`COLOR`/`PEN`/`SHOW`
+  draw on it, while `SOUND`/`NOISE`/`NOSOUND` drive the mixer. The
+  interpreter presents the dirty region once per program line, so a ten-line
+  program is a working animation with no toolchain.
 
 Host-side developers use `tools/sdk/`: `make` produces `hello.mapp` and
 `plasma.mapp` from plain C, and the packer turns any linked ELF into the

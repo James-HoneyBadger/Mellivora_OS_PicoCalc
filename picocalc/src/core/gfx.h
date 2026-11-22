@@ -62,6 +62,14 @@ void gfx_rect(gfx_surface_t *surface, int32_t x, int32_t y, int32_t width, int32
 void gfx_fill_rect(gfx_surface_t *surface, int32_t x, int32_t y, int32_t width, int32_t height,
                    uint8_t color);
 
+/* Bresenham line. */
+void gfx_line(gfx_surface_t *surface, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+              uint8_t color);
+
+/* Midpoint circle outline and filled disc. */
+void gfx_circle(gfx_surface_t *surface, int32_t cx, int32_t cy, int32_t radius, uint8_t color);
+void gfx_fill_circle(gfx_surface_t *surface, int32_t cx, int32_t cy, int32_t radius, uint8_t color);
+
 /* Copy `src` onto `dst` with its top-left at (x, y). `transparent` skips one
    palette index, or pass GFX_TRANSPARENT_NONE for an opaque copy. */
 void gfx_blit(gfx_surface_t *dst, int32_t x, int32_t y, const gfx_surface_t *src,

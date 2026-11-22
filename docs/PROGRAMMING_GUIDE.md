@@ -195,7 +195,11 @@ The sample systems are most useful when examples are:
 - based on integer logic
 - safe to run repeatedly
 
-Good examples include counters, loops, conditionals, and small file-oriented experiments.
+Good examples include counters, loops, conditionals, small file-oriented
+experiments, and - since the graphics mode - short animations (`GR 80`,
+`PSET`/`FCIRCLE`, `WAIT 20`; see `/apps/BOUNCE.BAS` in the starter pack).
+Graphics samples should choose the smallest surface that works so RP2040
+users can run them too.
 
 ## 12. Testing Checklist for Contributors
 

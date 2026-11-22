@@ -91,8 +91,10 @@ Hardware workbench
     xmodem recv FILE     receive over USB (-p usb) or UART (-p uart1)
 
 From BASIC:  GPIO 5, 1     PWM 5, 1000, 50     GPIO READ 5
+              GR 160         PSET/LINE/CIRCLE   SOUND 440, 100
+See /apps/PWMFADE.BAS and /apps/BOUNCE.BAS for complete examples.
 From Forth:  1 5 gpio!     50 1000 5 pwm!      5 gpio@ .
-See /apps/PWMFADE.BAS and /apps/I2CSCAN.FTH for complete examples.
+See /apps/PWMFADE.BAS, /apps/BOUNCE.BAS, and /apps/I2CSCAN.FTH for complete examples.
 
 Writing your own app
 --------------------

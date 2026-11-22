@@ -231,6 +231,80 @@ void test_gfx(void) {
     CHECK_EQ(w, 8);
     CHECK_EQ(h, 8);
 
+    /* ---- Lines ------------------------------------------------------- */
+
+    gfx_clear(&surface, 0);
+    gfx_dirty_reset(&surface);
+    gfx_line(&surface, 0, 0, 7, 7, 5); /* diagonal */
+    for (int i = 0; i <= 7; i++)
+        CHECK(gfx_get_pixel(&surface, i, i) == 5);
+    CHECK(gfx_get_pixel(&surface, 1, 0) == 0);
+    CHECK(gfx_dirty_bounds(&surface, &x, &y, &w, &h));
+    CHECK_EQ(x, 0);
+    CHECK_EQ(y, 0);
+    CHECK_EQ(w, 8);
+    CHECK_EQ(h, 8);
+
+    /* Horizontal, vertical, and backward lines land on every cell. */
+    gfx_dirty_reset(&surface);
+    gfx_line(&surface, 3, 2, 9, 2, 6);
+    for (int i = 3; i <= 9; i++)
+        CHECK(gfx_get_pixel(&surface, i, 2) == 6);
+    gfx_line(&surface, 5, 0, 5, H - 1, 6);
+    for (int i = 0; i < H; i++)
+        CHECK(gfx_get_pixel(&surface, 5, i) == 6);
+    gfx_line(&surface, 9, 6, 2, 6, 6);
+    for (int i = 2; i <= 9; i++)
+        CHECK(gfx_get_pixel(&surface, i, 6) == 6);
+
+    /* A line that starts off-screen clips into view. */
+    gfx_clear(&surface, 0);
+    gfx_dirty_reset(&surface);
+    gfx_line(&surface, -4, 2, 4, 2, 7);
+    CHECK(gfx_get_pixel(&surface, 0, 2) == 7);
+    CHECK(gfx_get_pixel(&surface, 4, 2) == 7);
+    gfx_dirty_reset(&surface);
+    gfx_line(&surface, -10, -10, -5, -2, 0); /* fully outside */
+    CHECK(!surface.dirty_any);
+
+    /* ---- Circles ------------------------------------------------------ */
+
+    gfx_clear(&surface, 0);
+    gfx_dirty_reset(&surface);
+    gfx_circle(&surface, 8, 4, 3, 2);
+    /* The four axis points and the diagonals exist; the centre is hollow. */
+    CHECK(gfx_get_pixel(&surface, 8, 1) == 2);
+    CHECK(gfx_get_pixel(&surface, 8, 7) == 2);
+    CHECK(gfx_get_pixel(&surface, 5, 4) == 2);
+    CHECK(gfx_get_pixel(&surface, 11, 4) == 2);
+    CHECK(gfx_get_pixel(&surface, 8, 4) == 0);
+    CHECK(gfx_dirty_bounds(&surface, &x, &y, &w, &h));
+    CHECK_EQ(x, 5);
+    CHECK_EQ(y, 1);
+    CHECK_EQ(w, 7);
+    CHECK_EQ(h, 7);
+
+    /* Radius 0 is a single pixel. */
+    gfx_dirty_reset(&surface);
+    gfx_circle(&surface, 3, 3, 0, 4);
+    CHECK(gfx_get_pixel(&surface, 3, 3) == 4);
+
+    /* Filled discs cover the centre and the axes. */
+    gfx_clear(&surface, 0);
+    gfx_dirty_reset(&surface);
+    gfx_fill_circle(&surface, 8, 4, 2, 3);
+    CHECK(gfx_get_pixel(&surface, 8, 4) == 3);
+    CHECK(gfx_get_pixel(&surface, 6, 4) == 3);
+    CHECK(gfx_get_pixel(&surface, 10, 4) == 3);
+    CHECK(gfx_get_pixel(&surface, 8, 2) == 3);
+    CHECK(gfx_get_pixel(&surface, 5, 4) == 0);
+
+    /* Negative radii draw nothing. */
+    gfx_dirty_reset(&surface);
+    gfx_circle(&surface, 4, 4, -1, 5);
+    gfx_fill_circle(&surface, 4, 4, -2, 5);
+    CHECK(!surface.dirty_any);
+
     /* ---- Conversion to panel pixels ----------------------------------- */
 
     uint8_t rgb[GFX_CHAR_WIDTH * 3];

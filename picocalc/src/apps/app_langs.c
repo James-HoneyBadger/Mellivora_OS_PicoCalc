@@ -11,7 +11,11 @@
 #include <string.h>
 
 #include "apps/app_internal.h"
+#include "audio.h"
 #include "core/expr.h"
+#include "core/gfx.h"
+#include "gfx_lcd.h"
+#include "lcd.h"
 #include "shell.h"
 #include "syscall.h"
 
@@ -50,6 +54,7 @@ typedef struct {
     bool cont;
 } tinyc_env_t;
 static int expr_lookup_tinyc(void *ctx, const char *name, size_t len);
+static int expr_lookup_basic(void *ctx, const char *name, size_t len);
 static void tinyc_set_var(tinyc_env_t *env, const char *name, int value);
 static void tinyc_show_vars(void);
 
@@ -57,6 +62,88 @@ static basic_line_t g_basic_program[BASIC_LINE_MAX];
 static int g_basic_count = 0;
 static basic_env_t g_basic_env;
 static tinyc_env_t g_tinyc_env;
+
+/* ---- BASIC graphics mode --------------------------------------------- */
+
+static gfx_surface_t *g_basic_gfx;   /* NULL while in text mode */
+static uint8_t *g_basic_gfx_block;   /* single allocation: struct + pixels */
+static uint16_t g_basic_gfx_size;
+static uint8_t g_basic_pen = 7;      /* default palette index (white) */
+static bool g_basic_gfx_dirty;
+
+static void _basic_gfx_flush(void) {
+    if (!g_basic_gfx_dirty) return;
+    g_basic_gfx_dirty = false;
+    if (g_basic_gfx) {
+        int origin = (LCD_WIDTH - g_basic_gfx_size) / 2;
+        gfx_present_lcd_dirty(g_basic_gfx, origin, origin);
+    }
+}
+
+static void _basic_gfx_exit(void) {
+    g_basic_gfx_dirty = false;
+    if (g_basic_gfx) {
+        free(g_basic_gfx_block);
+        g_basic_gfx_block = NULL;
+        g_basic_gfx = NULL;
+        g_basic_gfx_size = 0;
+    }
+}
+
+static void _basic_gfx_enter(int size) {
+    _basic_gfx_exit();
+    if (size <= 0) size = 160;
+    if (size < 8) size = 8;
+    if (size > LCD_WIDTH) size = LCD_WIDTH;
+
+    uint8_t *block = (uint8_t *)malloc(sizeof(gfx_surface_t) + (size_t)size * (size_t)size);
+    if (!block) {
+        print_line("BASIC: not enough RAM for GR; try a smaller size");
+        return;
+    }
+    gfx_surface_t *surface = (gfx_surface_t *)block;
+    if (!gfx_surface_init(surface, block + sizeof(gfx_surface_t), (uint16_t)size,
+                          (uint16_t)size)) {
+        free(block);
+        return;
+    }
+    g_basic_gfx = surface;
+    g_basic_gfx_block = block;
+    g_basic_gfx_size = (uint16_t)size;
+    g_basic_pen = 7;
+    gfx_palette_reset();
+    gfx_clear(surface, 0);
+    gfx_present_lcd_full(surface, (LCD_WIDTH - size) / 2, (LCD_HEIGHT - size) / 2);
+}
+
+/* Comma-separated expression arguments: `PSET X+1, Y*2, C`. Returns the
+   count or -1 when an expression fails to parse. */
+static int _expr_args(const char *text, int *out, int max) {
+    int count = 0;
+    const char *p = skip_ws(text);
+    while (count < max && *p) {
+        int depth = 0;
+        const char *end = p;
+        while (*end) {
+            if (*end == '(') depth++;
+            else if (*end == ')' && depth > 0) depth--;
+            else if (*end == ',' && depth == 0) break;
+            end++;
+        }
+        char segment[48];
+        size_t len = (size_t)(end - p);
+        if (len >= sizeof segment) return -1;
+        memcpy(segment, p, len);
+        segment[len] = '\0';
+        bool ok = false;
+        int value = expr_eval(skip_ws(segment), expr_lookup_basic, &g_basic_env, &ok);
+        if (!ok) return -1;
+        out[count++] = value;
+        if (*end == ',') p = skip_ws(end + 1);
+        else break;
+    }
+    return count;
+}
 
 void app_calc(const char *arg) {
     const char *s = skip_ws(arg);
@@ -879,7 +966,10 @@ static void basic_exec_stmt(const char *stmt, int *pc) {
         bool ok = false;
         int delay = expr_eval(skip_ws(rest), expr_lookup_basic, &g_basic_env, &ok);
         if (!ok || delay < 0) print_line("usage: WAIT MS");
-        else sys_sleep((uint32_t)delay);
+        else {
+            _basic_gfx_flush();
+            sys_sleep((uint32_t)delay);
+        }
     } else if (ci_eq(tok, "LET")) {
         if (!basic_assign(rest)) print_line("usage: LET A = EXPR");
     } else if (ci_eq(tok, "INPUT")) {
@@ -1060,7 +1150,108 @@ static void basic_exec_stmt(const char *stmt, int *pc) {
         snprintf(out, sizeof out, "BASIC: seed %u", seed);
         print_line(out);
     } else if (ci_eq(tok, "CLS") || ci_eq(tok, "CLEAR")) {
+        if (g_basic_gfx) {
+            int args[1];
+            int color = 0;
+            if (_expr_args(rest, args, 1) == 1) color = args[0] & 0xFF;
+            gfx_clear(g_basic_gfx, (uint8_t)color);
+            g_basic_gfx_dirty = true;
+        } else {
+            sys_clear();
+        }
+    } else if (ci_eq(tok, "GR") || ci_eq(tok, "GFX")) {
+        int args[1];
+        int size = 160;
+        if (_expr_args(rest, args, 1) == 1) size = args[0];
+        _basic_gfx_enter(size);
+    } else if (ci_eq(tok, "TEXT")) {
+        _basic_gfx_exit();
         sys_clear();
+    } else if (ci_eq(tok, "PEN")) {
+        int args[1];
+        if (_expr_args(rest, args, 1) != 1) print_line("usage: PEN COLOR");
+        else g_basic_pen = (uint8_t)(args[0] & 0xFF);
+    } else if (ci_eq(tok, "COLOR")) {
+        int args[4];
+        if (_expr_args(rest, args, 4) != 4) print_line("usage: COLOR INDEX, R, G, B");
+        else {
+            gfx_palette_set((uint8_t)(args[0] & 0xFF), (uint8_t)(args[1] & 0xFF),
+                            (uint8_t)(args[2] & 0xFF), (uint8_t)(args[3] & 0xFF));
+            if (g_basic_gfx) gfx_invalidate(g_basic_gfx);
+        }
+    } else if (ci_eq(tok, "SHOW")) {
+        _basic_gfx_flush();
+    } else if (ci_eq(tok, "PSET")) {
+        if (!g_basic_gfx) { print_line("BASIC: run GR first"); return; }
+        int args[3];
+        int count = _expr_args(rest, args, 3);
+        if (count < 2) print_line("usage: PSET X, Y [, COLOR]");
+        else {
+            int color = count >= 3 ? args[2] : g_basic_pen;
+            gfx_pixel(g_basic_gfx, args[0], args[1], (uint8_t)(color & 0xFF));
+            g_basic_gfx_dirty = true;
+        }
+    } else if (ci_eq(tok, "LINE")) {
+        if (!g_basic_gfx) { print_line("BASIC: run GR first"); return; }
+        int args[5];
+        int count = _expr_args(rest, args, 5);
+        if (count < 4) print_line("usage: LINE X1, Y1, X2, Y2 [, COLOR]");
+        else {
+            int color = count >= 5 ? args[4] : g_basic_pen;
+            gfx_line(g_basic_gfx, args[0], args[1], args[2], args[3], (uint8_t)(color & 0xFF));
+            g_basic_gfx_dirty = true;
+        }
+    } else if (ci_eq(tok, "RECT") || ci_eq(tok, "FRECT")) {
+        if (!g_basic_gfx) { print_line("BASIC: run GR first"); return; }
+        int args[5];
+        int count = _expr_args(rest, args, 5);
+        if (count < 4) {
+            char usage[48];
+            snprintf(usage, sizeof usage, "usage: %.12s X, Y, W, H [, COLOR]", tok);
+            print_line(usage);
+        } else {
+            int color = count >= 5 ? args[4] : g_basic_pen;
+            if (ci_eq(tok, "FRECT"))
+                gfx_fill_rect(g_basic_gfx, args[0], args[1], args[2], args[3],
+                              (uint8_t)(color & 0xFF));
+            else
+                gfx_rect(g_basic_gfx, args[0], args[1], args[2], args[3], (uint8_t)(color & 0xFF));
+            g_basic_gfx_dirty = true;
+        }
+    } else if (ci_eq(tok, "CIRCLE") || ci_eq(tok, "FCIRCLE")) {
+        if (!g_basic_gfx) { print_line("BASIC: run GR first"); return; }
+        int args[4];
+        int count = _expr_args(rest, args, 4);
+        if (count < 3) {
+            char usage[48];
+            snprintf(usage, sizeof usage, "usage: %.12s X, Y, R [, COLOR]", tok);
+            print_line(usage);
+        } else {
+            int color = count >= 4 ? args[3] : g_basic_pen;
+            if (ci_eq(tok, "FCIRCLE"))
+                gfx_fill_circle(g_basic_gfx, args[0], args[1], args[2], (uint8_t)(color & 0xFF));
+            else
+                gfx_circle(g_basic_gfx, args[0], args[1], args[2], (uint8_t)(color & 0xFF));
+            g_basic_gfx_dirty = true;
+        }
+    } else if (ci_eq(tok, "SOUND")) {
+        int args[3];
+        int count = _expr_args(rest, args, 3);
+        if (count < 2) print_line("usage: SOUND FREQ_HZ, MS [, VOICE]");
+        else {
+            int voice = count >= 3 ? args[2] : 0;
+            audio_note(AUDIO_WAVE_SQUARE, args[0], args[1], 255, 1, 5, voice);
+        }
+    } else if (ci_eq(tok, "NOISE")) {
+        int args[2];
+        int count = _expr_args(rest, args, 2);
+        if (count < 1) print_line("usage: NOISE MS [, VOICE]");
+        else {
+            int voice = count >= 2 ? args[1] : 1;
+            audio_note(AUDIO_WAVE_NOISE, 440, args[0], 200, 1, 10, voice);
+        }
+    } else if (ci_eq(tok, "NOSOUND") || ci_eq(tok, "QUIET")) {
+        audio_stop();
     } else if (ci_eq(tok, "LIST")) {
         basic_list_program();
     } else if (ci_eq(tok, "NEW")) {
@@ -1080,6 +1271,7 @@ static void basic_run_program(void) {
     for (int pc = 0; pc < g_basic_count && !g_basic_env.stop; pc++) {
         watchdog_update();  /* long BASIC programs must not trigger the WDT */
         basic_exec_stmt(g_basic_program[pc].text, &pc);
+        _basic_gfx_flush(); /* one present per program line */
         /* Check for Ctrl+C interrupt */
         int ch = getchar_timeout_us(0);
         if (ch == PICO_ERROR_TIMEOUT) ch = kbd_getc();
@@ -1090,6 +1282,11 @@ static void basic_run_program(void) {
             break;
         }
     }
+    _basic_gfx_flush();
+    /* Returning to the shell: drop the graphics mode and any held notes. */
+    _basic_gfx_exit();
+    audio_stop();
+    sys_clear();
 }
 void app_basic(const char *arg) {
     const char *path = skip_ws(arg);
@@ -1125,9 +1322,13 @@ void app_basic(const char *arg) {
                 rtrim_in_place(line);
                 int dummy_pc = -1;
                 basic_exec_stmt(line, &dummy_pc);
+                _basic_gfx_flush();
                 if (g_basic_env.stop) break;
             }
             g_basic_env.stop = false;
+            _basic_gfx_exit();
+            audio_stop();
+            sys_clear();
         }
         return;
     }
@@ -1135,13 +1336,19 @@ void app_basic(const char *arg) {
     print_line("Mellivora BASIC for PicoCalc");
     print_line("Commands: RUN, LIST, NEW, PRINT, LET, INPUT, IF/THEN, FOR/NEXT,");
     print_line("          GOTO, GOSUB, RETURN, CLS, RANDOMIZE, END, BYE");
+    print_line("Graphics: GR [N], TEXT, PSET, LINE, RECT, FRECT, CIRCLE, FCIRCLE,");
+    print_line("          COLOR, PEN, SHOW   Sound: SOUND, NOISE, NOSOUND");
     while (1) {
         char line[APP_TOKEN_MAX];
         if (app_read_line("BASIC> ", line, sizeof line) < 0) break;
         rtrim_in_place(line);
         const char *s = skip_ws(line);
         if (!*s) continue;
-        if (ci_eq(s, "BYE") || ci_eq(s, "EXIT") || ci_eq(s, "QUIT")) break;
+        if (ci_eq(s, "BYE") || ci_eq(s, "EXIT") || ci_eq(s, "QUIT")) {
+            _basic_gfx_exit();
+            audio_stop();
+            break;
+        }
         if (isdigit((unsigned char)*s)) {
             int number = atoi(s);
             while (isdigit((unsigned char)*s)) s++;
@@ -1152,9 +1359,13 @@ void app_basic(const char *arg) {
         } else {
             int dummy_pc = -1;
             basic_exec_stmt(s, &dummy_pc);
+            _basic_gfx_flush();
             g_basic_env.stop = false;
         }
     }
+    /* Leaving the REPL: fall back to text mode. */
+    _basic_gfx_exit();
+    audio_stop();
 }
 
 static void tinyc_print_arg(const char *src) {

@@ -304,7 +304,7 @@ GP2/GP3, and the keyboard bus is restored to 10 kHz after a scan.
 
 ### Script bindings
 
-BASIC adds three statements:
+BASIC adds the hardware statements plus a graphics mode and polyphonic sound:
 
 ```basic
 GPIO 5, 1              : REM drive GP5 high
@@ -312,6 +312,26 @@ GPIO READ 5            : REM prints "GPIO 5 = 1"
 PWM 5, 1000, 50        : REM 1 kHz at 50% (duty -1 stops)
 I2CDETECT              : REM print the bus map
 ```
+
+```basic
+GR 160                 : REM enter 160x160 graphics (80/160/320; TEXT exits)
+PSET X, Y [, C]        : REM one pixel            (C defaults to the pen)
+LINE X1, Y1, X2, Y2 [, C]
+RECT / FRECT X, Y, W, H [, C]   : REM outline / filled rectangle
+CIRCLE / FCIRCLE X, Y, R [, C]  : REM outline / filled disc
+COLOR INDEX, R, G, B   : REM palette entry (xterm default at GR)
+PEN C                  : REM default colour for the statements above
+CLS [C]                : REM clear the surface (text screen without GR)
+SHOW                   : REM force a present now (normally one per line)
+SOUND FREQ_HZ, MS [, VOICE]     : REM square voice 0-3
+NOISE MS [, VOICE]              : REM percussion voice
+NOSOUND                : REM stop all voices
+```
+
+`GR` allocates the indexed surface, presents centred on the panel, and the
+interpreter presents the dirty region once per program line. `TEXT`, the end
+of a program, `RUN`, or `BYE` all return to text mode and stop any voices.
+See `/apps/BOUNCE.BAS` in the starter pack for a complete example.
 
 Forth adds four words:
 
