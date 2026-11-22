@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "apps/app_internal.h"
+#include "core/expr.h"
 #include "core/gfx.h"
 #include "gfx_lcd.h"
 #include "hardware/watchdog.h"
@@ -163,4 +164,109 @@ void app_gfxbench(const char *arg) {
                  (unsigned long)(big.ok ? big.kib_per_s : full.kib_per_s));
         ui_line(UI_SUCCESS, csv);
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* plot — graph an integer expression                                  */
+/* ------------------------------------------------------------------ */
+
+#define PLOT_SIZE 160
+#define PLOT_ORIGIN ((320 - PLOT_SIZE) / 2)
+#define PLOT_HALF (PLOT_SIZE / 2)
+
+typedef struct {
+    int32_t x;
+} plot_ctx_t;
+
+static int _plot_lookup(void *ctx, const char *name, size_t len) {
+    plot_ctx_t *plot = (plot_ctx_t *)ctx;
+    if (len == 1 && (name[0] == 'x' || name[0] == 'X')) return plot->x;
+    /* Any other name evaluates to 0, so a typo draws a flat line at the
+       axis instead of failing with no explanation. */
+    return 0;
+}
+
+void app_plot(const char *arg) {
+    const char *expression = skip_ws(arg);
+    if (!*expression) {
+        ui_line(UI_TEXT, "usage: plot EXPR    e.g. plot x*x/20");
+        ui_line(UI_TEXT, "       expressions are integer; x runs -80..79");
+        return;
+    }
+
+    uint8_t *pixels = (uint8_t *)malloc((size_t)PLOT_SIZE * PLOT_SIZE);
+    gfx_surface_t surface;
+    if (!pixels || !gfx_surface_init(&surface, pixels, PLOT_SIZE, PLOT_SIZE)) {
+        free(pixels);
+        ui_line(UI_ERROR, "plot: not enough memory");
+        return;
+    }
+
+    gfx_palette_reset();
+    gfx_clear(&surface, 0);
+
+    /* Axes in muted grey (index 8), curve in accent (index 14). */
+    gfx_hline(&surface, 0, PLOT_HALF, PLOT_SIZE, 8);
+    gfx_vline(&surface, PLOT_HALF, 0, PLOT_SIZE, 8);
+
+    int32_t samples[PLOT_SIZE];
+    bool valid[PLOT_SIZE];
+    int32_t lowest = 0, highest = 0;
+    plot_ctx_t ctx = { 0 };
+    int valid_count = 0;
+
+    for (int i = 0; i < PLOT_SIZE; i++) {
+        ctx.x = i - PLOT_HALF;
+        bool ok = false;
+        int32_t value = expr_eval(expression, _plot_lookup, &ctx, &ok);
+        valid[i] = ok;
+        samples[i] = value;
+        if (!ok) continue;
+        if (valid_count == 0 || value < lowest) lowest = value;
+        if (valid_count == 0 || value > highest) highest = value;
+        valid_count++;
+    }
+
+    if (valid_count == 0) {
+        free(pixels);
+        ui_line(UI_ERROR, "plot: the expression could not be evaluated");
+        return;
+    }
+
+    /* Scale y into the visible half, keeping the aspect square. A constant
+       expression would divide by zero, so widen the range around it. */
+    int32_t span = highest - lowest;
+    if (span == 0) {
+        lowest -= 1;
+        highest += 1;
+        span = 2;
+    }
+    int32_t scale = (PLOT_HALF - 2) * 2; /* usable vertical pixels */
+
+    int32_t previous_y = 0;
+    bool have_previous = false;
+    for (int i = 0; i < PLOT_SIZE; i++) {
+        if (!valid[i]) {
+            have_previous = false;
+            continue;
+        }
+        /* Map [lowest, highest] onto [bottom, top]. */
+        int32_t normalised = samples[i] - lowest;
+        int32_t y = (PLOT_SIZE - 1) - (normalised * scale) / span;
+        if (have_previous) gfx_line(&surface, i - 1, previous_y, i, y, 14);
+        else gfx_pixel(&surface, i, y, 14);
+        previous_y = y;
+        have_previous = true;
+    }
+
+    char label[40];
+    snprintf(label, sizeof label, "y min %ld max %ld", (long)lowest, (long)highest);
+
+    ui_line(UI_TEXT, "plot: any key to return");
+    gfx_present_lcd_full(&surface, PLOT_ORIGIN, PLOT_ORIGIN);
+    ui_line(UI_MUTED, label);
+    (void)sys_getchar();
+
+    free(pixels);
+    lcd_cls(LCD_BLACK);
 }

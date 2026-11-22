@@ -29,6 +29,7 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `uname [-a]`               | OS name; with `-a` adds hardware/build details         |
 | `sysinfo`                  | Live core, heap, SD throughput, and battery-gauge diagnostics |
 | `gfxbench [-n N] [-big] [-quiet]` | Measure full-surface and dirty-rect panel throughput |
+| `plot EXPR` / `graph EXPR` | Graph an integer expression of `x` over -80..79 |
 | `ramdisk [op ...]`         | In-memory files: `ls`, `cat NAME`, `write NAME TEXT`, `rm NAME` |
 | `dmesg`                    | Kernel-style boot log                                  |
 | `reboot`                   | Soft reset via watchdog                                |

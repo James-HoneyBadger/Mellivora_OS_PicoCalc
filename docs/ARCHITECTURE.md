@@ -224,6 +224,7 @@ Persistent shell and app state is stored on the SD card when it is mounted:
 | `/apps/.mpkg-state.json` | Installed package names, versions, digests |
 | `/themes/NAME.thm` | User palettes loaded at boot              |
 | `/CA.CRT`        | PEM certificate authority for HTTPS         |
+| `/RECENTS.TXT`   | Recently launched apps, newest first        |
 
 The shell can run without an SD card, but persistence and storage-backed
 apps are unavailable until a card is mounted. Wi-Fi passwords in
@@ -328,6 +329,28 @@ FAT driver's shared sector buffer, so a visitor may not read files. The
 `theme_scan_visit()` helper in `core/theme_file.c` only records names;
 `app_settings_load_user_themes()` loads the palettes once the enumeration
 has finished.
+
+## Launcher
+
+The home screen is a searchable list rather than a flat menu. `core/launcher.c`
+owns the parts that need deciding — categories, fuzzy ranking, and the recent
+list — and is host-tested; `app_home()` builds the item table from the
+built-ins plus everything `mapp_discover()` found in `/apps`, then hands rows
+to `ui_launcher()`.
+
+- Ranking is a case-insensitive subsequence score that rewards consecutive
+  characters and word starts, so `cl` puts "Clock and calendar" above
+  "Calculator". A query also matches each entry's command, which is how
+  `sys` finds `sysinfo` when its title says "System info".
+- With an empty query, recently launched entries float to the top. The list
+  is capped at six and persisted to `/RECENTS.TXT`, one command per line, so
+  it survives a reboot and can be edited by hand.
+- Rows carry an icon glyph, the title, and a four-character category tag
+  (`SYS`, `FILE`, `NOTE`, `TOOL`, `LANG`, `GAME`, `HW`, `APP`).
+
+`plot EXPR` reuses the same graphics core: it evaluates an integer
+expression of `x` across the surface, auto-scales the result, and draws the
+curve over a centred axis cross.
 
 ## Community hub
 

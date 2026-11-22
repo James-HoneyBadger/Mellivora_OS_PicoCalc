@@ -1,7 +1,7 @@
 # Command Coverage Report
 
-Runtime commands: 182
-Documented commands detected: 183
+Runtime commands: 184
+Documented commands detected: 185
 Missing in docs: 0
 Documented but not in runtime: 1
 

@@ -79,6 +79,30 @@ void ui_error(const char *what, const char *detail);
 /* Full-screen ownership: suppresses the shell status bar so app chrome
    (footers, headers) is not overwritten by background refreshes. */
 bool ui_fullscreen(void);
+/* ---- Launcher view --------------------------------------------------- */
+
+typedef struct {
+    const char *title;  /* row text */
+    const char *icon;   /* 1-2 character glyph, drawn left of the title */
+    const char *tag;    /* right-hand category tag such as "FILE" */
+} ui_launcher_row_t;
+
+/* A searchable launcher list: a query bar under the header, an icon and a
+   right-aligned category tag per row, and the selection highlighted. The
+   caller filters the rows before each call, so this view draws what it is
+   given. Returns the chosen index, or -1 when the user backs out. */
+typedef struct {
+    const ui_launcher_row_t *row;
+    int count;
+    const char *query;   /* initial query text, may be NULL */
+    int selected;        /* in/out: initial and final selection */
+    bool *query_changed; /* set when the user edited the query */
+    char *query_out;     /* receives the edited query */
+    size_t query_capacity;
+} ui_launcher_t;
+
+int ui_launcher(ui_launcher_t *view);
+
 void ui_set_fullscreen(bool on);
 
 /* Transient message shown in the status bar for a few seconds. */

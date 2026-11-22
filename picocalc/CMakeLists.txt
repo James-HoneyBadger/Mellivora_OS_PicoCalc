@@ -71,6 +71,7 @@ set(MELLIVORA_SOURCES
     src/core/filehash.c
     src/core/gfx.c
     src/core/mixer.c
+    src/core/launcher.c
     src/gfx_lcd.c
     src/core/pinmap.c
     src/core/vt100.c

@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "apps/app_internal.h"
+#include "core/launcher.h"
 #include "kbd.h"
 #include "lcd.h"
 #include "mapp.h"
@@ -157,37 +158,183 @@ void app_dashboard(const char *arg) {
     sys_clear();
 }
 
+/* ---- Home launcher ---------------------------------------------------- */
+
+#define RECENTS_PATH "/RECENTS.TXT"
+
+/* Built-in entries. The command is what the launcher dispatches, so it must
+   match the app table in apps.c. */
+static const launcher_item_t _launcher_builtins[] = {
+    { "Dashboard", "dashboard", LAUNCHER_CAT_SYSTEM, "*" },
+    { "File browser", "browse", LAUNCHER_CAT_FILES, "/" },
+    { "Notes", "notes", LAUNCHER_CAT_NOTES, "n" },
+    { "Todo", "todo", LAUNCHER_CAT_NOTES, "t" },
+    { "Planner", "planner", LAUNCHER_CAT_NOTES, "p" },
+    { "Journal", "journal", LAUNCHER_CAT_NOTES, "j" },
+    { "Habits", "habits", LAUNCHER_CAT_NOTES, "h" },
+    { "Bookmarks", "bookmarks", LAUNCHER_CAT_NOTES, "b" },
+    { "Calculator", "calc", LAUNCHER_CAT_TOOLS, "+" },
+    { "Sprite editor", "sprite", LAUNCHER_CAT_TOOLS, "#" },
+    { "Samples", "samples", LAUNCHER_CAT_TOOLS, "?" },
+    { "System info", "sysinfo", LAUNCHER_CAT_SYSTEM, "!" },
+    { "Settings", "settings", LAUNCHER_CAT_SYSTEM, "=" },
+    { "BASIC", "basic", LAUNCHER_CAT_LANG, ">" },
+    { "Tiny C", "tcc", LAUNCHER_CAT_LANG, ">" },
+    { "Forth", "forth", LAUNCHER_CAT_LANG, ">" },
+    { "Games", "games", LAUNCHER_CAT_GAMES, "o" },
+    { "Clock", "clock", LAUNCHER_CAT_SYSTEM, ":" },
+    { "Terminal", "term", LAUNCHER_CAT_HARDWARE, "|" },
+    { "Hardware", "hw", LAUNCHER_CAT_HARDWARE, "~" },
+    { "Packages", "mpkg", LAUNCHER_CAT_HARDWARE, "%" },
+};
+
+static launcher_recents_t _recents;
+
+static void _recents_load(void) {
+    launcher_recents_clear(&_recents);
+    char text[256];
+    int n = sys_fread(RECENTS_PATH, text, sizeof text);
+    if (n > 0) launcher_recents_parse(&_recents, text, (size_t)n);
+}
+
+static void _recents_save(void) {
+    char text[256];
+    size_t len = launcher_recents_serialize(&_recents, text, sizeof text);
+    if (len > 0) (void)write_text_file(RECENTS_PATH, text, "recents");
+}
+
+/* Dispatch a launcher command: an app-table name first, then a file in
+   /apps, so both built-ins and external modules launch from one list. */
+static bool _dispatch_app(const char *command) {
+    if (app_run(command, "")) return true;
+    return mapp_run(command);
+}
+
 void app_home(const char *arg) {
     (void)arg;
-    static const char *const items[] = {
-        "Dashboard", "File browser", "Notes", "Calculator", "Planner",
-        "Journal", "Habits", "Bookmarks", "Games", "Clock and calendar",
-        "BASIC", "Tiny C", "Sprite editor", "Terminal", "Samples",
-    };
-    static void (*const actions[])(const char *) = {
-        app_dashboard, app_browse, app_notes, app_calc, app_planner,
-        app_journal, app_habits, app_bookmarks, app_games, app_clock,
-        app_basic, app_tinyc, app_sprite, app_terminal, app_samples,
-    };
-    enum { BUILTIN_COUNT = (int)(sizeof items / sizeof items[0]) };
+    static launcher_item_t items[LAUNCHER_MAX_ITEMS];
+    static launcher_hit_t hits[LAUNCHER_MAX_ITEMS];
+    static ui_launcher_row_t rows[LAUNCHER_MAX_ITEMS];
+
+    const size_t builtin_count = sizeof _launcher_builtins / sizeof _launcher_builtins[0];
+    size_t count = 0;
+    for (size_t i = 0; i < builtin_count && count < LAUNCHER_MAX_ITEMS; i++)
+        items[count++] = _launcher_builtins[i];
+
+    /* Append everything discovered in /apps. */
     const int discovered = mapp_discover();
     const uint32_t app_count = discovered > 0 ? (uint32_t)discovered : 0;
-    const uint32_t menu_count = BUILTIN_COUNT + app_count;
-    const char *menu_items[BUILTIN_COUNT + 24];
-    for (uint32_t i = 0; i < BUILTIN_COUNT; i++) menu_items[i] = items[i];
+    bool truncated = false;
     for (uint32_t i = 0; i < app_count; i++) {
         const mapp_app_t *app = mapp_catalog_get(i);
-        menu_items[BUILTIN_COUNT + i] = app ? app->title : "External app";
+        if (!app) continue;
+        if (count >= LAUNCHER_MAX_ITEMS) {
+            truncated = true;
+            break;
+        }
+        launcher_item_t *slot = &items[count++];
+        snprintf(slot->title, sizeof slot->title, "%.*s", (int)sizeof slot->title - 1, app->title);
+        snprintf(slot->command, sizeof slot->command, "%.*s",
+                 (int)sizeof slot->command - 1, app->filename);
+        /* Trim the extension so the command matches `mapp_run`. */
+        char *dot = strrchr(slot->command, '.');
+        if (dot) *dot = '\0';
+        slot->category = LAUNCHER_CAT_APPS;
+        slot->icon = ".";
     }
+
     if (discovered < 0) ui_warn("SD /apps unavailable");
-    else if (mapp_catalog_truncated()) ui_warn("apps: showing first 24 matching files");
+    else if (mapp_catalog_truncated() || truncated)
+        ui_warn("launcher: some apps are not shown");
+
+    _recents_load();
+
+    char query[24];
+    query[0] = '\0';
+    int selected = 0;
 
     for (;;) {
-        int sel = ui_menu("Mellivora", "home", menu_items, (int)menu_count, 0);
-        if (sel < 0) break;
-        if (sel < BUILTIN_COUNT) actions[sel](NULL);
-        else mapp_launch(mapp_catalog_get((uint32_t)(sel - BUILTIN_COUNT)));
+        size_t shown = launcher_filter(items, count, query, hits, LAUNCHER_MAX_ITEMS);
+
+        /* With no query, recently used entries float to the top. With a
+           query, the fuzzy ranking is what the user asked for. */
+        if (!*query) {
+            launcher_hit_t ordered[LAUNCHER_MAX_ITEMS];
+            size_t used = 0;
+            for (uint8_t r = 0; r < _recents.count; r++) {
+                for (size_t i = 0; i < shown; i++) {
+                    if (strcmp(items[hits[i].index].command, _recents.entry[r].command) == 0) {
+                        ordered[used++] = hits[i];
+                        break;
+                    }
+                }
+            }
+            for (size_t i = 0; i < shown && used < LAUNCHER_MAX_ITEMS; i++) {
+                bool already = false;
+                for (size_t j = 0; j < used; j++) {
+                    if (ordered[j].index == hits[i].index) {
+                        already = true;
+                        break;
+                    }
+                }
+                if (!already) ordered[used++] = hits[i];
+            }
+            memcpy(hits, ordered, used * sizeof ordered[0]);
+            shown = used;
+        }
+
+        size_t row_count = 0;
+        for (size_t i = 0; i < shown && row_count < LAUNCHER_MAX_ITEMS; i++) {
+            const launcher_item_t *item = &items[hits[i].index];
+            rows[row_count].title = item->title;
+            rows[row_count].icon = item->icon;
+            rows[row_count].tag = launcher_category_tag(item->category);
+            row_count++;
+        }
+        if (row_count == 0) {
+            /* Nothing matches: keep the query visible so the user can edit
+               it, with a single explanatory row. */
+            rows[0].title = "no match";
+            rows[0].icon = " ";
+            rows[0].tag = "";
+            row_count = 1;
+        }
+
+        bool query_changed = false;
+        ui_launcher_t view = {
+            .row = rows,
+            .count = (int)row_count,
+            .query = query,
+            .selected = selected,
+            .query_changed = &query_changed,
+            .query_out = query,
+            .query_capacity = sizeof query,
+        };
+        int choice = ui_launcher(&view);
+        selected = view.selected;
+
+        if (query_changed) {
+            /* The row set changed under the cursor; start from the best
+               match rather than an index that may no longer exist. */
+            selected = 0;
+            continue;
+        }
+        if (choice < 0) break;
+        /* The placeholder row is not an app. */
+        if (shown == 0) continue;
+
+        const launcher_item_t *chosen = &items[hits[choice].index];
+        char command[LAUNCHER_COMMAND_MAX];
+        snprintf(command, sizeof command, "%s", chosen->command);
+        if (launcher_recents_push(&_recents, command)) _recents_save();
+
+        sys_clear();
+        if (!_dispatch_app(command)) ui_error("home", "that app is not available");
+        sys_clear();
+        /* Back in the launcher: forget the query but keep the selection. */
+        query[0] = '\0';
     }
+
     sys_clear();
 }
 

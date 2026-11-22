@@ -84,6 +84,7 @@ void app_mandelbrot(const char *arg);
 void app_minesweeper(const char *arg);
 void app_mpkg(const char *arg);
 void app_gfxbench(const char *arg);
+void app_plot(const char *arg);
 void app_hw(const char *arg);
 void app_term(const char *arg);
 void app_gpio(const char *arg);

@@ -216,6 +216,10 @@
     "source": "shell completion"
   },
   {
+    "name": "graph",
+    "source": "shell completion"
+  },
+  {
     "name": "grep",
     "source": "shell completion"
   },
@@ -421,6 +425,10 @@
   },
   {
     "name": "planner",
+    "source": "shell completion"
+  },
+  {
+    "name": "plot",
     "source": "shell completion"
   },
   {

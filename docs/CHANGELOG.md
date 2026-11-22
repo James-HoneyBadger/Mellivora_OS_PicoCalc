@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Searchable launcher** — icons, category tags, fuzzy search over titles
+  and command names, and a recent-apps list at the top persisted to
+  `/RECENTS.TXT`.
+- **`plot EXPR`** — graphs an integer expression of `x` on the graphics
+  surface with automatic scaling.
 - **App graphics and polyphonic audio (ABI v3)** — indexed-colour surfaces,
   sprites, dirty-rectangle presents, and a 4-voice PWM mixer exposed to
   `.mapp` apps, with capability bits and an append-only table.

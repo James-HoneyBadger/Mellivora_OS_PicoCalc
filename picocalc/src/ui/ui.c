@@ -425,3 +425,117 @@ int ui_menu(const char *title, const char *subtitle,
     ui_set_fullscreen(false);
     return result;
 }
+
+/* ============================================================
+ * Launcher view
+ * ============================================================ */
+
+/* Draw `text` into one row, left-padded, clipped to the display, with the
+   caller's colours. Existing cells are overwritten so a shorter string
+   cannot leave remnants of a longer one. */
+static void _launcher_row(int row, const char *text, int x, int width, uint32_t fg, uint32_t bg) {
+    char cells[LCD_COLS + 1];
+    memset(cells, ' ', LCD_COLS);
+    cells[LCD_COLS] = '\0';
+
+    if (text && width > 0) {
+        int len = (int)strlen(text);
+        if (len > width) len = width;
+        if (x >= 0 && x + len <= LCD_COLS) memcpy(cells + x, text, (size_t)len);
+    }
+    for (int c = 0; c < LCD_COLS; c++) lcd_draw_cell(c, row, cells[c], fg, bg);
+}
+
+int ui_launcher(ui_launcher_t *view) {
+    if (!view || !view->row || view->count <= 0) return -1;
+
+    ui_set_fullscreen(true);
+
+    char query[24];
+    query[0] = '\0';
+    if (view->query) {
+        size_t len = strlen(view->query);
+        if (len >= sizeof query) len = sizeof query - 1;
+        memcpy(query, view->query, len);
+        query[len] = '\0';
+    }
+
+    const int list_top = 3; /* header row, then the query bar */
+    const int list_bottom = LCD_ROWS - 2;
+    const int visible = list_bottom - list_top + 1;
+    int sel = view->selected;
+    if (sel < 0 || sel >= view->count) sel = 0;
+    int first = 0;
+    int result = -1;
+
+    for (;;) {
+        if (sel < first) first = sel;
+        if (sel >= first + visible) first = sel - visible + 1;
+
+        ui_clear();
+        char counter[24];
+        snprintf(counter, sizeof counter, "%d/%d", sel + 1, view->count);
+        ui_header("Mellivora", counter);
+
+        char bar[LCD_COLS + 1];
+        snprintf(bar, sizeof bar, " / %s", query);
+        _launcher_row(1, bar, 0, LCD_COLS, ui_color(UI_MUTED), ui_bg());
+
+        for (int row = 0; row < visible; row++) {
+            int idx = first + row;
+            if (idx >= view->count) {
+                _launcher_row(list_top + row, "", 0, LCD_COLS, ui_color(UI_TEXT), ui_bg());
+                continue;
+            }
+
+            bool selected = idx == sel;
+            uint32_t fg = selected ? ui_color(UI_SELECT_TEXT) : ui_color(UI_TEXT);
+            uint32_t bg = selected ? ui_color(UI_SELECT_BG) : ui_bg();
+
+            const char *icon = view->row[idx].icon ? view->row[idx].icon : "";
+            char line[LCD_COLS + 1];
+            snprintf(line, sizeof line, "%c %-.2s %.24s", selected ? '>' : ' ', icon,
+                     view->row[idx].title ? view->row[idx].title : "");
+            /* Leave five columns for the category tag on the right. */
+            _launcher_row(list_top + row, line, 0, LCD_COLS - 5, fg, bg);
+
+            const char *tag = view->row[idx].tag;
+            if (tag && *tag) {
+                _launcher_row(list_top + row, tag, LCD_COLS - 5, 5,
+                              selected ? ui_color(UI_SELECT_TEXT) : ui_color(UI_MUTED), bg);
+            }
+        }
+
+        ui_footer("type to filter  up/down  enter run  esc back");
+
+        int ch = sys_getchar();
+        if (ch == 'q' || ch == 0x1B || ch == 0x03) break;
+        if (ch == 0x10 || ch == 'k') {
+            if (sel > 0) sel--;
+        } else if (ch == 0x0E || ch == 'j') {
+            if (sel + 1 < view->count) sel++;
+        } else if (ch == '\r' || ch == '\n') {
+            result = sel;
+            break;
+        } else if (ch == 0x7F || ch == 0x08) {
+            size_t len = strlen(query);
+            if (len > 0) {
+                query[len - 1] = '\0';
+                if (view->query_changed) *view->query_changed = true;
+            }
+        } else if (ch >= 0x20 && ch < 0x7F) {
+            size_t len = strlen(query);
+            if (len + 1 < sizeof query) {
+                query[len] = (char)ch;
+                query[len + 1] = '\0';
+                if (view->query_changed) *view->query_changed = true;
+            }
+        }
+    }
+
+    if (view->query_out && view->query_capacity > 0)
+        snprintf(view->query_out, view->query_capacity, "%s", query);
+    view->selected = sel;
+    ui_set_fullscreen(false);
+    return result;
+}
