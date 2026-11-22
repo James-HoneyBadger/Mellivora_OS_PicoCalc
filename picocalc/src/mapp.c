@@ -531,7 +531,7 @@ static bool _load_mapp(const char *path) {
     for (uint32_t i = 0; i < relocation_count; i++) {
         _relocations[i] = _read_u32(reloc_raw + i * sizeof(uint32_t));
         if ((_relocations[i] & 3u) != 0 ||
-            _relocations[i] > image_size - sizeof(uint32_t)) goto done;
+            (uint64_t)_relocations[i] + sizeof(uint32_t) > image_size) goto done;
     }
     if (!_read_exact(&file, arena, image_size)) goto done;
     memset(arena + image_size, 0, bss_size);
