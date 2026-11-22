@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BASIC graphics and sound** — `GR`/`TEXT`, `PSET`, `LINE`, `RECT`,
   `CIRCLE` (and filled variants), `COLOR`, `PEN`, `SHOW`, plus `SOUND`,
   `NOISE`, and `NOSOUND`.
+- **Forth graphics and sound** — `gr`/`text`, `pset`, `line`, `rect`,
+  `frect`, `circle`, `fcircle`, `color`, `pen!`, `show`, `sound`, `noise`,
+  `nosound`, and a `ms` delay word that the documentation had already
+  promised but the interpreter lacked.
 - **`gfxbench`** — measures full-surface and dirty-rect panel throughput on
   the device, behind the same calls apps use.
 - **Host simulator** — `make sim APP=plasma` runs SDK apps natively against

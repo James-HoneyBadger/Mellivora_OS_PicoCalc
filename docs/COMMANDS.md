@@ -333,15 +333,37 @@ interpreter presents the dirty region once per program line. `TEXT`, the end
 of a program, `RUN`, or `BYE` all return to text mode and stop any voices.
 See `/apps/BOUNCE.BAS` in the starter pack for a complete example.
 
-Forth adds four words:
+Forth adds the hardware words plus graphics and sound:
 
 ```forth
 1 5 gpio!       \ ( value pin -- )
 5 gpio@ .       \ ( pin -- value )
 50 1000 5 pwm!  \ ( duty freq pin -- )
-250 ms          \ ( delay in milliseconds -- )
+250 ms          \ ( delay in milliseconds --, presents first )
 i2cdetect
 ```
+
+```forth
+80 gr                    \ ( size -- ) enter graphics (80/160/320)
+text                     \ back to the text screen
+7 pen!                   \ ( color -- ) default drawing colour
+40 40 200 pset           \ ( x y c -- ) pixel
+4 40 76 40 200 line      \ ( x1 y1 x2 y2 c -- )
+4 40 40 10 5 rect        \ ( x y w h c -- ) outline
+4 40 40 10 5 frect       \ ( x y w h c -- ) filled
+18 40 40 200 circle      \ ( x y r c -- ) outline
+4 40 40 11 fcircle       \ ( x y r c -- ) filled
+200 255 240 180 color    \ ( index r g b -- ) palette entry
+show                     \ present now (also happens per source word)
+200 440 sound            \ ( freq ms -- ) square voice
+200 noise                \ ( ms -- ) percussion voice
+nosound                  \ stop all voices
+```
+
+The last argument pushed is on top of the stack, matching `gpio!` and
+`pwm!`. This Forth has no loops or conditionals, so animations are written
+as a sequence of words (each one presents) interleaved with `ms` delays.
+See `/apps/SPIRAL.FTH` in the starter pack.
 
 ## Settings
 

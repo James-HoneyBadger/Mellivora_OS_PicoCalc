@@ -280,6 +280,11 @@ Version 2 added the graphics layer, and version 3 the polyphonic audio:
   draw on it, while `SOUND`/`NOISE`/`NOSOUND` drive the mixer. The
   interpreter presents the dirty region once per program line, so a ten-line
   program is a working animation with no toolchain.
+- Forth mirrors it with `gr`/`text`, `pset`/`line`/`rect`/`frect`/
+  `circle`/`fcircle`/`color`/`pen!`/`show`, `sound`/`noise`/`nosound`, and
+  `ms`, using the same stack convention as `gpio!` (last argument on top).
+  Without loops or conditionals, animation is a word sequence with `ms`
+  delays; the interpreter presents once per source word.
 
 Host-side developers use `tools/sdk/`: `make` produces `hello.mapp` and
 `plasma.mapp` from plain C, and the packer turns any linked ELF into the

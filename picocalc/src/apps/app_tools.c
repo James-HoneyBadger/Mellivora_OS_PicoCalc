@@ -12,6 +12,8 @@
 
 #include "apps/app_internal.h"
 #include "audio.h"
+#include "core/gfx.h"
+#include "gfx_lcd.h"
 #include "lcd.h"
 #include "pipe.h"
 #include "syscall.h"
@@ -562,6 +564,55 @@ void app_piano(const char *arg) {
 }
 
 /* Forth interpreter — minimal Forth with a small stack */
+
+/* Graphics state for the Forth words below. Owned by the interpreter, freed
+   when the session ends, so `gr` followed by `text` cannot leak. */
+static gfx_surface_t *g_forth_gfx;
+static uint8_t *g_forth_gfx_block;
+static uint8_t g_forth_pen = 7;
+static bool g_forth_dirty;
+
+static void _forth_gfx_flush(void) {
+    if (!g_forth_dirty || !g_forth_gfx) return;
+    g_forth_dirty = false;
+    int origin = (LCD_WIDTH - g_forth_gfx->width) / 2;
+    gfx_present_lcd_dirty(g_forth_gfx, origin, origin);
+}
+
+static void _forth_gfx_exit(void) {
+    g_forth_dirty = false;
+    if (g_forth_gfx_block) {
+        free(g_forth_gfx_block);
+        g_forth_gfx_block = NULL;
+        g_forth_gfx = NULL;
+    }
+}
+
+static void _forth_gfx_enter(int size) {
+    _forth_gfx_exit();
+    if (size <= 0) size = 160;
+    if (size < 8) size = 8;
+    if (size > LCD_WIDTH) size = LCD_WIDTH;
+
+    uint8_t *block = (uint8_t *)malloc(sizeof(gfx_surface_t) + (size_t)size * (size_t)size);
+    if (!block) {
+        print_line("forth: not enough RAM for graphics");
+        return;
+    }
+    gfx_surface_t *surface = (gfx_surface_t *)block;
+    if (!gfx_surface_init(surface, block + sizeof(gfx_surface_t), (uint16_t)size,
+                          (uint16_t)size)) {
+        free(block);
+        return;
+    }
+    g_forth_gfx = surface;
+    g_forth_gfx_block = block;
+    g_forth_pen = 7;
+    gfx_palette_reset();
+    gfx_clear(surface, 0);
+    gfx_present_lcd_full(surface, (LCD_WIDTH - size) / 2, (LCD_HEIGHT - size) / 2);
+}
+
 #define FORTH_STACK_SZ 64
 #define FORTH_DICT_SZ 32
 #define FORTH_WORD_MAX 32
@@ -634,6 +685,90 @@ static void _forth_exec_body(const char *body,
             }
         } else if (strcmp(bw, "i2cdetect") == 0) {
             (void)hw_binding_i2c_scan();
+        } else if (strcmp(bw, "ms") == 0) {
+            /* Delay, presenting any pending drawing first so a `... show 250 ms`
+               sequence animates instead of freezing. */
+            if (sp > 0) {
+                int delay = stack[--sp];
+                _forth_gfx_flush();
+                if (delay > 0) sys_sleep((uint32_t)delay);
+            }
+        }
+        /* Graphics: coordinates follow the hardware-word convention, so the
+           last argument pushed is on top of the stack. */
+        else if (strcmp(bw, "gr") == 0) {
+            int size = sp > 0 ? stack[--sp] : 160;
+            _forth_gfx_enter(size);
+        } else if (strcmp(bw, "text") == 0) {
+            _forth_gfx_exit();
+            sys_clear();
+        } else if (strcmp(bw, "pen!") == 0) {
+            if (sp > 0) g_forth_pen = (uint8_t)(stack[--sp] & 0xFF);
+        } else if (strcmp(bw, "pset") == 0) {
+            if (!g_forth_gfx) { print_line("forth: gr first"); }
+            else if (sp >= 3) {
+                int color = stack[sp - 1], y = stack[sp - 2], x = stack[sp - 3];
+                sp -= 3;
+                gfx_pixel(g_forth_gfx, x, y, (uint8_t)(color & 0xFF));
+                g_forth_dirty = true;
+            }
+        } else if (strcmp(bw, "line") == 0) {
+            if (!g_forth_gfx) { print_line("forth: gr first"); }
+            else if (sp >= 5) {
+                int color = stack[sp - 1], y2 = stack[sp - 2], x2 = stack[sp - 3];
+                int y1 = stack[sp - 4], x1 = stack[sp - 5];
+                sp -= 5;
+                gfx_line(g_forth_gfx, x1, y1, x2, y2, (uint8_t)(color & 0xFF));
+                g_forth_dirty = true;
+            }
+        } else if (strcmp(bw, "rect") == 0 || strcmp(bw, "frect") == 0) {
+            if (!g_forth_gfx) { print_line("forth: gr first"); }
+            else if (sp >= 5) {
+                int color = stack[sp - 1], h = stack[sp - 2], w = stack[sp - 3];
+                int y = stack[sp - 4], x = stack[sp - 5];
+                sp -= 5;
+                if (bw[0] == 'f')
+                    gfx_fill_rect(g_forth_gfx, x, y, w, h, (uint8_t)(color & 0xFF));
+                else
+                    gfx_rect(g_forth_gfx, x, y, w, h, (uint8_t)(color & 0xFF));
+                g_forth_dirty = true;
+            }
+        } else if (strcmp(bw, "circle") == 0 || strcmp(bw, "fcircle") == 0) {
+            if (!g_forth_gfx) { print_line("forth: gr first"); }
+            else if (sp >= 4) {
+                int color = stack[sp - 1], r = stack[sp - 2];
+                int y = stack[sp - 3], x = stack[sp - 4];
+                sp -= 4;
+                if (bw[0] == 'f')
+                    gfx_fill_circle(g_forth_gfx, x, y, r, (uint8_t)(color & 0xFF));
+                else
+                    gfx_circle(g_forth_gfx, x, y, r, (uint8_t)(color & 0xFF));
+                g_forth_dirty = true;
+            }
+        } else if (strcmp(bw, "color") == 0) {
+            if (sp >= 4) {
+                int b = stack[sp - 1], g = stack[sp - 2], r = stack[sp - 3];
+                int index = stack[sp - 4];
+                sp -= 4;
+                gfx_palette_set((uint8_t)(index & 0xFF), (uint8_t)(r & 0xFF),
+                                (uint8_t)(g & 0xFF), (uint8_t)(b & 0xFF));
+                if (g_forth_gfx) gfx_invalidate(g_forth_gfx);
+            }
+        } else if (strcmp(bw, "show") == 0 || strcmp(bw, "flush") == 0) {
+            _forth_gfx_flush();
+        } else if (strcmp(bw, "sound") == 0) {
+            if (sp >= 2) {
+                int ms = stack[sp - 1], freq = stack[sp - 2];
+                sp -= 2;
+                audio_note(AUDIO_WAVE_SQUARE, freq, ms, 255, 1, 5, 0);
+            }
+        } else if (strcmp(bw, "noise") == 0) {
+            if (sp >= 1) {
+                int ms = stack[--sp];
+                audio_note(AUDIO_WAVE_NOISE, 440, ms, 200, 1, 10, 1);
+            }
+        } else if (strcmp(bw, "nosound") == 0) {
+            audio_stop();
         }
         else {
             /* Look up nested user-defined word */
@@ -734,7 +869,12 @@ static void _forth_run_file(const char *path) {
         }
         if (strcmp(word, "bye") == 0) break;
         _forth_exec_body(word, stack, &sp, dict, nwords, 0);
+        /* One present per source word: a loop of words is an animation. */
+        _forth_gfx_flush();
     }
+    _forth_gfx_flush();
+    _forth_gfx_exit();
+    audio_stop();
 }
 
 void app_forth(const char *arg) {
@@ -896,6 +1036,9 @@ void app_forth(const char *arg) {
             }
         }
         if (defining) print_line("  compiled");
+        _forth_gfx_flush();
     }
+    _forth_gfx_exit();
+    audio_stop();
 }
 
