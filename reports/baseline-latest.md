@@ -1,13 +1,13 @@
 # Baseline Report
 
-Generated: 2026-11-22T03:06:08Z
+Generated: 2026-11-22T03:29:54Z
 
 ## Static Metrics
 
-- C source/header files in picocalc/src: 105
-- Total C lines (picocalc/src/*.c): 25314
-- Total markdown lines (docs/*.md): 3506
-- Command reference entries (table rows): 170
+- C source/header files in picocalc/src: 110
+- Total C lines (picocalc/src/*.c): 25785
+- Total markdown lines (docs/*.md): 3514
+- Command reference entries (table rows): 171
 
 ## Dynamic Hardware Metrics (manual capture placeholder)
 

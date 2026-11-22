@@ -257,17 +257,24 @@ let an app discover what the running loader implements, and
 `mapp.h` pin the v1 prefix so a future edit cannot silently move a field
 an older binary still reads.
 
-Version 2 adds the graphics and audio layer that games and demos need:
+Version 2 added the graphics layer, and version 3 the polyphonic audio:
 
 - `core/gfx.c` implements indexed 8-bit surfaces with a 256-entry palette,
   clipped primitives, masked sprite blits, glyph drawing, and dirty-rectangle
   tracking. It is host-tested and knows nothing about the panel.
+- `gfx_lcd.c` bridges surfaces to the panel: `lcd_blit_region()` opens one
+  SPI window for the whole region and expands each row through the palette,
+  so a present is a single Core 1 request that streams only the dirty
+  rectangle. A full 320x320 present would be ~307 KiB of SPI traffic; the
+  160x160 mode is 25.6 KiB per surface and is the recommended default.
+- `core/mixer.c` is a host-tested 4-voice mixer (square/triangle/noise, AD
+  envelopes, per-voice seeds). `audio.c` runs the two PWM slices as an 8-bit
+  DAC (carrier ~520 kHz) and drives them from a 16 kHz timer on core 0, which
+  also owns the request queue - so all mixer mutation happens in one place.
 - `mapp.c` hands out up to four surfaces per app from the heap and releases
-  them when `mapp_main` returns, so a leak cannot survive a launch.
-- `lcd_blit_row()` in the LCD driver writes one scanline, so `gfx_present()`
-  streams only the dirty rectangle instead of needing a full frame buffer.
-  A full 320x320 present would be ~307 KiB of SPI traffic; the 160x160 mode
-  is 25.6 KiB per surface and is the recommended default.
+  them when `mapp_main` returns, so a leak cannot survive a launch; the ABI
+  exposes `gfx_*`, `audio_tone`, and the v3 `audio_note`/`audio_voice_stop`
+  voices. `gfxbench` measures the real panel throughput behind those calls.
 
 Host-side developers use `tools/sdk/`: `make` produces `hello.mapp` and
 `plasma.mapp` from plain C, and the packer turns any linked ELF into the

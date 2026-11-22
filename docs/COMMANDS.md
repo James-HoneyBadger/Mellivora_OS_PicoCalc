@@ -28,6 +28,7 @@ For the user-friendly tour, see [USER_GUIDE.md](USER_GUIDE.md).
 | `version`                  | Print firmware version, build timestamp, project URL   |
 | `uname [-a]`               | OS name; with `-a` adds hardware/build details         |
 | `sysinfo`                  | Live core, heap, SD throughput, and battery-gauge diagnostics |
+| `gfxbench [-n N] [-big] [-quiet]` | Measure full-surface and dirty-rect panel throughput |
 | `ramdisk [op ...]`         | In-memory files: `ls`, `cat NAME`, `write NAME TEXT`, `rm NAME` |
 | `dmesg`                    | Kernel-style boot log                                  |
 | `reboot`                   | Soft reset via watchdog                                |

@@ -34,7 +34,13 @@ timers, and network availability/DNS/HTTP GET where the board supports Wi-Fi.
 **v2** adds capabilities, `yield()`, an indexed-colour graphics surface API
 (`gfx_create`/`destroy`, `pixel`/`hline`/`vline`/`rect`/`fill_rect`/`char`,
 `blit` with a transparent index, `palette`, `invalidate`, `present`), and
-non-blocking `audio_tone`/`audio_stop`. See `plasma.c` for the whole loop.
+non-blocking `audio_tone`/`audio_stop`.
+
+**v3** adds a 4-voice mixer: `audio_note(wave, freq, duration_ms, volume,
+attack_ms, release_ms, voice)` with `MAPP_WAVE_SQUARE/TRIANGLE/NOISE` and
+`audio_voice_stop(voice)`. Test `MAPP_CAP_AUDIO_MIXER` before using it.
+`plasma.c` plays a triangle arpeggio through it and falls back to beeps on
+v2 loaders. `gfxbench` on the device reports the real panel throughput.
 
 ## Graphics surfaces
 

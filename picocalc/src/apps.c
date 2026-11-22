@@ -103,6 +103,7 @@ static app_cmd_entry_t *app_table(size_t *out_count) {
         {"gpio", app_gpio}, {"pwm", app_pwm},
         {"i2cdetect", app_i2cdetect}, {"i2c", app_i2cdetect},
         {"ymodem", app_ymodem},
+        {"gfxbench", app_gfxbench},
     };
     static const size_t n = sizeof table / sizeof table[0];
     static bool sorted = false;

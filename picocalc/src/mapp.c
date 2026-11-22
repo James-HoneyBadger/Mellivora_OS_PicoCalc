@@ -11,7 +11,9 @@
 #include "apps/app_internal.h"
 #include "audio.h"
 #include "console.h"
+#include "core/mixer.h"
 #include "core/gfx.h"
+#include "gfx_lcd.h"
 #include "core/mapp_image.h"
 #include "fat.h"
 #include "kbd.h"
@@ -473,34 +475,14 @@ static void _gfx_palette(uint8_t index, uint32_t rgb) {
 static void _gfx_invalidate(void *surface) { gfx_invalidate((gfx_surface_t *)surface); }
 
 static void _gfx_present(void *surface, int32_t x, int32_t y) {
-    gfx_surface_t *s = (gfx_surface_t *)surface;
-    if (!s || !s->pixels) return;
-    /* A clean surface still presents in full the first time, so an app that
-       clears once and then blits a sprite does not show a blank panel. */
-    uint16_t dx = 0, dy = 0, dw = s->width, dh = s->height;
-    if (s->dirty_any) {
-        dx = s->dirty_x0;
-        dy = s->dirty_y0;
-        dw = (uint16_t)(s->dirty_x1 - s->dirty_x0);
-        dh = (uint16_t)(s->dirty_y1 - s->dirty_y0);
-    }
-    if (dw == 0 || dh == 0) return;
-
-    static uint8_t rowbuf[LCD_WIDTH * 3];
-    if (dw > LCD_WIDTH) dw = LCD_WIDTH;
-    for (uint16_t row = 0; row < dh; row++) {
-        size_t bytes = gfx_row_to_rgb888(s, (uint16_t)(dy + row), dx, dw, rowbuf);
-        if (!bytes) break;
-        lcd_blit_row((uint16_t)(x + dx), (uint16_t)(y + dy + row), dw, rowbuf);
-    }
-    gfx_dirty_reset(s);
+    gfx_present_lcd((gfx_surface_t *)surface, x, y);
 }
 
 /* ---- Lifecycle and audio -------------------------------------------- */
 
 static uint32_t _capabilities(void) {
     uint32_t caps = MAPP_CAP_DISPLAY | MAPP_CAP_FILES | MAPP_CAP_KEYS | MAPP_CAP_TIMER |
-                    MAPP_CAP_GFX | MAPP_CAP_AUDIO | MAPP_CAP_YIELD;
+                    MAPP_CAP_GFX | MAPP_CAP_AUDIO | MAPP_CAP_AUDIO_MIXER | MAPP_CAP_YIELD;
 #ifdef PICO_CYW43_SUPPORTED
     caps |= MAPP_CAP_NETWORK;
 #endif
@@ -516,6 +498,23 @@ static int32_t _audio_tone(int32_t freq_hz, int32_t duration_ms) {
     if (freq_hz < 20 || freq_hz > 20000 || duration_ms <= 0) return -1;
     audio_beep((int)freq_hz, (int)duration_ms);
     return 0;
+}
+
+static int32_t _audio_note(int32_t wave, int32_t freq_hz, int32_t duration_ms,
+                           int32_t volume, int32_t attack_ms, int32_t release_ms,
+                           int32_t voice) {
+    if (wave < (int32_t)AUDIO_WAVE_SQUARE || wave > (int32_t)AUDIO_WAVE_NOISE) return -1;
+    if (freq_hz < 20 || freq_hz > 20000 || duration_ms < 0) return -1;
+    if (volume < 0 || volume > 255 || attack_ms < 0 || attack_ms > 65535 ||
+        release_ms < 0 || release_ms > 65535) return -1;
+    if (voice < 0 || voice >= MIXER_VOICES) return -1;
+    audio_note((audio_wave_t)wave, (int)freq_hz, (int)duration_ms, (int)volume,
+               (int)attack_ms, (int)release_ms, (int)voice);
+    return 0;
+}
+
+static void _audio_voice_stop(int32_t voice) {
+    if (voice >= 0 && voice < MIXER_VOICES) audio_voice_stop((int)voice);
 }
 
 static void _audio_stop(void) { audio_stop(); }
@@ -562,6 +561,8 @@ static const mapp_api_t _api = {
     .gfx_present = _gfx_present,
     .audio_tone = _audio_tone,
     .audio_stop = _audio_stop,
+    .audio_note = _audio_note,
+    .audio_voice_stop = _audio_voice_stop,
 };
 
 static bool _bytecode_run(const uint8_t *code, uint32_t length) {

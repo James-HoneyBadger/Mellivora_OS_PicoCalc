@@ -1868,7 +1868,7 @@ bool sys_output_captured(void) {
     X("forth", "apps") X("xmodem", "apps") X("theme", "apps") X("sysinfo", "system") \
     X("cursor", "system") X("hw", "system") X("workbench", "system") \
     X("gpio", "system") X("pwm", "system") X("i2cdetect", "system") X("i2c", "system") \
-    X("ymodem", "system") \
+    X("ymodem", "system") X("gfxbench", "system") \
     X("less", "apps") X("uniq", "apps") X("umount", "fs") X("unmount", "fs") \
     X("time", "shell") X("repeat", "shell") X("printf", "shell") \
     X("base64", "apps") X("crc32", "apps") X("units", "apps") X("pass", "apps") \

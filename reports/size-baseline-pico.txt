@@ -1,2 +1,2 @@
    text	   data	    bss	    dec	    hex	filename
- 388088	      0	 166864	 554952	  877c8	/home/james/Mellivora_OS_PicoCalc/picocalc/build/mellivora_picocalc.elf
+ 392984	      0	 167364	 560348	  88cdc	/home/james/Mellivora_OS_PicoCalc/picocalc/build/mellivora_picocalc.elf

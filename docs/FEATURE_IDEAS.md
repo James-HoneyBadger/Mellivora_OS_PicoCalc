@@ -15,7 +15,7 @@ reliability, and the maintenance cost of supporting three board variants.
 | Planner reminders | Automatic startup notice and `planner remind` | Requires a valid clock; date-only entries are shown once at startup, not scheduled by time of day. |
 | Searchable command help | `help -k KEYWORD` | Searches command names and groups; detailed command pages remain available through `man`. |
 | Serial hardware smoke tests | `python3 tools/hardware/smoke_test.py PORT` | Opt-in and non-destructive; checks shell output/dispatch over USB serial, not LCD or keyboard hardware. |
-| App graphics and audio ABI (v2) | `.mapp` apps call `gfx_*` for indexed surfaces and `audio_tone` for sound; build with `make -C tools/sdk APP=plasma` | Surfaces are limited to 4 per app and the loader's graphics budget; a full 320x320 surface fits only on RP2350. Apps are not sandboxed. |
+| App graphics and audio ABI (v3) | `.mapp` apps call `gfx_*` for indexed surfaces and `audio_note` for 4-voice polyphony; build with `make -C tools/sdk APP=plasma` | Surfaces are limited to 4 per app and the loader's graphics budget; a full 320x320 surface fits only on RP2350. Apps are not sandboxed. `gfxbench` measures panel throughput on hardware. |
 | Verified HTTPS | `fetch https://...`, `wget https://... FILE` | Pico 2 W only. Requires a valid software clock and a user-managed PEM CA certificate at `/CA.CRT`; TLS certificate and hostname checks are mandatory. |
 
 ## Follow-up opportunities

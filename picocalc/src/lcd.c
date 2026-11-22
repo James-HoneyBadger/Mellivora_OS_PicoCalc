@@ -65,6 +65,7 @@ typedef enum {
     LCD_OP_DRAW_CELL,
     LCD_OP_GET_CELL,
     LCD_OP_BLIT_ROW,
+    LCD_OP_BLIT_REGION,
 } lcd_op_t;
 
 typedef struct {
@@ -77,6 +78,8 @@ typedef struct {
     bool enable, block, result_bool;
     const char *text, *target;
     const uint8_t *pixels;
+    lcd_row_fn row_fn;
+    void *row_ctx;
     int result_int;
 } lcd_request_t;
 
@@ -131,6 +134,10 @@ static void _lcd_execute_request(void *context) {
         case LCD_OP_BLIT_ROW:
             lcd_blit_row(request->x, request->y, request->w, request->pixels);
             break;
+        case LCD_OP_BLIT_REGION:
+            lcd_blit_region(request->x, request->y, request->w, request->h,
+                            request->row_fn, request->row_ctx);
+            break;
     }
 }
 
@@ -167,6 +174,9 @@ void lcd_unlock(void) {
 bool lcd_batch_active(void) {
     return _lcd_core1_lock_depth != 0;
 }
+
+/* Conversion buffer for lcd_blit_region: one panel row of 24-bit pixels. */
+static uint8_t _blit_rowbuf[LCD_WIDTH * 3];
 
 /* ============================================================
  * DMA acceleration (available on both RP2040 and RP2350)
@@ -1005,6 +1015,25 @@ void lcd_blit_row(uint16_t x, uint16_t y, uint16_t w, const uint8_t *rgb888) {
     _lcd_lock();
     _set_window(x, y, (uint16_t)(x + w - 1), y);
     _spi_write_fast(rgb888, (size_t)w * 3u);
+    _end_window_write();
+    _lcd_unlock();
+}
+
+void lcd_blit_region(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                     lcd_row_fn row_fn, void *ctx) {
+    LCD_ROUTE_VOID(LCD_OP_BLIT_REGION,
+        .x = x, .y = y, .w = w, .h = h, .row_fn = row_fn, .row_ctx = ctx);
+    if (!row_fn || x >= LCD_WIDTH || y >= LCD_HEIGHT || w == 0 || h == 0) return;
+    if (x + w > LCD_WIDTH) w = (uint16_t)(LCD_WIDTH - x);
+    if (y + h > LCD_HEIGHT) h = (uint16_t)(LCD_HEIGHT - y);
+    _lcd_lock();
+    /* One window for the whole region: the per-row command overhead of
+       lcd_blit_row disappears for full-surface presents. */
+    _set_window(x, y, (uint16_t)(x + w - 1), (uint16_t)(y + h - 1));
+    for (uint16_t row = 0; row < h; row++) {
+        row_fn((uint16_t)(y + row), _blit_rowbuf, ctx);
+        _spi_write_fast(_blit_rowbuf, (size_t)w * 3u);
+    }
     _end_window_write();
     _lcd_unlock();
 }

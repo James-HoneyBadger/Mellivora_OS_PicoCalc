@@ -208,6 +208,10 @@
     "source": "shell completion"
   },
   {
+    "name": "gfxbench",
+    "source": "shell completion"
+  },
+  {
     "name": "gpio",
     "source": "shell completion"
   },

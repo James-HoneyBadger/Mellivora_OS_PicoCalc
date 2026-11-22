@@ -9,7 +9,7 @@
 /* The API table grows by appending. An app compiled against v1 keeps working
    on a v2 loader: it only reads the fields it knows about, and `size` tells
    it how much of the table exists. Never reorder or remove a field. */
-#define MAPP_API_VERSION 2u
+#define MAPP_API_VERSION 3u
 #define MAPP_API_VERSION_MIN 1u
 
 /* Capability bits reported by mapp_api_t::capabilities. An app must test the
@@ -22,6 +22,12 @@
 #define MAPP_CAP_GFX (1u << 5)
 #define MAPP_CAP_AUDIO (1u << 6)
 #define MAPP_CAP_YIELD (1u << 7)
+#define MAPP_CAP_AUDIO_MIXER (1u << 8)
+
+/* audio_note() waveforms. */
+#define MAPP_WAVE_SQUARE 0
+#define MAPP_WAVE_TRIANGLE 1
+#define MAPP_WAVE_NOISE 2
 
 #define MAPP_HEADER_SIZE 60u
 
@@ -127,6 +133,15 @@ typedef struct {
     /* Queue a tone; returns 0 when accepted. Non-blocking. */
     int32_t (*audio_tone)(int32_t freq_hz, int32_t duration_ms);
     void (*audio_stop)(void);
+
+    /* ---- v3: polyphonic voices ---------------------------------------- */
+
+    /* Start (or restart) voice 0-3 with an AD envelope; returns 0 on
+       success. Test MAPP_CAP_AUDIO_MIXER first. */
+    int32_t (*audio_note)(int32_t wave, int32_t freq_hz, int32_t duration_ms, int32_t volume,
+                          int32_t attack_ms, int32_t release_ms, int32_t voice);
+    /* Begin the release phase of one voice. */
+    void (*audio_voice_stop)(int32_t voice);
 } mapp_api_t;
 
 /* The v1 prefix must never move. If either assert fires, an old binary would

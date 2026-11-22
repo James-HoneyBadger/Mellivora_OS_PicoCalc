@@ -49,6 +49,7 @@ set(MELLIVORA_SOURCES
     src/apps/app_tools.c
     src/apps/app_mpkg.c
     src/apps/app_hw.c
+    src/apps/app_gfxbench.c
     src/apps/text.c
     src/apps/hex.c
     src/apps/fs.c
@@ -69,6 +70,8 @@ set(MELLIVORA_SOURCES
     src/core/mapp_image.c
     src/core/filehash.c
     src/core/gfx.c
+    src/core/mixer.c
+    src/gfx_lcd.c
     src/core/pinmap.c
     src/core/vt100.c
     src/core/xmodem.c

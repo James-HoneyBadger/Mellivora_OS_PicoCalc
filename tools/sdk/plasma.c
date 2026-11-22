@@ -62,11 +62,23 @@ int32_t mapp_main(const mapp_api_t *api, int32_t argc, char **argv) {
         if (api->keyboard_try_read() >= 0) break;
 
         phase++;
-        if (api->audio_tone && (phase & 0x1F) == 0) api->audio_tone(440 + (phase >> 2), 20);
+        /* A little arpeggio on the mixer voices when the loader has them;
+           falls back to a single beep on v2 loaders. */
+        if (api->audio_note && api->capabilities &&
+            (api->capabilities() & MAPP_CAP_AUDIO_MIXER)) {
+            int beat = phase >> 5;
+            static const int scale[4] = {262, 330, 392, 523};
+            int voice = beat & 3;
+            if (voice != 0) api->audio_voice_stop(voice - 1);
+            api->audio_note(MAPP_WAVE_TRIANGLE, scale[beat & 3], 120, 160, 4, 30, voice);
+        } else if (api->audio_tone && (phase & 0x1F) == 0) {
+            api->audio_tone(440 + (phase >> 2), 20);
+        }
         if (api->yield) api->yield();
         api->timer_sleep(40);
     }
 
+    if (api->audio_stop) api->audio_stop();
     api->gfx_destroy(surface);
     api->display_clear();
     return 0;
