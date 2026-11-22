@@ -212,12 +212,16 @@ int xm_receive(const xm_io_t *io, void *ctx, xm_config_t *cfg) {
         }
 
         if (block == (expected & 0xFF)) {
-            if (io->on_data(ctx, buffer, (uint32_t)len) != 0) {
+            /* The sender pads the final block; trim to the size announced in
+               the YMODEM header so no 0x1A padding reaches the file. */
+            uint32_t payload = (uint32_t)len;
+            if (cfg->size && total + payload > cfg->size) payload = cfg->size - total;
+            if (payload && io->on_data(ctx, buffer, payload) != 0) {
                 (void)_put(io, ctx, XM_CAN);
                 (void)_put(io, ctx, XM_CAN);
                 return XM_ERR_REJECTED;
             }
-            total += (uint32_t)len;
+            total += payload;
             expected = (expected + 1) & 0xFF;
             failures = 0;
             if (_put(io, ctx, XM_ACK) != 0) return XM_ERR_IO;

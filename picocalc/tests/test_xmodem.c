@@ -199,6 +199,29 @@ void test_xmodem(void) {
     CHECK_EQ(cfg.size, 128u);
     CHECK_EQ(fixture.on_data_calls, 1);
 
+    /* ---- receive: YMODEM trims the sender's padding to the declared size ---- */
+    _fixture(&fixture);
+    uint8_t small_header[128];
+    memset(small_header, 0, sizeof small_header);
+    memcpy(small_header, "PART.BIN", 8);
+    memcpy(small_header + 9, "100", 3);
+    uint8_t padded[128];
+    memset(padded, 'P', sizeof padded);
+    memset(padded + 100, XM_SUB, sizeof padded - 100);
+    _script_packet(&fixture, 0, small_header, 128, true, false);
+    _script_packet(&fixture, 1, padded, 128, true, false);
+    _script_byte(&fixture, XM_EOT);
+    _script_byte(&fixture, XM_EOT);
+    cfg.ymodem = true;
+    cfg.retries = 10;
+    received = xm_receive(&io, &fixture, &cfg);
+    CHECK_EQ(received, 100);
+    CHECK_EQ(fixture.received, 100u);
+    CHECK_EQ(fixture.on_data_calls, 1);
+    CHECK_EQ(cfg.size, 100u);
+    CHECK(fixture.payload[99] == 'P');
+    CHECK(fixture.payload[100] == 0); /* nothing beyond the declared size */
+
     /* ---- send: 200 bytes become two padded 128-byte blocks ---- */
     uint8_t source[200];
     for (size_t i = 0; i < sizeof source; i++)

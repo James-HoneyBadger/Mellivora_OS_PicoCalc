@@ -242,13 +242,25 @@ void app_term(const char *arg) {
 
     term_sink_t sink = { .port = port, .logging = false };
     pinmap_placement_t place;
+
+    /* Allocate the screen buffer first so a failure never leaves the UART
+       or the logging file half-open. */
+    size_t cell_count = (size_t)TERM_COLS * (size_t)TERM_ROWS;
+    vt100_cell_t *cells = calloc(cell_count, sizeof *cells);
+    if (!cells) {
+        ui_error("term", "out of memory");
+        return;
+    }
+
     if (port.port >= 0) {
         if (!pinmap_uart(port.port, &place)) {
             ui_error("term", "no free pins for that UART");
+            free(cells);
             return;
         }
         if (!g_hw->uart_open || !g_hw->uart_open(port.port, port.baud, place.tx, place.rx)) {
             ui_error("term", "could not open the UART");
+            free(cells);
             return;
         }
     }
@@ -259,13 +271,6 @@ void app_term(const char *arg) {
         copy_cstr(log_path, sizeof log_path, absolute);
         (void)fat_unlink(log_path);
         sink.logging = true;
-    }
-
-    size_t cell_count = (size_t)TERM_COLS * (size_t)TERM_ROWS;
-    vt100_cell_t *cells = calloc(cell_count, sizeof *cells);
-    if (!cells) {
-        ui_error("term", "out of memory");
-        return;
     }
 
     vt100_t vt;
@@ -336,7 +341,6 @@ typedef struct {
     const char *path;
     fat_file_t file;
     uint32_t written;
-    uint32_t limit;
 } xfer_t;
 
 static int _xfer_getc(void *ctx, uint32_t timeout_ms) {
@@ -368,10 +372,6 @@ static int _xfer_putc(void *ctx, uint8_t byte) {
 
 static int _xfer_on_data(void *ctx, const uint8_t *data, uint32_t len) {
     xfer_t *xfer = (xfer_t *)ctx;
-    if (xfer->limit) {
-        uint32_t room = xfer->limit > xfer->written ? xfer->limit - xfer->written : 0;
-        if (len > room) len = room;
-    }
     if (len == 0) return 0;
     if (fat_append(xfer->path, data, len) != FAT_OK) return -1;
     xfer->written += len;
