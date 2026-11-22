@@ -50,6 +50,7 @@ set(MELLIVORA_SOURCES
     src/apps/app_mpkg.c
     src/apps/app_hw.c
     src/apps/app_gfxbench.c
+    src/apps/app_setup.c
     src/apps/text.c
     src/apps/hex.c
     src/apps/fs.c
@@ -72,6 +73,7 @@ set(MELLIVORA_SOURCES
     src/core/gfx.c
     src/core/mixer.c
     src/core/launcher.c
+    src/core/onboarding.c
     src/gfx_lcd.c
     src/core/pinmap.c
     src/core/vt100.c

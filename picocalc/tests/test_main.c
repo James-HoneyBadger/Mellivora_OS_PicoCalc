@@ -30,6 +30,7 @@ void test_mapp_image(void);
 void test_gfx(void);
 void test_mixer(void);
 int test_launcher(void);
+int test_onboarding(void);
 void test_pinmap(void);
 void test_i2cdetect(void);
 void test_vt100(void);
@@ -58,6 +59,7 @@ int main(void) {
     RUN(test_gfx);
     RUN(test_mixer);
     RUN(test_launcher);
+    RUN(test_onboarding);
     RUN(test_pinmap);
     RUN(test_i2cdetect);
     RUN(test_vt100);

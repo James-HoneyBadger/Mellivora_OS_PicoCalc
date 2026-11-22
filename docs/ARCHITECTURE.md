@@ -330,6 +330,27 @@ FAT driver's shared sector buffer, so a visitor may not read files. The
 `app_settings_load_user_themes()` loads the palettes once the enumeration
 has finished.
 
+## First-boot setup
+
+A card with no `/SETTINGS.CFG` starts the setup wizard instead of dropping
+the user into a bare prompt. `core/onboarding.c` holds every decision —
+which steps apply to this build, what a valid device name is, theme and
+backlight cycling at their limits, and the exact settings lines to write —
+so it is host-tested. `apps/app_setup.c` only draws screens and reads keys.
+
+- Steps are Welcome, Name, Appearance, Network (Wi-Fi builds only), Ready.
+  `Esc` at any point keeps the current values and continues, so the wizard
+  can never trap someone.
+- The name is validated on every keystroke: only letters, digits, spaces,
+  `-`, `_` and `'`, with at least one alphanumeric. That keeps control
+  characters out of `/SETTINGS.CFG` and off the dashboard.
+- Appearance previews palettes and brightness live.
+- Finishing writes `NAME=`, `THEME=` and `BACKLIGHT=`, reloads the file, and
+  drops `/SETUP.DONE`. `app_settings_apply_onboarding()` re-reads after
+  saving, so the file on the card and the live state cannot disagree.
+
+`setup` re-runs it at any time.
+
 ## Launcher
 
 The home screen is a searchable list rather than a flat menu. `core/launcher.c`

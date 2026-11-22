@@ -37,6 +37,7 @@ SOURCES := \
 	$(SRC_DIR)/core/gfx.c \
 	$(SRC_DIR)/core/mixer.c \
 	$(SRC_DIR)/core/launcher.c \
+	$(SRC_DIR)/core/onboarding.c \
 	$(SRC_DIR)/core/pinmap.c \
 	$(SRC_DIR)/core/vt100.c \
 	$(SRC_DIR)/core/xmodem.c \

@@ -103,9 +103,12 @@ void app_dashboard(const char *arg) {
         uint32_t uptime = sys_time_ms();
 
         sys_clear();
-        sys_print("Mellivora dashboard\n\n");
-
+        const app_settings_state_t *settings = app_settings_get();
         char line[128];
+        snprintf(line, sizeof line, "%s\n\n",
+                 *settings->device_name ? settings->device_name : "Mellivora dashboard");
+        sys_print(line);
+
         snprintf(line, sizeof line, "Battery: %s\n", (pct >= 0) ? "available" : "unavailable");
         sys_print(line);
         if (pct >= 0) {
@@ -346,9 +349,12 @@ void app_sysmon(const char *arg) {
         uint32_t uptime_s = uptime_ms / 1000U;
 
         sys_clear();
-        sys_print("Mellivora system monitor\n\n");
-
+        const app_settings_state_t *settings = app_settings_get();
         char line[128];
+        snprintf(line, sizeof line, "%s - system\n\n",
+                 *settings->device_name ? settings->device_name : "Mellivora");
+        sys_print(line);
+
         snprintf(line, sizeof line, "Battery: %s\n", (pct >= 0) ? "present" : "unknown");
         sys_print(line);
         if (pct >= 0) {

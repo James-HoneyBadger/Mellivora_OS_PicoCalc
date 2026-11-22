@@ -15,6 +15,7 @@
 /* Persistent settings state, owned by app_settings.c. */
 typedef struct {
     int backlight;
+    char device_name[24];
     char notes_path[APP_TOKEN_MAX];
     char home_path[APP_TOKEN_MAX];
     char startup_app[APP_TOKEN_MAX];
@@ -27,6 +28,13 @@ const app_settings_state_t *app_settings_get(void);
 void app_settings_init(void);
 void app_settings_load_user_themes(void);
 void app_settings_reload_theme(void);
+
+/* Apply the first-boot wizard's answers and persist them. Returns false if
+   the settings file could not be written. */
+bool app_settings_apply_onboarding(const char *name, const char *theme, int backlight);
+
+/* True when no settings file exists yet (a fresh card). */
+bool app_settings_is_fresh(void);
 
 /* App registry entry used by apps.c. */
 typedef void (*app_handler_t)(const char *arg);
@@ -85,6 +93,7 @@ void app_minesweeper(const char *arg);
 void app_mpkg(const char *arg);
 void app_gfxbench(const char *arg);
 void app_plot(const char *arg);
+void app_setup(const char *arg);
 void app_hw(const char *arg);
 void app_term(const char *arg);
 void app_gpio(const char *arg);

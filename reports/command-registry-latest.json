@@ -524,6 +524,10 @@
     "source": "shell completion"
   },
   {
+    "name": "setup",
+    "source": "shell completion"
+  },
+  {
     "name": "shutdown",
     "source": "shell completion"
   },

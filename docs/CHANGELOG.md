@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **First-boot setup wizard** — a fresh card now opens `setup`, which names
+  the device, picks a palette, sets the backlight, and offers Wi-Fi. `Esc`
+  keeps the defaults, the name is validated as it is typed, and the answers
+  are written to `/SETTINGS.CFG`. The device name appears on the dashboard
+  and in `sysinfo`.
 - **Searchable launcher** — icons, category tags, fuzzy search over titles
   and command names, and a recent-apps list at the top persisted to
   `/RECENTS.TXT`.

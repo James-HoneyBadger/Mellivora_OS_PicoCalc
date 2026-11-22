@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "apps/app_internal.h"
+#include "core/onboarding.h"
 #include "core/theme_file.h"
 #include "kbd.h"
 #include "lcd.h"
@@ -22,6 +23,7 @@ static app_settings_state_t g_settings;
 static void settings_reset_defaults(void) {
     memset(&g_settings, 0, sizeof g_settings);
     g_settings.backlight = 128;
+    copy_cstr(g_settings.device_name, sizeof g_settings.device_name, "PicoCalc");
     copy_cstr(g_settings.notes_path, sizeof g_settings.notes_path, "/NOTES.TXT");
     copy_cstr(g_settings.home_path, sizeof g_settings.home_path, "/");
     copy_cstr(g_settings.theme, sizeof g_settings.theme, "noir");
@@ -66,6 +68,13 @@ static void settings_apply_pair(const char *key, const char *value) {
         settings_set_path(g_settings.autorun_path, sizeof g_settings.autorun_path, v, "");
     } else if (ci_eq(key, "theme")) {
         copy_cstr(g_settings.theme, sizeof g_settings.theme, v);
+    } else if (ci_eq(key, "name")) {
+        /* Only accept a name the wizard would also accept, so a hand-edited
+           file cannot inject control characters into the dashboard. */
+        if (onboarding_name_valid(v))
+            copy_cstr(g_settings.device_name, sizeof g_settings.device_name, v);
+        else
+            print_line("settings: name must be 1-23 letters, digits, spaces, - _ or '");
     }
 }
 
@@ -118,12 +127,14 @@ static bool settings_save(bool verbose) {
     char buf[APP_READ_MAX] = {0};
     int n = snprintf(buf, sizeof buf,
                      "# Mellivora PicoCalc settings\n"
+                     "NAME=%s\n"
                      "BACKLIGHT=%d\n"
                      "HOME=%s\n"
                      "NOTES=%s\n"
                      "STARTUP=%s\n"
                      "AUTORUN=%s\n"
                      "THEME=%s\n",
+                     *g_settings.device_name ? g_settings.device_name : "PicoCalc",
                      g_settings.backlight,
                      *g_settings.home_path ? g_settings.home_path : "/",
                      *g_settings.notes_path ? g_settings.notes_path : "/NOTES.TXT",
@@ -148,6 +159,7 @@ static void settings_show(void) {
     char value[96];
     ui_title("Settings");
 
+    ui_label_value("name", *g_settings.device_name ? g_settings.device_name : "PicoCalc");
     snprintf(value, sizeof value, "%d", g_settings.backlight);
     ui_label_value("backlight", value);
     ui_label_value("home", *g_settings.home_path ? g_settings.home_path : "/");
@@ -294,4 +306,27 @@ void app_settings_load_user_themes(void) {
 
 void app_settings_reload_theme(void) {
     (void)theme_apply_by_name(*g_settings.theme ? g_settings.theme : "noir");
+}
+
+bool app_settings_is_fresh(void) {
+    /* Probe with fat_open rather than a zero-length read: a successful read
+       of nothing returns 0, which is indistinguishable from an empty file. */
+    fat_file_t file;
+    return fat_open(SETTINGS_FILE, &file) != FAT_OK;
+}
+
+bool app_settings_apply_onboarding(const char *name, const char *theme, int backlight) {
+    if (name && onboarding_name_valid(name))
+        copy_cstr(g_settings.device_name, sizeof g_settings.device_name, name);
+    if (theme && *theme) copy_cstr(g_settings.theme, sizeof g_settings.theme, theme);
+    if (backlight < 0) backlight = 0;
+    if (backlight > 255) backlight = 255;
+    g_settings.backlight = backlight;
+
+    settings_apply_live();
+    /* Persist, then re-read so the file on the card and the live state can
+       never disagree. */
+    if (!settings_save(false)) return false;
+    (void)settings_load(false);
+    return true;
 }

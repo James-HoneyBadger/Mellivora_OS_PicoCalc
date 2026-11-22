@@ -26,6 +26,13 @@ void app_boot(void) {
     app_settings_load_user_themes();
     app_settings_reload_theme();
 
+    /* A card with no settings file is either brand new or wiped, so walk the
+       user through setup before anything else claims the screen. */
+    if (app_settings_is_fresh()) {
+        print_line("First boot: starting setup (Esc keeps the defaults)...");
+        app_setup(NULL);
+    }
+
     const app_settings_state_t *st = app_settings_get();
     if (*st->autorun_path) {
         print_line("Running autorun script...");
@@ -103,7 +110,7 @@ static app_cmd_entry_t *app_table(size_t *out_count) {
         {"gpio", app_gpio}, {"pwm", app_pwm},
         {"i2cdetect", app_i2cdetect}, {"i2c", app_i2cdetect},
         {"ymodem", app_ymodem},
-        {"gfxbench", app_gfxbench}, {"plot", app_plot}, {"graph", app_plot},
+        {"gfxbench", app_gfxbench}, {"plot", app_plot}, {"graph", app_plot}, {"setup", app_setup},
     };
     static const size_t n = sizeof table / sizeof table[0];
     static bool sorted = false;
