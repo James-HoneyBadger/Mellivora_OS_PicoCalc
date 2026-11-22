@@ -21,6 +21,16 @@ void test_lfn(void);
 void test_history(void);
 void test_fat(void);
 void test_datetime(void);
+void test_ramdisk(void);
+void test_json(void);
+void test_sha256(void);
+void test_mpkg(void);
+void test_theme_file(void);
+void test_pinmap(void);
+void test_i2cdetect(void);
+void test_vt100(void);
+void test_xmodem(void);
+void test_workbench(void);
 
 int main(void) {
     RUN(test_strutil);
@@ -35,6 +45,16 @@ int main(void) {
     RUN(test_history);
     RUN(test_fat);
     RUN(test_datetime);
+    RUN(test_ramdisk);
+    RUN(test_json);
+    RUN(test_sha256);
+    RUN(test_mpkg);
+    RUN(test_theme_file);
+    RUN(test_pinmap);
+    RUN(test_i2cdetect);
+    RUN(test_vt100);
+    RUN(test_xmodem);
+    RUN(test_workbench);
 
     printf("\n%d checks, %d failure(s)\n", test_checks, test_failures);
     return test_failures == 0 ? 0 : 1;

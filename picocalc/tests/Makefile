@@ -28,19 +28,31 @@ SOURCES := \
 	$(SRC_DIR)/core/textutil.c \
 	$(SRC_DIR)/core/history.c \
 	$(SRC_DIR)/core/datetime.c \
+	$(SRC_DIR)/core/json.c \
+	$(SRC_DIR)/core/sha256.c \
+	$(SRC_DIR)/core/mpkg.c \
+	$(SRC_DIR)/core/theme_file.c \
+	$(SRC_DIR)/core/pinmap.c \
+	$(SRC_DIR)/core/vt100.c \
+	$(SRC_DIR)/core/xmodem.c \
+	$(SRC_DIR)/core/i2cdetect.c \
+	$(SRC_DIR)/core/workbench.c \
 	$(SRC_DIR)/fat.c \
-	$(SRC_DIR)/core/lfn.c
+	$(SRC_DIR)/core/lfn.c \
+	$(SRC_DIR)/ramdisk.c
 
 TEST_SOURCES := $(wildcard test_*.c)
+# Shared support code (mocks). Not a test suite on its own.
+SUPPORT_SOURCES := $(wildcard mock_*.c)
 BIN := build/run_tests
 
 .PHONY: all run clean
 
 all: run
 
-$(BIN): $(SOURCES) $(TEST_SOURCES) test_util.h
+$(BIN): $(SOURCES) $(TEST_SOURCES) $(SUPPORT_SOURCES) test_util.h
 	@mkdir -p build
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) $(TEST_SOURCES) -o $@ $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) $(TEST_SOURCES) $(SUPPORT_SOURCES) -o $@ $(LDFLAGS)
 
 run: $(BIN)
 	./$(BIN)
