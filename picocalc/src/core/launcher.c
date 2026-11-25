@@ -86,17 +86,18 @@ size_t launcher_filter(const launcher_item_t *items, size_t count, const char *q
                command-only matches of similar strength. */
             score = command_score;
         }
-        if (written >= capacity) break;
-
+        /* Keep the best capacity hits, including late catalogue entries. */
+        if (i > UINT16_MAX) break;
+        if (written == capacity && score <= out[written - 1].score) continue;
         /* Insertion sort by score, stable for equal scores. */
-        size_t pos = written;
+        size_t pos = written < capacity ? written : written - 1;
         while (pos > 0 && out[pos - 1].score < (uint16_t)score) {
             out[pos] = out[pos - 1];
             pos--;
         }
         out[pos].index = (uint16_t)i;
         out[pos].score = (uint16_t)score;
-        written++;
+        if (written < capacity) written++;
     }
     return written;
 }
