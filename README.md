@@ -227,3 +227,7 @@ attaches the starter pack.
 ## License
 
 See [LICENSE](LICENSE).
+
+## Licensing transition
+
+Future first-party development is licensed under GNU GPL version 3 only (GPL-3.0-only), subject to applicable copyright and third-party rights. See [LICENSE](LICENSE). Previously granted MIT permissions remain valid; see [LICENSE-MIT-LEGACY](LICENSE-MIT-LEGACY). Existing third-party notices and licenses remain in effect. Historical releases retain their original licensing. The dependency and contribution audit for the next GPL release is pending.
