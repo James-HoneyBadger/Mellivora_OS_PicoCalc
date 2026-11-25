@@ -7,8 +7,6 @@
 #include <ctype.h>
 #include <limits.h>
 #include <stdint.h>
-#include <errno.h>
-#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -64,29 +62,37 @@ static int expr_parse_primary(expr_state_t *st) {
     }
 
     if (isdigit((unsigned char)*st->s)) {
-        char *endptr = NULL;
-        long long v;
+        unsigned base = 10;
         const char *digits = st->s;
-        errno = 0;
-        /* Detect 0x.. (hex), 0b.. (bin), 0o.. (octal) */
-        if (st->s[0] == '0' && (st->s[1] == 'x' || st->s[1] == 'X')) {
-            digits = st->s + 2;
-            v = strtoll(digits, &endptr, 16);
-        } else if (st->s[0] == '0' && (st->s[1] == 'b' || st->s[1] == 'B')) {
-            digits = st->s + 2;
-            v = strtoll(digits, &endptr, 2);
-        } else if (st->s[0] == '0' && (st->s[1] == 'o' || st->s[1] == 'O')) {
-            digits = st->s + 2;
-            v = strtoll(digits, &endptr, 8);
-        } else {
-            v = strtoll(digits, &endptr, 10);
+        if (digits[0] == '0') {
+            switch (digits[1]) {
+            case 'x': case 'X': base = 16; digits += 2; break;
+            case 'b': case 'B': base = 2; digits += 2; break;
+            case 'o': case 'O': base = 8; digits += 2; break;
+            default: break;
+            }
         }
-        if (endptr == digits || errno == ERANGE || v < 0 || v > INT_MAX) {
+        const char *p = digits;
+        unsigned value = 0;
+        for (;; p++) {
+            unsigned d;
+            if (*p >= '0' && *p <= '9') d = (unsigned)(*p - '0');
+            else if (*p >= 'a' && *p <= 'f') d = (unsigned)(*p - 'a' + 10);
+            else if (*p >= 'A' && *p <= 'F') d = (unsigned)(*p - 'A' + 10);
+            else break;
+            if (d >= base) break;
+            if (value > ((unsigned)INT_MAX - d) / base) {
+                st->error = true;
+                return 0;
+            }
+            value = value * base + d;
+        }
+        if (p == digits) {
             st->error = true;
             return 0;
         }
-        st->s = endptr;
-        return (int)v;
+        st->s = p;
+        return (int)value;
     }
 
     if (isalpha((unsigned char)*st->s) || *st->s == '_') {
