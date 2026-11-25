@@ -1,7 +1,7 @@
 CC = arm-none-eabi-gcc
 PYTHON ?= python3
 # `make` builds every sample; `make APP=plasma` builds just one.
-APPS ?= hello plasma
+APPS ?= hello plasma lifelab
 APP ?= $(firstword $(APPS))
 # Set APP_SRC to build a .c file from outside this directory (the Hub app
 # template does this), in which case only $(APP) is built.
