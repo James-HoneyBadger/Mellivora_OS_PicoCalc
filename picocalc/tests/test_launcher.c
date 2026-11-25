@@ -87,6 +87,10 @@ static void test_filter(void) {
     CHECK_STR_EQ(_title_of(hits[1].index), "Calculator");
     CHECK(hits[0].score > hits[1].score);
 
+    count = launcher_filter(_items, ITEM_COUNT, "cl", hits, 1);
+    CHECK_EQ(count, 1);
+    CHECK_STR_EQ(_title_of(hits[0].index), "Clock and calendar");
+
     /* A command-name match finds entries whose title does not contain it. */
     count = launcher_filter(_items, ITEM_COUNT, "browse", hits, LAUNCHER_MAX_ITEMS);
     CHECK_EQ(count, 1);
