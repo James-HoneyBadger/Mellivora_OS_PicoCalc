@@ -1,0 +1,14 @@
+REM @app-name: Chime Composer
+10 REM Change the frequencies or timings to make your own tune.
+20 FOR N = 1 TO 3
+30 SOUND 262, 120
+40 WAIT 150
+50 SOUND 330, 120
+60 WAIT 150
+70 SOUND 392, 120
+80 WAIT 150
+90 SOUND 523, 240
+100 WAIT 300
+110 NEXT N
+120 PRINT "EDIT ME TO MAKE A NEW TUNE"
+130 END
