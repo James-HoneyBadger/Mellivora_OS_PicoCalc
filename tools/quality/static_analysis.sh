@@ -52,7 +52,10 @@ if [[ -f "$DB" ]]; then
             ARM_SYSTEM_INCLUDES+=(--extra-arg=-isystem --extra-arg="$include_dir")
         done
     fi
+    # Pico SDK MMIO uses intentional fixed-address dereferences. Keep the
+    # checker enabled for host/core analysis above, where these are bugs.
     clang-tidy -p "$ROOT_DIR/picocalc/build" --quiet \
+        --checks=-clang-analyzer-core.FixedAddressDereference \
         --config-file="$ROOT_DIR/.clang-tidy" "${ARM_SYSTEM_INCLUDES[@]}" \
         "${FIRMWARE_FILES[@]}"
 else
