@@ -18,6 +18,7 @@ typedef int (*expr_lookup_fn)(void *ctx, const char *name, size_t len);
  * and decimal / 0x / 0b / 0o literals.
  *
  * Returns 0 and sets *ok = false on a parse error, division by zero, or
- * trailing garbage. `ok` may be NULL.
+ * trailing garbage, overflow, invalid literals, or nesting beyond 16 levels.
+ * Literal magnitudes are limited to INT_MAX; INT_MIN can be computed. `ok` may be NULL.
  */
 int expr_eval(const char *expr, expr_lookup_fn lookup, void *ctx, bool *ok);
