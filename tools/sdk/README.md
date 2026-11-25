@@ -6,8 +6,8 @@ Build the included sample in seconds with an ARM GNU toolchain and Python 3:
 make -C tools/sdk
 ```
 
-`make` builds both samples (`hello` and `plasma`); `make APP=plasma` builds
-just one. Either `.mapp` can be copied to `/apps/` on the FAT32 microSD card
+`make` builds the samples (`hello`, `plasma`, and `lifelab`); `make APP=plasma` builds
+just one. Each `.mapp` can be copied to `/apps/` on the FAT32 microSD card
 and appears in the launcher. Build your own standalone C app by placing
 `name.c` here and running `make APP=name`.
 
@@ -41,6 +41,10 @@ attack_ms, release_ms, voice)` with `MAPP_WAVE_SQUARE/TRIANGLE/NOISE` and
 `audio_voice_stop(voice)`. Test `MAPP_CAP_AUDIO_MIXER` before using it.
 `plasma.c` plays a triangle arpeggio through it and falls back to beeps on
 v2 loaders. `gfxbench` on the device reports the real panel throughput.
+
+## Life Lab
+
+Build `make -C tools/sdk APP=lifelab mapp`, or preview with `make -C tools/sim APP=lifelab`. The interactive cellular automaton uses a 32x32 toroidal grid and a 128x128 indexed surface. Space pauses, N advances one generation, R reseeds, Q or Escape exits. The simulation uses 2 KiB of static state and the surface uses 16 KiB of pixels. Physical timing and module packaging still need verification.
 
 ## Graphics surfaces
 
