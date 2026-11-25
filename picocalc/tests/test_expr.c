@@ -92,6 +92,22 @@ void test_expr(void) {
     CHECK_EQ(eval("", &ok), 0);
     CHECK(!ok);
 
+    /* Malformed literals, arithmetic overflow and recursion budget. */
+    const char *bad[] = {
+        "0x", "0b", "0o", "0x-1", "2147483648", "2147483647+1",
+        "50000*50000", "-2147483647-2", "(-2147483647-1)/-1",
+        "(-2147483647-1)%-1", "-(-2147483647-1)",
+        "--------------------1", "((((((((((((((((((((1))))))))))))))))))))"
+    };
+    for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        CHECK_EQ(eval(bad[i], &ok), 0);
+        CHECK(!ok);
+    }
+    CHECK_EQ(eval(NULL, &ok), 0);
+    CHECK(!ok);
+    CHECK_EQ(eval("-2147483647-1", &ok), (-2147483647-1));
+    CHECK(ok);
+
     /* A NULL ok pointer is allowed. */
     CHECK_EQ(expr_eval("1+1", NULL, NULL, NULL), 2);
 }
